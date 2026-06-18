@@ -1,0 +1,27 @@
+services:
+  backend:
+    build: ./backend
+    env_file: .env
+    environment:
+      # БД пишем в volume, а не в слой контейнера (переопределяет DATABASE_URL из .env).
+      # Четыре слэша = абсолютный путь /data/iskendi.db.
+      DATABASE_URL: sqlite:////data/iskendi.db
+    volumes:
+      - backend-data:/data
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: ""
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  backend-data:

@@ -1,0 +1,5 @@
+[flake8]
+max-line-length = 100
+# E203/W503 — несовместимы со стилем black, игнорируем (см. code-style.md, п.1)
+extend-ignore = E203, W503
+exclude = .venv, __pycache__, seed

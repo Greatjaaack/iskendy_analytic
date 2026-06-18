@@ -1,0 +1,64 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Что это
+
+Система аналитики и учёта костов ресторана «Искенди» (storeId `161059`). Продажи тянутся из **внутреннего, нереверс-инженерного API iikoweb** (`https://iskendi.iikoweb.ru`) и отдаются фронту через FastAPI. Сверх дашборда ведётся **собственная БД** поставщиков, цен, тех-карт (ТТК) и себестоимости — **в iiko ничего не пишем, только читаем**. Справочник эндпоинтов/метрик iikoweb — в `IIKO_WEB_API.md`; дорожная карта — `PLAN.md`; журнал работ — `PROGRESS.md` (читать перед работой с API/планированием).
+
+## Команды
+
+Запуск в Docker (рекомендуется): `docker compose up -d --build`. Frontend на http://localhost:5173 (nginx, проксирует `/api` на backend), backend на http://localhost:8000. БД живёт в volume `backend-data`. Нужен заполненный `.env` в корне (его читает `env_file`); `DATABASE_URL` в контейнере переопределяется на `/data/iskendi.db`. Логи: `docker compose logs -f backend`.
+
+Запуск локально без Docker: `./start.sh` (ставит зависимости, ставит chromium для Playwright, поднимает backend на :8000 и frontend на :5173).
+
+Backend (из `backend/`):
+- `pip install -r requirements.txt && python -m playwright install chromium`
+- `uvicorn main:app --reload --port 8000`
+- Триггер ручной синхронизации: `POST /api/sync`; здоровье: `GET /api/health`.
+- Тестов нет.
+
+Frontend (из `frontend/`):
+- `npm install`, `npm run dev`, `npm run build` (`tsc -b && vite build`), `npm run lint`.
+
+Код-стайл: см. `code-style.md` (корень). Backend приведён к нему (`black`/`isort`/`flake8`/`mypy`,
+конфиг в `backend/pyproject.toml` и `backend/.flake8`, line-length 100). Перед коммитом:
+`cd backend && black . && isort . && flake8 .`. Конфиг приложения — pydantic `Settings`
+в `backend/config.py` (`from config import settings`), не `os.getenv` по коду.
+
+Перед запуском backend нужен `.env` (см. `.env.example`): обязателен `IIKO_WEB_PASSWORD`.
+
+## Архитектура
+
+Поток данных: **iikoweb API → `IikoWebClient` → (а) `scheduler` синкает выручку по дням в SQLite, либо (б) роутеры дёргают iiko вживую (блюда, почасовые) → React-фронт**. Косты/ТТК/поставщики — из собственной БД (наполняется импортом xlsx).
+
+### Авторизация в iikoweb (ключевой нюанс)
+`backend/iiko_web_client.py` — внутренний API защищён cookie-сессией (TTL ~20 мин), отдельного login-endpoint нет. `_login()` поднимает **headless Chromium через Playwright**, вводит логин/пароль как человек на странице `/navigator/index.html#/auth/login`, забирает cookies и дальше шлёт быстрые JSON-запросы через `httpx` с этими куками. `_ensure_session()` проверяет сессию через `/api/auth` и перелогинивается при истечении; `_post()` при 401/403 сбрасывает куки и повторяет один раз. Пароль — только в `.env`.
+
+### Единый эндпоинт данных
+Почти все метрики идут через один вызов `POST /api/kpi/dashboard/get-data` (`get_metrics()`), параметризованный `metricCodes` + `dataType` (`DATA_SUMMARY_BY_DATE` для выручки по дням, `DATA_DETAILS` для блюд, `DATA_TOTAL` для итогов). Названия и категории блюд приходят **в том же ответе** в блоке `decoration.product` (с `with_decoration=True`) — отдельного справочника блюд не нужно. Коды метрик — выручка через `REV_GROSS` (бухгалтерские `ACC_CAT_*`/НДС в этой точке возвращают 0, не использовать).
+
+### Синхронизация
+`backend/scheduler.py` (APScheduler, таймзона `Asia/Almaty`): `sync_revenue` и `sync_dishes` каждый час за 7 дней, `full_sync` (30 дней) ночью в 00:05 и один раз при старте приложения (в `lifespan` в `main.py`). `RevenueDaily` обновляется по дню (upsert по PK-дате); `DishSale` за окно `(date_from, date_to)` полностью пере-вставляется (delete + insert). Каждый синк пишет результат в `SyncLog`.
+
+### БД
+`backend/models.py` — SQLAlchemy, SQLite. Таблицы: `revenue_daily`, `dish_sales`, `sync_log` (продажи) + `suppliers`, `supplier_files`, `ingredients`, `supplier_prices`, `ttk`, `ttk_ingredients` (косты/ТТК). `init_db()` создаёт схему; **миграций нет — при смене схемы пересоздавать БД** (`docker compose down -v`). Файлы (накладные/прайсы) лежат в volume `/data/files` (`backend/storage.py`).
+
+### Импорт ТТК/прайса
+`backend/importers/ttk_matrix.py` парсит `backend/seed/ttk_matrix.xlsx` («ТТК и матрица продуктов», 68 листов): «Матрица поставщиков» (прайс), «Матрица продуктов», «Сводная» (категории), лист-на-ТТК. **ТТК двухуровневые** (блюдо → п/ф → сырьё): строки резолвятся по нормализованному имени (`_norm` срезает «п/ф», ё→е, регистр), п/ф-ссылки предпочитают листы-полуфабрикаты. Канон-имя ТТК берётся из **имени листа** (B1 местами с копипаст-ошибкой). Себестоимость берётся готовой из файла, не пересчитывается. Идемпотентен (чистит ТТК/цены/ингредиенты, поставщиков апсёртит по `casefold`-ключу — SQLite `lower()` не трогает кириллицу!). Запуск: `POST /api/import/ttk-matrix` или кнопка на странице Поставщики.
+
+### API-слой
+Коды метрик/типы данных/маппинги iiko вынесены в `backend/constants.py` (используй их, не хардкодь строки). Роутеры в `backend/routers/`:
+- `revenue.py` — `GET /api/revenue` (пресет → из SQLite; произвольный диапазон `date_from/date_to` → живой запрос); к дням подмешивается погода (`weather.py`). `GET /api/revenue/hourly` — живой запрос (`DATA_SUMMARY_BY_HOURS`, матрица часы×даты → `_parse_hour_matrix`).
+- `dishes.py` — `GET /api/dishes` живой запрос за период; `group_by=dish|category`; **исключает `productType=MODIFIER`** (это не блюда); с/с берётся per-portion (`Ttk.cost_full` из «Сводной», иначе `cost_total`) × кол-во; источник по блюду — **ручная привязка `DishMapping`** (продажа→ТТК), иначе авто-совпадение имени. Не из iiko (метрика относит расход к ингредиентам, не к блюду). `GET /api/dishes/check-distribution` — чеки по типу обслуживания из модификаторов категории «Статус». `GET /api/dishes/hourly-breakdown?group=category|dish` — что берут по часам (через OLAP, см. ниже).
+- `suppliers.py` — CRUD + загрузка/скачивание файлов (`UploadFile`/`FileResponse`).
+- `nomenclature.py` — `prefix="/api"`, эндпоинты `/ingredients`, `/ttk` (каталог + карточки), `/dish-mappings` (GET/POST/DELETE — привязка проданное блюдо↔ТТК для с/с).
+- `imports.py` — запуск импорта.
+Все роутеры с периодом принимают `period` **или** `date_from/date_to` (произвольный диапазон приоритетнее). Производные метрики (food cost %, маржа, доли, средний чек, с/с %) считаются **на лету в питоне**, не хранятся. `weather.py` — погода Москвы из Open-Meteo (без ключа, кэш в памяти, не критична — при сбое тихо отдаёт пусто).
+
+**OLAP-движок** (`iiko_web_client.olap_sales`) — для разрезов, которые `get-data` не умеет (напр. «блюдо × час»). Поток: `POST /api/olap/init` (тело=запрос) → `GET /api/olap/fetch-status/{hash}` (поллинг до `SUCCESS`) → `POST /api/olap/fetch/{hash}/simple` (тело=запрос) → `result.rows` (строки `field0`=группа «час, имя», `field1`=сумма, `field2`=кол-во). Поля/тип/вью — в `constants.py` (`OLAP_*`). dateTo делается эксклюзивным (+1 день), чтобы включить весь последний день.
+
+### Фронт
+React 19 + Vite + TS, **react-router** (роуты в `App.tsx`, layout с `Sidebar`). Страницы в `src/pages/`: `Dashboard`, `Suppliers`, `SupplierCard`, `NewSupplier`, `Nomenclature`, `TtkCard`. Компоненты: `KpiCards`, `RevenueChart` (тип графика + мультифильтр по дням + чеки на правой оси + погода), `HourlyChart` (тип графика), `ChecksDistribution`, `DishTable` (группировка/сортировка/поиск+мультивыбор/доли/с-с% — сам тянет данные), `Sidebar` (+ переключатель темы). Выбор периода — пресет или произвольный диапазон (`RangeSel` в `api.ts`, хелперы `rangeQS`/`rangeKey`). Запросы/типы — `src/api.ts`; **пороги/интервалы/списки/палитра/маппинги — `src/constants.ts`** (использовать их, не хардкод).
+
+**Темы:** палитра — CSS-переменные (`index.css`, `[data-theme]`), цвета через `var(--bg|card|grid|muted|text)` либо `COLORS` (тоже `var()`); акценты — фиксированные hex. Переключение — `src/theme.ts` (`useTheme`, хранит выбор в localStorage). Чтобы цвет реагировал на тему — используй переменные, а не hex. База API из `VITE_API_URL` (в Docker пусто → относительные пути через nginx).
