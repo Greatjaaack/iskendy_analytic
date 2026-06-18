@@ -174,6 +174,10 @@ async def get_revenue(
     prev_dt = df - timedelta(days=1)
     prev_df = prev_dt - timedelta(days=span)
     prev_days = _days_from_db(prev_df, prev_dt)
+    # для «месяца» прошлый период (31–60 дн. назад) обычно не в БД (синк 30 дн.) —
+    # тогда берём живым запросом, иначе дельта не показывалась бы
+    if not prev_days:
+        prev_days = await _days_live(prev_df, prev_dt)
     prev_rev = sum(r["total_sum"] for r in prev_days)
     prev_checks = sum(r["check_count"] for r in prev_days)
 
