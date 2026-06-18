@@ -100,6 +100,9 @@ class SupplierContact(Base):
     supplier_id = Column(Integer, ForeignKey("suppliers.id"))
     contact_person = Column(String, default="")  # чьё это лицо/роль
     phone = Column(String, default="")  # нормализованный «+7XXXXXXXXXX»
+    whatsapp = Column(String, default="")  # номер WhatsApp (нормализованный)
+    telegram = Column(String, default="")  # @username или ссылка
+    email = Column(String, default="")
     comment = Column(String, default="")  # напр. «склад», «бухгалтерия»
     created_at = Column(DateTime, default=datetime.utcnow)
 

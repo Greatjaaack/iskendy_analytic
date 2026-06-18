@@ -155,10 +155,7 @@ export function DishTable({ range }: Props) {
           <tbody>
             {rows.map((d) => (
               <tr key={d.key} style={{ borderTop: `1px solid ${COLORS.grid}` }}>
-                <td style={td}>
-                  {d.name}
-                  {d.channel === "доставка" && <span style={deliveryBadge}>доставка</span>}
-                </td>
+                <td style={td}>{d.name}</td>
                 {groupBy === "dish" && <td style={{ ...td, color: COLORS.muted }}>{d.group_name}</td>}
                 <td style={tdR}>{d.quantity}</td>
                 <td style={{ ...tdR, color: COLORS.muted }}>{d.qty_share}%</td>
@@ -183,10 +180,6 @@ export function DishTable({ range }: Props) {
 }
 
 const td: React.CSSProperties = { padding: "8px 12px" };
-const deliveryBadge: React.CSSProperties = {
-  marginLeft: 8, padding: "1px 7px", borderRadius: 6, fontSize: 11, fontWeight: 600,
-  color: COLORS.primary, border: `1px solid ${COLORS.primary}`,
-};
 const tdR: React.CSSProperties = { padding: "8px 12px", textAlign: "right" };
 const dropdown: React.CSSProperties = {
   position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 10,

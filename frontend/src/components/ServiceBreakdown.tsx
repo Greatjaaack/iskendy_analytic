@@ -34,7 +34,7 @@ export function ServiceBreakdown({ range }: Props) {
   return (
     <div style={{ background: COLORS.card, borderRadius: 12, padding: "20px 24px" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
-        <div style={{ color: "var(--text)", fontWeight: 600 }}>Как берут (зал / с собой / доставка)</div>
+        <div style={{ color: "var(--text)", fontWeight: 600 }}>Продажи по статусам</div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <input
             placeholder={group === "category" ? "Поиск категорий…" : "Поиск блюд…"}
@@ -76,9 +76,16 @@ export function ServiceBreakdown({ range }: Props) {
             {rows.map((r) => (
               <tr key={r.name} style={{ borderTop: `1px solid ${COLORS.grid}` }}>
                 <td style={td}>{r.name}</td>
-                {channels.map((ch) => (
-                  <td key={ch} style={tdR}>{fmtInt(Number(r[ch] ?? 0))}</td>
-                ))}
+                {channels.map((ch) => {
+                  const v = Number(r[ch] ?? 0);
+                  const pct = r.total ? Math.round((v / r.total) * 100) : 0;
+                  return (
+                    <td key={ch} style={tdR}>
+                      {fmtInt(v)}
+                      <span style={{ color: "var(--muted)", marginLeft: 6 }}>{pct}%</span>
+                    </td>
+                  );
+                })}
                 <td style={{ ...tdR, fontWeight: 600 }}>{fmtInt(r.total)}</td>
               </tr>
             ))}

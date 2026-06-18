@@ -7,3 +7,6 @@ export const normalizePhone = (raw: string): string | null => {
   if (d.length !== 10) return null;
   return "+7" + d;
 };
+
+/** Базовая проверка email. */
+export const isValidEmail = (raw: string): boolean => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(raw.trim());

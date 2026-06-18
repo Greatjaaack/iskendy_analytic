@@ -3,7 +3,7 @@ import { useNavigate, Link } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { addSupplierContact, createSupplier, uploadSupplierFile, type SupplierInput } from "../api";
 import { COLORS } from "../constants";
-import { normalizePhone } from "../validation";
+import { isValidEmail, normalizePhone } from "../validation";
 
 const fields: { key: keyof SupplierInput; label: string }[] = [
   { key: "name", label: "Название *" },
@@ -13,14 +13,22 @@ const fields: { key: keyof SupplierInput; label: string }[] = [
 ];
 
 interface ContactDraft {
-  phone: string;
   contact_person: string;
+  phone: string;
+  whatsapp: string;
+  telegram: string;
+  email: string;
   comment: string;
 }
 
-const emptyContact = (): ContactDraft => ({ phone: "", contact_person: "", comment: "" });
+const emptyContact = (): ContactDraft => ({
+  contact_person: "", phone: "", whatsapp: "", telegram: "", email: "", comment: "",
+});
 
-/** Форма заведения поставщика: реквизиты + телефоны/контактные лица + опц. файл. */
+const isFilled = (c: ContactDraft) =>
+  c.contact_person || c.phone || c.whatsapp || c.telegram || c.email;
+
+/** Форма заведения поставщика: реквизиты + контакты с каналами (тел/WA/TG/email) + файл. */
 export function NewSupplier() {
   const nav = useNavigate();
   const qc = useQueryClient();
@@ -40,25 +48,17 @@ export function NewSupplier() {
       setErr("Укажите название");
       return;
     }
-    // заполненные контакты (по телефону) должны пройти валидацию
-    const filled = contacts.filter((c) => c.phone.trim() || c.contact_person.trim());
+    const filled = contacts.filter(isFilled);
     for (const c of filled) {
-      if (!normalizePhone(c.phone)) {
-        setErr(`Некорректный телефон: «${c.phone}». Ожидается российский номер.`);
-        return;
-      }
+      if (c.phone && !normalizePhone(c.phone)) return setErr(`Некорректный телефон: «${c.phone}»`);
+      if (c.whatsapp && !normalizePhone(c.whatsapp)) return setErr(`Некорректный WhatsApp: «${c.whatsapp}»`);
+      if (c.email && !isValidEmail(c.email)) return setErr(`Некорректный email: «${c.email}»`);
     }
     setSaving(true);
     setErr("");
     try {
       const s = await createSupplier(form);
-      for (const c of filled) {
-        await addSupplierContact(s.id, {
-          phone: c.phone,
-          contact_person: c.contact_person,
-          comment: c.comment,
-        });
-      }
+      for (const c of filled) await addSupplierContact(s.id, c);
       if (file) await uploadSupplierFile(s.id, file, "price");
       await qc.invalidateQueries({ queryKey: ["suppliers"] });
       nav(`/suppliers/${s.id}`);
@@ -69,7 +69,7 @@ export function NewSupplier() {
   };
 
   return (
-    <div style={{ padding: 24, color: "var(--text)", maxWidth: 640 }}>
+    <div style={{ padding: 24, color: "var(--text)", maxWidth: 720 }}>
       <Link to="/suppliers" style={{ color: "var(--muted)", fontSize: 13, textDecoration: "none" }}>
         ← Поставщики
       </Link>
@@ -89,42 +89,33 @@ export function NewSupplier() {
 
         <div>
           <div style={{ color: "var(--muted)", fontSize: 13, marginBottom: 6 }}>
-            Телефоны и контактные лица
+            Контакты и каналы связи
           </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {contacts.map((c, i) => (
-              <div key={i} style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <input
-                  placeholder="+7 ..."
-                  value={c.phone}
-                  onChange={(e) => setContact(i, { phone: e.target.value })}
-                  style={{ ...input, flex: "0 0 170px" }}
-                />
-                <input
-                  placeholder="Контактное лицо"
-                  value={c.contact_person}
-                  onChange={(e) => setContact(i, { contact_person: e.target.value })}
-                  style={{ ...input, flex: 1 }}
-                />
-                <input
-                  placeholder="Заметка"
-                  value={c.comment}
-                  onChange={(e) => setContact(i, { comment: e.target.value })}
-                  style={{ ...input, flex: "0 0 130px" }}
-                />
-                <button
-                  onClick={() => removeRow(i)}
-                  disabled={contacts.length === 1}
-                  style={iconBtn}
-                  title="Удалить"
-                >
-                  ✕
-                </button>
+              <div key={i} style={contactBox}>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input placeholder="Контактное лицо" value={c.contact_person}
+                    onChange={(e) => setContact(i, { contact_person: e.target.value })} style={{ ...input, flex: 1 }} />
+                  <input placeholder="Заметка (склад/бухгалтерия…)" value={c.comment}
+                    onChange={(e) => setContact(i, { comment: e.target.value })} style={{ ...input, flex: 1 }} />
+                  <button onClick={() => removeRow(i)} disabled={contacts.length === 1} style={iconBtn} title="Удалить">✕</button>
+                </div>
+                <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                  <input placeholder="☎ Телефон" value={c.phone}
+                    onChange={(e) => setContact(i, { phone: e.target.value })} style={{ ...input, flex: 1 }} />
+                  <input placeholder="WhatsApp" value={c.whatsapp}
+                    onChange={(e) => setContact(i, { whatsapp: e.target.value })} style={{ ...input, flex: 1 }} />
+                  <input placeholder="Telegram (@…)" value={c.telegram}
+                    onChange={(e) => setContact(i, { telegram: e.target.value })} style={{ ...input, flex: 1 }} />
+                  <input placeholder="Email" value={c.email}
+                    onChange={(e) => setContact(i, { email: e.target.value })} style={{ ...input, flex: 1 }} />
+                </div>
               </div>
             ))}
           </div>
           <button onClick={addRow} style={{ ...btnGhost, marginTop: 8, padding: "6px 12px" }}>
-            + Ещё телефон
+            + Ещё контакт
           </button>
         </div>
 
@@ -151,6 +142,9 @@ export function NewSupplier() {
 const input: React.CSSProperties = {
   width: "100%", padding: "9px 12px", borderRadius: 8, border: "1px solid var(--grid)",
   background: "var(--card)", color: "var(--text)", fontSize: 14, boxSizing: "border-box",
+};
+const contactBox: React.CSSProperties = {
+  border: "1px solid var(--grid)", borderRadius: 10, padding: 12, background: "var(--bg)",
 };
 const btnPrimary: React.CSSProperties = {
   padding: "9px 18px", borderRadius: 8, border: "none", background: COLORS.primary,

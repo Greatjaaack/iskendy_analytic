@@ -148,14 +148,20 @@ export interface CheckDistribution {
 
 export interface SupplierContact {
   id: number;
-  phone: string;
   contact_person: string;
+  phone: string;
+  whatsapp: string;
+  telegram: string;
+  email: string;
   comment: string;
 }
 
 export interface ContactInput {
-  phone: string;
   contact_person?: string;
+  phone?: string;
+  whatsapp?: string;
+  telegram?: string;
+  email?: string;
   comment?: string;
 }
 

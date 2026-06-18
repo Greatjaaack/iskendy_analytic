@@ -1,7 +1,11 @@
 """Роутер поставщиков: CRUD, карточка с товарами/ценами, загрузка/скачивание файлов."""
 
+from io import BytesIO
+
+import openpyxl
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
+from openpyxl.utils import get_column_letter
 from pydantic import BaseModel, field_validator
 from sqlalchemy import func, select
 
@@ -14,7 +18,9 @@ from models import (
     SupplierFile,
     SupplierPrice,
 )
-from utils import normalize_phone
+from utils import normalize_email, normalize_phone
+
+XLSX_MEDIA = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 router = APIRouter(prefix="/api/suppliers", tags=["suppliers"])
 
@@ -27,21 +33,38 @@ class SupplierIn(BaseModel):
 
 
 class ContactIn(BaseModel):
-    phone: str
     contact_person: str = ""
+    phone: str = ""
+    whatsapp: str = ""
+    telegram: str = ""
+    email: str = ""
     comment: str = ""
 
-    @field_validator("phone")
+    @field_validator("phone", "whatsapp")
     @classmethod
     def _valid_phone(cls, v: str) -> str:
-        return normalize_phone(v)
+        v = (v or "").strip()
+        return normalize_phone(v) if v else ""
+
+    @field_validator("email")
+    @classmethod
+    def _valid_email(cls, v: str) -> str:
+        return normalize_email(v)
+
+    @field_validator("telegram")
+    @classmethod
+    def _clean_telegram(cls, v: str) -> str:
+        return (v or "").strip()
 
 
 def _contact_dict(c: SupplierContact) -> dict:
     return {
         "id": c.id,
-        "phone": c.phone,
         "contact_person": c.contact_person,
+        "phone": c.phone,
+        "whatsapp": c.whatsapp,
+        "telegram": c.telegram,
+        "email": c.email,
         "comment": c.comment,
     }
 
@@ -71,6 +94,77 @@ def list_suppliers():
         )
         rows = db.execute(select(Supplier).order_by(Supplier.name)).scalars().all()
         return [_supplier_brief(s, counts.get(s.id, 0)) for s in rows]
+
+
+def _contact_line(c: SupplierContact) -> str:
+    """Однострочное представление контакта для Excel."""
+    parts = []
+    if c.contact_person:
+        parts.append(c.contact_person)
+    if c.phone:
+        parts.append(f"тел: {c.phone}")
+    if c.whatsapp:
+        parts.append(f"WA: {c.whatsapp}")
+    if c.telegram:
+        parts.append(f"TG: {c.telegram}")
+    if c.email:
+        parts.append(f"email: {c.email}")
+    if c.comment:
+        parts.append(f"({c.comment})")
+    return " · ".join(parts)
+
+
+@router.get("/export")
+def export_suppliers():
+    """Выгрузка всех поставщиков с контактами/каналами в .xlsx."""
+    with SessionLocal() as db:
+        counts = dict(
+            db.execute(
+                select(
+                    SupplierPrice.supplier_id,
+                    func.count(func.distinct(SupplierPrice.ingredient_id)),
+                ).group_by(SupplierPrice.supplier_id)
+            ).all()
+        )
+        rows = db.execute(select(Supplier).order_by(Supplier.name)).scalars().all()
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Поставщики"
+        headers = [
+            "Поставщик",
+            "Контакты и каналы",
+            "Адрес",
+            "Мин. поставка",
+            "Комментарий",
+            "Товаров",
+        ]
+        ws.append(headers)
+        for s in rows:
+            ws.append(
+                [
+                    s.name,
+                    "\n".join(_contact_line(c) for c in s.contacts),
+                    s.address,
+                    s.min_delivery,
+                    s.comment,
+                    counts.get(s.id, 0),
+                ]
+            )
+        widths = [28, 50, 30, 18, 30, 10]
+        for i, w in enumerate(widths, start=1):
+            ws.column_dimensions[get_column_letter(i)].width = w
+        for cell in ws[1]:
+            cell.font = openpyxl.styles.Font(bold=True)
+
+        buf = BytesIO()
+        wb.save(buf)
+
+    return Response(
+        content=buf.getvalue(),
+        media_type=XLSX_MEDIA,
+        headers={"Content-Disposition": 'attachment; filename="suppliers.xlsx"'},
+    )
 
 
 @router.get("/{supplier_id}")

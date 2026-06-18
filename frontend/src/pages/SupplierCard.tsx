@@ -6,14 +6,15 @@ import {
   deleteSupplierContact,
   fetchSupplier,
   supplierFileUrl,
+  updateSupplier,
   uploadSupplierFile,
 } from "../api";
-import type { SupplierContact } from "../api";
+import type { SupplierCard as SupplierCardT, SupplierContact, SupplierInput } from "../api";
 import { COLORS } from "../constants";
 import { fmtNum } from "../format";
-import { normalizePhone } from "../validation";
+import { isValidEmail, normalizePhone } from "../validation";
 
-/** Карточка поставщика: реквизиты, контакты (телефоны/лица), товары, файлы. */
+/** Карточка поставщика: редактируемые реквизиты, контакты с каналами, товары, файлы. */
 export function SupplierCard() {
   const { id } = useParams();
   const sid = Number(id);
@@ -42,14 +43,8 @@ export function SupplierCard() {
       <Link to="/suppliers" style={{ color: "var(--muted)", fontSize: 13, textDecoration: "none" }}>
         ← Поставщики
       </Link>
-      <div style={{ fontSize: 22, fontWeight: 700, margin: "8px 0 20px" }}>{s.name}</div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
-        <Info label="Адрес" value={s.address} />
-        <Info label="Мин. поставка" value={s.min_delivery} />
-        <Info label="Комментарий" value={s.comment} />
-      </div>
-
+      <DetailsSection sid={sid} s={s} />
       <ContactsSection sid={sid} contacts={s.contacts} />
 
       <Section title={`Товары (${s.products_list.length})`}>
@@ -87,13 +82,8 @@ export function SupplierCard() {
         </button>
         <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 6 }}>
           {s.files.map((f) => (
-            <a
-              key={f.id}
-              href={supplierFileUrl(sid, f.id)}
-              target="_blank"
-              rel="noreferrer"
-              style={{ color: COLORS.indigoText, fontSize: 13, textDecoration: "none" }}
-            >
+            <a key={f.id} href={supplierFileUrl(sid, f.id)} target="_blank" rel="noreferrer"
+              style={{ color: COLORS.indigoText, fontSize: 13, textDecoration: "none" }}>
               📄 {f.filename}{" "}
               <span style={{ color: "var(--muted)" }}>· {new Date(f.uploaded_at).toLocaleDateString("ru-RU")}</span>
             </a>
@@ -105,36 +95,85 @@ export function SupplierCard() {
   );
 }
 
-/** Секция контактов: список телефонов/лиц + добавление и удаление с валидацией. */
+/** Редактируемые реквизиты поставщика (название, адрес, мин. поставка, комментарий). */
+function DetailsSection({ sid, s }: { sid: number; s: SupplierCardT }) {
+  const qc = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState<SupplierInput>({
+    name: s.name, address: s.address, min_delivery: s.min_delivery, comment: s.comment,
+  });
+  const [err, setErr] = useState("");
+
+  const mut = useMutation({
+    mutationFn: () => updateSupplier(sid, form),
+    onSuccess: async () => {
+      setEditing(false); setErr("");
+      await qc.invalidateQueries({ queryKey: ["supplier", sid] });
+      await qc.invalidateQueries({ queryKey: ["suppliers"] });
+    },
+    onError: () => setErr("Не удалось сохранить (возможно, имя занято)"),
+  });
+
+  if (!editing) {
+    return (
+      <div style={{ ...card, marginBottom: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <div style={{ fontSize: 22, fontWeight: 700 }}>{s.name}</div>
+          <button onClick={() => { setForm({ name: s.name, address: s.address, min_delivery: s.min_delivery, comment: s.comment }); setEditing(true); }} style={btnGhost}>
+            ✎ Редактировать
+          </button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <Field label="Адрес" value={s.address} />
+          <Field label="Мин. поставка" value={s.min_delivery} />
+          <Field label="Комментарий" value={s.comment} />
+        </div>
+      </div>
+    );
+  }
+
+  const upd = (k: keyof SupplierInput, v: string) => setForm((f) => ({ ...f, [k]: v }));
+  return (
+    <div style={{ ...card, marginBottom: 16 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <Labeled label="Название *"><input value={form.name} onChange={(e) => upd("name", e.target.value)} style={input} /></Labeled>
+        <Labeled label="Адрес"><input value={form.address ?? ""} onChange={(e) => upd("address", e.target.value)} style={input} /></Labeled>
+        <Labeled label="Мин. поставка"><input value={form.min_delivery ?? ""} onChange={(e) => upd("min_delivery", e.target.value)} style={input} /></Labeled>
+        <Labeled label="Комментарий"><input value={form.comment ?? ""} onChange={(e) => upd("comment", e.target.value)} style={input} /></Labeled>
+        {err && <div style={{ color: COLORS.bad, fontSize: 13 }}>{err}</div>}
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={() => form.name.trim() && mut.mutate()} disabled={mut.isPending} style={btnPrimary}>
+            {mut.isPending ? "Сохранение..." : "Сохранить"}
+          </button>
+          <button onClick={() => { setEditing(false); setErr(""); }} style={btnGhost}>Отмена</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Контакты поставщика: список с каналами + добавление/удаление с валидацией. */
 function ContactsSection({ sid, contacts }: { sid: number; contacts: SupplierContact[] }) {
   const qc = useQueryClient();
-  const [phone, setPhone] = useState("");
-  const [person, setPerson] = useState("");
-  const [comment, setComment] = useState("");
+  const empty = { contact_person: "", phone: "", whatsapp: "", telegram: "", email: "", comment: "" };
+  const [draft, setDraft] = useState({ ...empty });
   const [err, setErr] = useState("");
+  const set = (k: keyof typeof empty, v: string) => setDraft((d) => ({ ...d, [k]: v }));
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["supplier", sid] });
   const addMut = useMutation({
-    mutationFn: () => addSupplierContact(sid, { phone, contact_person: person, comment }),
-    onSuccess: () => {
-      setPhone("");
-      setPerson("");
-      setComment("");
-      setErr("");
-      invalidate();
-    },
+    mutationFn: () => addSupplierContact(sid, draft),
+    onSuccess: () => { setDraft({ ...empty }); setErr(""); invalidate(); },
     onError: () => setErr("Не удалось сохранить контакт"),
   });
-  const delMut = useMutation({
-    mutationFn: (cid: number) => deleteSupplierContact(sid, cid),
-    onSuccess: invalidate,
-  });
+  const delMut = useMutation({ mutationFn: (cid: number) => deleteSupplierContact(sid, cid), onSuccess: invalidate });
 
   const add = () => {
-    if (!normalizePhone(phone)) {
-      setErr("Некорректный телефон. Ожидается российский номер.");
-      return;
-    }
+    if (!draft.contact_person && !draft.phone && !draft.whatsapp && !draft.telegram && !draft.email)
+      return setErr("Заполните хотя бы одно поле");
+    if (draft.phone && !normalizePhone(draft.phone)) return setErr("Некорректный телефон");
+    if (draft.whatsapp && !normalizePhone(draft.whatsapp)) return setErr("Некорректный WhatsApp");
+    if (draft.email && !isValidEmail(draft.email)) return setErr("Некорректный email");
     addMut.mutate();
   };
 
@@ -142,58 +181,62 @@ function ContactsSection({ sid, contacts }: { sid: number; contacts: SupplierCon
     <Section title={`Контакты (${contacts.length})`}>
       <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
         {contacts.map((c) => (
-          <div key={c.id} style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 14 }}>
-            <span style={{ fontWeight: 600, minWidth: 150 }}>{c.phone}</span>
-            <span style={{ flex: 1 }}>{c.contact_person || "—"}</span>
-            {c.comment && <span style={{ color: "var(--muted)", fontSize: 13 }}>{c.comment}</span>}
-            <button onClick={() => delMut.mutate(c.id)} style={iconBtn} title="Удалить">
-              ✕
-            </button>
+          <div key={c.id} style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 14, flexWrap: "wrap" }}>
+            <span style={{ fontWeight: 600, minWidth: 130 }}>{c.contact_person || "—"}</span>
+            {c.phone && <Chan label="☎" value={c.phone} />}
+            {c.whatsapp && <Chan label="WA" value={c.whatsapp} />}
+            {c.telegram && <Chan label="TG" value={c.telegram} />}
+            {c.email && <Chan label="✉" value={c.email} />}
+            {c.comment && <span style={{ color: "var(--muted)", fontSize: 13 }}>· {c.comment}</span>}
+            <button onClick={() => delMut.mutate(c.id)} style={{ ...iconBtn, marginLeft: "auto" }} title="Удалить">✕</button>
           </div>
         ))}
         {contacts.length === 0 && <Empty />}
       </div>
 
-      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-        <input
-          placeholder="+7 ..."
-          value={phone}
-          onChange={(e) => setPhone(e.target.value)}
-          style={{ ...inputSm, flex: "0 0 160px" }}
-        />
-        <input
-          placeholder="Контактное лицо"
-          value={person}
-          onChange={(e) => setPerson(e.target.value)}
-          style={{ ...inputSm, flex: 1, minWidth: 140 }}
-        />
-        <input
-          placeholder="Заметка"
-          value={comment}
-          onChange={(e) => setComment(e.target.value)}
-          style={{ ...inputSm, flex: "0 0 130px" }}
-        />
-        <button onClick={add} disabled={addMut.isPending} style={btnGhost}>
-          + Добавить
-        </button>
+      <div style={contactBox}>
+        <div style={{ display: "flex", gap: 8 }}>
+          <input placeholder="Контактное лицо" value={draft.contact_person} onChange={(e) => set("contact_person", e.target.value)} style={{ ...inputSm, flex: 1 }} />
+          <input placeholder="Заметка" value={draft.comment} onChange={(e) => set("comment", e.target.value)} style={{ ...inputSm, flex: 1 }} />
+        </div>
+        <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+          <input placeholder="☎ Телефон" value={draft.phone} onChange={(e) => set("phone", e.target.value)} style={{ ...inputSm, flex: 1 }} />
+          <input placeholder="WhatsApp" value={draft.whatsapp} onChange={(e) => set("whatsapp", e.target.value)} style={{ ...inputSm, flex: 1 }} />
+          <input placeholder="Telegram" value={draft.telegram} onChange={(e) => set("telegram", e.target.value)} style={{ ...inputSm, flex: 1 }} />
+          <input placeholder="Email" value={draft.email} onChange={(e) => set("email", e.target.value)} style={{ ...inputSm, flex: 1 }} />
+          <button onClick={add} disabled={addMut.isPending} style={btnGhost}>+ Добавить</button>
+        </div>
       </div>
       {err && <div style={{ color: COLORS.bad, fontSize: 13, marginTop: 8 }}>{err}</div>}
     </Section>
   );
 }
 
-function Info({ label, value }: { label: string; value: string }) {
+const Chan = ({ label, value }: { label: string; value: string }) => (
+  <span style={{ fontSize: 13 }}>
+    <span style={{ color: "var(--muted)" }}>{label} </span>{value}
+  </span>
+);
+
+function Field({ label, value }: { label: string; value: string }) {
   return (
-    <div style={{ background: "var(--card)", borderRadius: 10, padding: "10px 14px" }}>
+    <div>
       <div style={{ color: "var(--muted)", fontSize: 12 }}>{label}</div>
       <div style={{ fontSize: 14, marginTop: 2 }}>{value || "—"}</div>
     </div>
   );
 }
 
+const Labeled = ({ label, children }: { label: string; children: React.ReactNode }) => (
+  <label style={{ fontSize: 13 }}>
+    <div style={{ color: "var(--muted)", marginBottom: 4 }}>{label}</div>
+    {children}
+  </label>
+);
+
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div style={{ background: "var(--card)", borderRadius: 12, padding: "16px 20px", marginBottom: 16 }}>
+    <div style={{ ...card, marginBottom: 16 }}>
       <div style={{ fontWeight: 600, marginBottom: 12 }}>{title}</div>
       {children}
     </div>
@@ -201,16 +244,28 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 
 const Empty = () => <div style={{ color: "var(--muted)", padding: 16, fontSize: 13 }}>Нет данных</div>;
+const card: React.CSSProperties = { background: "var(--card)", borderRadius: 12, padding: "16px 20px" };
 const tbl: React.CSSProperties = { width: "100%", borderCollapse: "collapse", fontSize: 13 };
 const th: React.CSSProperties = { color: "var(--muted)", textAlign: "left" };
 const td: React.CSSProperties = { padding: "7px 10px" };
-const btnGhost: React.CSSProperties = {
-  padding: "8px 16px", borderRadius: 8, border: "1px solid var(--grid)",
-  background: "transparent", color: "var(--text)", fontSize: 13, cursor: "pointer",
+const input: React.CSSProperties = {
+  width: "100%", padding: "9px 12px", borderRadius: 8, border: "1px solid var(--grid)",
+  background: "var(--bg)", color: "var(--text)", fontSize: 14, boxSizing: "border-box",
 };
 const inputSm: React.CSSProperties = {
   padding: "8px 10px", borderRadius: 8, border: "1px solid var(--grid)",
-  background: "var(--bg)", color: "var(--text)", fontSize: 13, boxSizing: "border-box",
+  background: "var(--bg)", color: "var(--text)", fontSize: 13, boxSizing: "border-box", minWidth: 0,
+};
+const contactBox: React.CSSProperties = {
+  border: "1px solid var(--grid)", borderRadius: 10, padding: 12,
+};
+const btnPrimary: React.CSSProperties = {
+  padding: "8px 16px", borderRadius: 8, border: "none", background: COLORS.primary,
+  color: "var(--text)", fontSize: 13, fontWeight: 600, cursor: "pointer",
+};
+const btnGhost: React.CSSProperties = {
+  padding: "8px 16px", borderRadius: 8, border: "1px solid var(--grid)",
+  background: "transparent", color: "var(--text)", fontSize: 13, cursor: "pointer",
 };
 const iconBtn: React.CSSProperties = {
   padding: "6px 9px", borderRadius: 8, border: "1px solid var(--grid)",

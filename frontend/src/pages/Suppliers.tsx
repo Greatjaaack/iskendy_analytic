@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { fetchSuppliers, runImport } from "../api";
+import { fetchSuppliers, runImport, suppliersExportUrl } from "../api";
 import { COLORS } from "../constants";
 
 /** Список поставщиков (таблица) + кнопки импорта из файла и создания нового. */
@@ -32,6 +32,9 @@ export function Suppliers() {
           <button onClick={handleImport} disabled={importing} style={btnGhost}>
             {importing ? "Импорт..." : "↧ Импорт из файла"}
           </button>
+          <a href={suppliersExportUrl()} style={{ ...btnGhost, textDecoration: "none" }}>
+            ⭳ Выгрузить в Excel
+          </a>
           <Link to="/suppliers/new" style={{ ...btnPrimary, textDecoration: "none" }}>
             + Новый поставщик
           </Link>

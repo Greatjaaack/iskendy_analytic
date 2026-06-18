@@ -112,6 +112,9 @@ export const uploadSupplierFile = (id: number, file: File, fileType = "other") =
 export const supplierFileUrl = (supplierId: number, fileId: number) =>
   `${BASE}/api/suppliers/${supplierId}/files/${fileId}`;
 
+/** URL выгрузки всех поставщиков в Excel (открывается напрямую/скачивается). */
+export const suppliersExportUrl = () => `${BASE}/api/suppliers/export`;
+
 // ---------- Номенклатура / ТТК ----------
 
 export const fetchIngredients = (): Promise<IngredientBrief[]> =>

@@ -18,6 +18,17 @@ def normalize_phone(raw: str) -> str:
     return "+7" + digits
 
 
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def normalize_email(raw: str) -> str:
+    """Валидирует email (мягко). Пусто → ''. Бросает ValueError на явно неверном."""
+    v = str(raw or "").strip()
+    if v and not _EMAIL_RE.match(v):
+        raise ValueError("Некорректный email")
+    return v
+
+
 def classify_channel(order_type: str) -> str:
     """Эвристика канала по значению OrderType (только для диагностики `/order-types`).
 
