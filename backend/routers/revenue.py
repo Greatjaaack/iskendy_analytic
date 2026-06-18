@@ -1,6 +1,6 @@
 """Роутер выручки: по дням (из БД либо живой за произвольный диапазон) и по часам."""
 
-from datetime import date
+from datetime import date, timedelta
 
 from fastapi import APIRouter, Query
 from sqlalchemy import select
@@ -107,8 +107,9 @@ async def get_revenue(
     date_to: str | None = None,
 ):
     df, dt = period_range(period, date_from, date_to)
+    is_custom = bool(date_from and date_to)
     # произвольный диапазон → живой запрос (в БД может не быть истории); пресет → из БД
-    days = await _days_live(df, dt) if (date_from and date_to) else _days_from_db(df, dt)
+    days = await _days_live(df, dt) if is_custom else _days_from_db(df, dt)
 
     # погода по Москве за те же дни (не критично — при сбое просто не покажем)
     weather = await get_weather(df.isoformat(), dt.isoformat())
@@ -119,8 +120,17 @@ async def get_revenue(
     total_checks = sum(r["check_count"] for r in days)
     total_cost = sum(r["cost_sum"] for r in days)
 
+    # предыдущий аналогичный период (такой же длины, вплотную перед текущим) — для дельт.
+    # Берём из БД (быстро); если истории нет, дельта по этому показателю просто скрыта.
+    span = (dt - df).days
+    prev_dt = df - timedelta(days=1)
+    prev_df = prev_dt - timedelta(days=span)
+    prev_days = _days_from_db(prev_df, prev_dt)
+    prev_rev = sum(r["total_sum"] for r in prev_days)
+    prev_checks = sum(r["check_count"] for r in prev_days)
+
     return {
-        "period": "custom" if (date_from and date_to) else period,
+        "period": "custom" if is_custom else period,
         "date_from": df.isoformat(),
         "date_to": dt.isoformat(),
         "summary": {
@@ -130,6 +140,12 @@ async def get_revenue(
             "avg_check": round(total / total_checks, 2) if total_checks else 0,
             "total_cost": round(total_cost, 2),
             "food_cost_pct": round(total_cost / total * 100, 1) if total else 0,
+            # значения прошлого периода (None — если истории нет, тогда дельту не показываем)
+            "prev": {
+                "total_revenue": prev_rev if prev_days else None,
+                "total_checks": prev_checks if prev_days else None,
+                "avg_check": round(prev_rev / prev_checks, 2) if prev_checks else None,
+            },
         },
         "data": days,
     }

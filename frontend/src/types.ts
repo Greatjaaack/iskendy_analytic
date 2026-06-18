@@ -15,6 +15,11 @@ export interface RevenueSummary {
   avg_check: number;
   total_cost: number;
   food_cost_pct: number;
+  prev: {
+    total_revenue: number | null;
+    total_checks: number | null;
+    avg_check: number | null;
+  };
 }
 
 export interface DayWeather {

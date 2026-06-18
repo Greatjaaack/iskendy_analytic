@@ -9,12 +9,37 @@ interface Props {
 const foodCostColor = (pct: number) =>
   pct <= FOODCOST_GOOD ? COLORS.good : pct <= FOODCOST_WARN ? COLORS.warn : COLORS.bad;
 
+/** Дельта к прошлому периоду в %, либо null если сравнивать не с чем. */
+const delta = (cur: number, prev: number | null): number | null =>
+  prev == null || prev === 0 ? null : Math.round(((cur - prev) / prev) * 1000) / 10;
+
 export function KpiCards({ summary }: Props) {
+  const p = summary.prev;
   const cards = [
-    { label: "Выручка", value: fmtInt(summary.total_revenue) + " ₽", color: COLORS.primary },
-    { label: "Средний чек", value: fmtInt(summary.avg_check) + " ₽", color: COLORS.good },
-    { label: "Чеков", value: fmtInt(summary.total_checks), color: COLORS.warn },
-    { label: "Food cost", value: summary.food_cost_pct + " %", color: foodCostColor(summary.food_cost_pct) },
+    {
+      label: "Выручка",
+      value: fmtInt(summary.total_revenue) + " ₽",
+      color: COLORS.primary,
+      delta: delta(summary.total_revenue, p.total_revenue),
+    },
+    {
+      label: "Средний чек",
+      value: fmtInt(summary.avg_check) + " ₽",
+      color: COLORS.good,
+      delta: delta(summary.avg_check, p.avg_check),
+    },
+    {
+      label: "Чеков",
+      value: fmtInt(summary.total_checks),
+      color: COLORS.warn,
+      delta: delta(summary.total_checks, p.total_checks),
+    },
+    {
+      label: "Food cost",
+      value: summary.food_cost_pct + " %",
+      color: foodCostColor(summary.food_cost_pct),
+      delta: null,
+    },
   ];
 
   return (
@@ -31,6 +56,12 @@ export function KpiCards({ summary }: Props) {
         >
           <div style={{ color: COLORS.muted, fontSize: 13, marginBottom: 8 }}>{c.label}</div>
           <div style={{ color: "var(--text)", fontSize: 24, fontWeight: 700 }}>{c.value}</div>
+          {c.delta != null && (
+            <div style={{ fontSize: 12, marginTop: 6, color: c.delta >= 0 ? COLORS.good : COLORS.bad }}>
+              {c.delta >= 0 ? "▲" : "▼"} {Math.abs(c.delta)}%
+              <span style={{ color: COLORS.muted }}> к пр. периоду</span>
+            </div>
+          )}
         </div>
       ))}
     </div>

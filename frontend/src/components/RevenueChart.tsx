@@ -36,18 +36,44 @@ export function RevenueChart({ data }: Props) {
 
   const filtered = days.size === 0 ? data : data.filter((d) => days.has(d.day_of_week));
 
-  const chartData = filtered.map((d) => ({
-    label: `${d.day_of_week} ${d.date.slice(5)}`,
-    Выручка: d.total_sum,
-    "Ср. чек": d.avg_check,
-    Чеки: d.check_count,
-  }));
+  const chartData = filtered.map((d) => {
+    const info = d.weather ? weatherInfo(d.weather.weather_code) : null;
+    const t = d.weather?.temp_max;
+    return {
+      label: `${d.day_of_week} ${d.date.slice(5)}`,
+      weather: info ? `${info.icon}${t != null ? ` ${Math.round(t)}°` : ""}` : "",
+      Выручка: d.total_sum,
+      "Ср. чек": d.avg_check,
+      Чеки: d.check_count,
+    };
+  });
+  // погода прямо под датой на оси X (чтобы не искать в отдельном списке)
+  const weatherByLabel: Record<string, string> = {};
+  chartData.forEach((d) => {
+    if (d.weather) weatherByLabel[d.label] = d.weather;
+  });
+  const renderTick = (props: {
+    x?: number | string;
+    y?: number | string;
+    payload?: { value?: string | number };
+  }) => {
+    const label = String(props.payload?.value ?? "");
+    const w = weatherByLabel[label];
+    return (
+      <g transform={`translate(${Number(props.x ?? 0)},${Number(props.y ?? 0)})`}>
+        <text x={0} y={0} dy={12} textAnchor="middle" fill="var(--muted)" fontSize={12}>{label}</text>
+        {w && (
+          <text x={0} y={0} dy={28} textAnchor="middle" fill="var(--muted)" fontSize={12}>{w}</text>
+        )}
+      </g>
+    );
+  };
 
   const axisProps = {
     tick: { fill: "var(--muted)", fontSize: 12 },
   };
   const grid = <CartesianGrid strokeDasharray="3 3" stroke="var(--grid)" />;
-  const xaxis = <XAxis dataKey="label" {...axisProps} />;
+  const xaxis = <XAxis dataKey="label" tick={renderTick} interval={0} height={46} />;
   // левая ось — деньги (выручка/ср.чек), правая — количество чеков (другой масштаб)
   const yaxisL = <YAxis yAxisId="money" tickFormatter={fmtInt} {...axisProps} />;
   const yaxisR = <YAxis yAxisId="checks" orientation="right" allowDecimals={false} {...axisProps} />;
@@ -127,23 +153,6 @@ export function RevenueChart({ data }: Props) {
       <ResponsiveContainer width="100%" height={CHART_HEIGHT}>
         {renderChart()}
       </ResponsiveContainer>
-
-      {/* Погода в Москве по дням (#5) — показываем, если данные есть */}
-      {filtered.some((d) => d.weather) && (
-        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 12, fontSize: 12, color: "var(--muted)" }}>
-          {filtered.map((d) => {
-            const w = d.weather;
-            if (!w) return null;
-            const info = weatherInfo(w.weather_code);
-            return (
-              <span key={d.date} title={info.label}>
-                {d.day_of_week} {d.date.slice(8)}: {info.icon}
-                {w.temp_max != null ? ` ${Math.round(w.temp_max)}°` : ""}
-              </span>
-            );
-          })}
-        </div>
-      )}
 
       {chartData.length === 0 && (
         <div style={{ color: "var(--muted)", textAlign: "center", padding: 24 }}>
