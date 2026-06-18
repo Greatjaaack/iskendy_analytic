@@ -177,6 +177,22 @@ async def get_revenue(
     prev_rev = sum(r["total_sum"] for r in prev_days)
     prev_checks = sum(r["check_count"] for r in prev_days)
 
+    # прошлый период, выровненный по позиции дня (для сравнения выручка×погода)
+    prev_weather = await get_weather(prev_df.isoformat(), prev_dt.isoformat())
+    prev_map = {r["date"]: r for r in prev_days}
+    prev_data = []
+    for i in range(len(days)):
+        pd = (prev_df + timedelta(days=i)).isoformat()
+        pm = prev_map.get(pd)
+        pw = prev_weather.get(pd)
+        prev_data.append(
+            {
+                "date": pd,
+                "total_sum": pm["total_sum"] if pm else None,
+                "temp_max": pw.get("temp_max") if pw else None,
+            }
+        )
+
     return {
         "period": "custom" if is_custom else period,
         "date_from": df.isoformat(),
@@ -196,6 +212,7 @@ async def get_revenue(
             },
         },
         "data": days,
+        "prev_data": prev_data,
     }
 
 

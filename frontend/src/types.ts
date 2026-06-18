@@ -41,12 +41,19 @@ export interface RevenueDay {
   weather: DayWeather | null;
 }
 
+export interface PrevDay {
+  date: string;
+  total_sum: number | null;
+  temp_max: number | null;
+}
+
 export interface RevenueResponse {
   period: Period | "custom";
   date_from: string;
   date_to: string;
   summary: RevenueSummary;
   data: RevenueDay[];
+  prev_data: PrevDay[];
 }
 
 // ---------- Продажи блюд ----------
