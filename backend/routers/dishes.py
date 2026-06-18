@@ -7,6 +7,7 @@ from constants import (
     CHANNEL_DELIVERY,
     CHANNEL_DINEIN,
     CHANNEL_TAKEAWAY,
+    DELIVERY_CATEGORY,
     OLAP_FIELD_DISH_CATEGORY,
     OLAP_FIELD_DISH_NAME,
     OLAP_FIELD_HOUR,
@@ -75,11 +76,12 @@ async def get_dishes(
     rows = [r for r in rows if r.get("product_type") != PRODUCT_TYPE_MODIFIER]
 
     # с/с по блюду: порционная с/с × количество (iiko-метрика по блюду ~0).
-    # постфикс «_д» (доставка) срезаем перед матчингом — у доставочной позиции та же ТТК.
+    # канал «доставка» — по принадлежности к категории «Доставка» (а не по постфиксу);
+    # `_д` срезаем ТОЛЬКО для подбора с/с (у доставочной позиции та же ТТК, что у базовой).
     unit_cost = _dish_unit_cost()
     for r in rows:
-        base_name, is_delivery = split_delivery(r["dish_name"])
-        r["channel"] = "доставка" if is_delivery else ""
+        base_name, _ = split_delivery(r["dish_name"])
+        r["channel"] = CHANNEL_DELIVERY if r.get("category") == DELIVERY_CATEGORY else ""
         c = unit_cost.get(normalize_name(base_name))
         if c is not None:
             r["cost_sum"] = c * r["quantity"]
@@ -300,7 +302,8 @@ async def get_service_breakdown(
             if ch:
                 order_channel[order_num] = ch
 
-    # 2-й проход: блюда заказа → его канал (или доставка по `_д`, иначе зал по умолчанию)
+    # 2-й проход: канал блюда — по категории «Доставка» (бизнес-правило), иначе «Статус»
+    # заказа (по умолчанию зал). Постфикс `_д` для канала не используем.
     channels = (CHANNEL_DINEIN, CHANNEL_TAKEAWAY, CHANNEL_DELIVERY)
     agg: dict[str, dict] = {}
     for r in rows:
@@ -309,12 +312,11 @@ async def get_service_breakdown(
             continue
         qty = float(r.get("field1", {}).get("value", 0) or 0)
         rev = float(r.get("field2", {}).get("value", 0) or 0)
-        base, is_delivery = split_delivery(name)
-        if is_delivery:
+        if category == DELIVERY_CATEGORY:
             channel = CHANNEL_DELIVERY
         else:
             channel = order_channel.get(order_num, CHANNEL_DINEIN)
-        key = (category or "Без категории") if group == "category" else base
+        key = (category or "Без категории") if group == "category" else name
         a = agg.setdefault(
             key, {"name": key, "total": 0.0, "revenue": 0.0, **{c: 0.0 for c in channels}}
         )
