@@ -93,6 +93,7 @@ OLAP_FIELD_DISH_NAME = "DishName"
 OLAP_FIELD_SUM = "DishSumInt"  # сумма без скидки (выручка)
 OLAP_FIELD_QTY = "DishAmountInt"  # количество
 OLAP_FILTER_DATE = "OpenDate.Typed"  # поле фильтра по дате
+OLAP_FIELD_OPEN_DATE = "OpenDate.Typed"  # дата заказа (группировка, ISO YYYY-MM-DD)
 
 # Тип обслуживания заказа (доставка / с собой / в зале) для разреза блюдо×канал (#4).
 # ⚠️ Имя поля подобрано по стандарту iiko OLAP SALES — ПРОВЕРИТЬ на живом API через

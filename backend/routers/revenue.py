@@ -6,18 +6,66 @@ from fastapi import APIRouter, Query
 from sqlalchemy import select
 
 from constants import (
+    CHANNEL_DELIVERY,
+    CHANNEL_DINEIN,
+    CHANNEL_TAKEAWAY,
     DAY_NAMES_RU,
+    DELIVERY_CATEGORY,
     METRIC_AVG_SPEND,
     METRIC_COST,
     METRIC_DISCOUNT,
     METRIC_REFUNDS,
     METRIC_REV_GROSS,
     METRIC_TRN_ALL,
+    OLAP_FIELD_DISH_CATEGORY,
+    OLAP_FIELD_DISH_NAME,
+    OLAP_FIELD_HOUR,
+    OLAP_FIELD_OPEN_DATE,
+    OLAP_FIELD_ORDER_NUM,
+    OLAP_FIELD_SUM,
+    ORDER_STATUS_CATEGORY,
+    ORDER_STATUS_CHANNELS,
 )
 from iiko_web_client import iiko_web
 from models import RevenueDaily, SessionLocal
 from utils import period_range
 from weather import get_weather
+
+CHANNELS = (CHANNEL_DINEIN, CHANNEL_TAKEAWAY, CHANNEL_DELIVERY)
+
+
+def _split4(value: str) -> tuple[str, str, str, str]:
+    """field0 «bucket, OrderNum, Категория, Имя» → 4 части (имя может содержать ', ')."""
+    parts = str(value).split(", ")
+    if len(parts) < 4:
+        return "", "", "", ""
+    return parts[0], parts[1], parts[2], ", ".join(parts[3:])
+
+
+def _channel_revenue(rows: list[dict]) -> dict[str, dict[str, float]]:
+    """{bucket → {канал: выручка}}. bucket = 1-е group-поле (дата/час). Канал: категория
+    «Доставка» → доставка; иначе «Статус» заказа (по умолчанию зал)."""
+    order_channel: dict[str, str] = {}
+    for r in rows:
+        _b, ordernum, category, name = _split4(r.get("field0", {}).get("value", ""))
+        if category == ORDER_STATUS_CATEGORY:
+            ch = ORDER_STATUS_CHANNELS.get(name.strip().lower())
+            if ch:
+                order_channel[ordernum] = ch
+    out: dict[str, dict[str, float]] = {}
+    for r in rows:
+        bucket, ordernum, category, name = _split4(r.get("field0", {}).get("value", ""))
+        if not name or category == ORDER_STATUS_CATEGORY:
+            continue
+        rev = float(r.get("field1", {}).get("value", 0) or 0)
+        ch = (
+            CHANNEL_DELIVERY
+            if category == DELIVERY_CATEGORY
+            else order_channel.get(ordernum, CHANNEL_DINEIN)
+        )
+        out.setdefault(bucket, {c: 0.0 for c in CHANNELS})[ch] += rev
+    return out
+
 
 router = APIRouter(prefix="/api/revenue", tags=["revenue"])
 
@@ -192,3 +240,78 @@ async def get_hourly(
         for h in hours
     ]
     return {"period": period, "date_from": df.isoformat(), "date_to": dt.isoformat(), "data": data}
+
+
+@router.get("/by-channel")
+async def get_revenue_by_channel(
+    period: str = Query("week", enum=["day", "week", "month"]),
+    date_from: str | None = None,
+    date_to: str | None = None,
+):
+    """Выручка по дням в разрезе каналов (зал/с собой/доставка) — через OLAP SALES."""
+    df, dt = period_range(period, date_from, date_to)
+    rows = await iiko_web.olap_sales(
+        group_fields=[
+            OLAP_FIELD_OPEN_DATE,
+            OLAP_FIELD_ORDER_NUM,
+            OLAP_FIELD_DISH_CATEGORY,
+            OLAP_FIELD_DISH_NAME,
+        ],
+        data_fields=[OLAP_FIELD_SUM],
+        date_from=df.isoformat(),
+        date_to=dt.isoformat(),
+    )
+    buckets = _channel_revenue(rows)
+    data = []
+    for ds in sorted(buckets):
+        try:
+            d = date.fromisoformat(ds)
+        except ValueError:
+            continue
+        b = buckets[ds]
+        row = {"date": ds, "day_of_week": _ru_dow(d), "total": round(sum(b.values()), 2)}
+        row.update({c: round(b[c], 2) for c in CHANNELS})
+        data.append(row)
+    return {
+        "period": "custom" if (date_from and date_to) else period,
+        "date_from": df.isoformat(),
+        "date_to": dt.isoformat(),
+        "channels": list(CHANNELS),
+        "data": data,
+    }
+
+
+@router.get("/hourly-by-channel")
+async def get_hourly_by_channel(
+    period: str = Query("week", enum=["day", "week", "month"]),
+    date_from: str | None = None,
+    date_to: str | None = None,
+):
+    """Продажи по часам в разрезе каналов (зал/с собой/доставка) — через OLAP SALES."""
+    df, dt = period_range(period, date_from, date_to)
+    rows = await iiko_web.olap_sales(
+        group_fields=[
+            OLAP_FIELD_HOUR,
+            OLAP_FIELD_ORDER_NUM,
+            OLAP_FIELD_DISH_CATEGORY,
+            OLAP_FIELD_DISH_NAME,
+        ],
+        data_fields=[OLAP_FIELD_SUM],
+        date_from=df.isoformat(),
+        date_to=dt.isoformat(),
+    )
+    buckets = _channel_revenue(rows)
+    data = []
+    for hk in sorted((h for h in buckets if h.isdigit()), key=int):
+        h = int(hk)
+        b = buckets[hk]
+        row = {"hour": h, "label": f"{h:02d}-{h + 1:02d}", "total": round(sum(b.values()), 2)}
+        row.update({c: round(b[c], 2) for c in CHANNELS})
+        data.append(row)
+    return {
+        "period": "custom" if (date_from and date_to) else period,
+        "date_from": df.isoformat(),
+        "date_to": dt.isoformat(),
+        "channels": list(CHANNELS),
+        "data": data,
+    }

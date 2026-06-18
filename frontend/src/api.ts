@@ -9,10 +9,12 @@ import type {
   DishMapping,
   DishResponse,
   HourlyBreakdown,
+  HourlyByChannel,
   HourlyResponse,
   IngredientBrief,
   IngredientCard,
   RangeSel,
+  RevenueByChannel,
   RevenueResponse,
   ServiceBreakdown,
   SupplierBrief,
@@ -46,6 +48,12 @@ export const fetchRevenue = (range: RangeSel): Promise<RevenueResponse> =>
 
 export const fetchHourly = (range: RangeSel): Promise<HourlyResponse> =>
   api.get<HourlyResponse>(`/api/revenue/hourly?${rangeQS(range)}`).then((r) => r.data);
+
+export const fetchRevenueByChannel = (range: RangeSel): Promise<RevenueByChannel> =>
+  api.get<RevenueByChannel>(`/api/revenue/by-channel?${rangeQS(range)}`).then((r) => r.data);
+
+export const fetchHourlyByChannel = (range: RangeSel): Promise<HourlyByChannel> =>
+  api.get<HourlyByChannel>(`/api/revenue/hourly-by-channel?${rangeQS(range)}`).then((r) => r.data);
 
 export const triggerSync = () => api.post("/api/sync");
 

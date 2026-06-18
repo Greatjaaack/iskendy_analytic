@@ -118,7 +118,7 @@ export function Dashboard() {
             <TodayBanner day={revenueQ.data.data[0]} />
           )}
           <KpiCards summary={revenueQ.data.summary} />
-          <RevenueChart data={revenueQ.data.data} />
+          <RevenueChart data={revenueQ.data.data} range={sel} />
           <ChecksDistribution range={sel} />
           <HourlyChart range={sel} />
           <HourlyBreakdown range={sel} />

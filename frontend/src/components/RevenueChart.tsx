@@ -1,29 +1,30 @@
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   AreaChart, Area, LineChart, Line, BarChart, Bar,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from "recharts";
-import type { RevenueDay } from "../api";
+import { fetchRevenueByChannel, rangeKey, type RangeSel, type RevenueDay } from "../api";
 import {
-  CHART_HEIGHT,
-  CHART_TYPES,
-  COLORS,
-  WEEKDAYS_ALL,
-  WEEKDAYS_WEEKEND,
-  WEEKDAYS_WORK,
-  weatherInfo,
-  type ChartKind,
+  CHART_HEIGHT, CHART_TYPES, COLORS, REFETCH_INTERVAL_MS,
+  WEEKDAYS_ALL, WEEKDAYS_WEEKEND, WEEKDAYS_WORK, weatherInfo, type ChartKind,
 } from "../constants";
 import { fmtInt } from "../format";
 
 interface Props {
   data: RevenueDay[];
+  range: RangeSel;
 }
 
-export function RevenueChart({ data }: Props) {
+/** Цвет канала обслуживания (как в «Чеки по типу обслуживания»). */
+const chColor = (ch: string) =>
+  ch === "доставка" ? COLORS.primary : ch === "с собой" ? COLORS.warn : COLORS.good;
+
+export function RevenueChart({ data, range }: Props) {
   const [type, setType] = useState<ChartKind>("area");
-  // мультивыбор дней недели; пустое множество = показывать все дни
   const [days, setDays] = useState<Set<string>>(new Set());
+  const [byChannel, setByChannel] = useState(false);
+  const [hidden, setHidden] = useState<Set<string>>(new Set());
 
   const toggleDay = (d: string) =>
     setDays((prev) => {
@@ -32,51 +33,62 @@ export function RevenueChart({ data }: Props) {
       else next.add(d);
       return next;
     });
-  const setPreset = (preset: string[]) => setDays(new Set(preset));
+  const toggleChannel = (c: string) =>
+    setHidden((prev) => {
+      const next = new Set(prev);
+      if (next.has(c)) next.delete(c);
+      else next.add(c);
+      return next;
+    });
 
-  const filtered = days.size === 0 ? data : data.filter((d) => days.has(d.day_of_week));
+  // данные по каналам тянем только когда включён режим «По статусам»
+  const chQ = useQuery({
+    queryKey: ["revenue-by-channel", rangeKey(range)],
+    queryFn: () => fetchRevenueByChannel(range),
+    refetchInterval: REFETCH_INTERVAL_MS,
+    enabled: byChannel,
+  });
 
-  const chartData = filtered.map((d) => {
+  const dayOk = (dow: string) => days.size === 0 || days.has(dow);
+
+  // погода под датой на оси X
+  const weatherByLabel: Record<string, string> = {};
+  data.forEach((d) => {
     const info = d.weather ? weatherInfo(d.weather.weather_code) : null;
     const t = d.weather?.temp_max;
-    return {
-      label: `${d.day_of_week} ${d.date.slice(5)}`,
-      weather: info ? `${info.icon}${t != null ? ` ${Math.round(t)}°` : ""}` : "",
-      Выручка: d.total_sum,
-      "Ср. чек": d.avg_check,
-      Чеки: d.check_count,
-    };
+    if (info) weatherByLabel[`${d.day_of_week} ${d.date.slice(5)}`] = `${info.icon}${t != null ? ` ${Math.round(t)}°` : ""}`;
   });
-  // погода прямо под датой на оси X (чтобы не искать в отдельном списке)
-  const weatherByLabel: Record<string, string> = {};
-  chartData.forEach((d) => {
-    if (d.weather) weatherByLabel[d.label] = d.weather;
-  });
-  const renderTick = (props: {
-    x?: number | string;
-    y?: number | string;
-    payload?: { value?: string | number };
-  }) => {
+  const renderTick = (props: { x?: number | string; y?: number | string; payload?: { value?: string | number } }) => {
     const label = String(props.payload?.value ?? "");
     const w = weatherByLabel[label];
     return (
       <g transform={`translate(${Number(props.x ?? 0)},${Number(props.y ?? 0)})`}>
         <text x={0} y={0} dy={12} textAnchor="middle" fill="var(--muted)" fontSize={12}>{label}</text>
-        {w && (
-          <text x={0} y={0} dy={28} textAnchor="middle" fill="var(--muted)" fontSize={12}>{w}</text>
-        )}
+        {w && <text x={0} y={0} dy={28} textAnchor="middle" fill="var(--muted)" fontSize={12}>{w}</text>}
       </g>
     );
   };
 
-  const axisProps = {
-    tick: { fill: "var(--muted)", fontSize: 12 },
-  };
+  const channels = chQ.data?.channels ?? [];
+  const visible = channels.filter((c) => !hidden.has(c));
+
+  const sumData = data.filter((d) => dayOk(d.day_of_week)).map((d) => ({
+    label: `${d.day_of_week} ${d.date.slice(5)}`,
+    Выручка: d.total_sum,
+    "Ср. чек": d.avg_check,
+    Чеки: d.check_count,
+  }));
+  const chData = (chQ.data?.data ?? []).filter((d) => dayOk(d.day_of_week)).map((d) => {
+    const row: Record<string, number | string> = { label: `${d.day_of_week} ${d.date.slice(5)}` };
+    channels.forEach((c) => (row[c] = Number(d[c] ?? 0)));
+    return row;
+  });
+  const chartData = byChannel ? chData : sumData;
+
   const grid = <CartesianGrid strokeDasharray="3 3" stroke="var(--grid)" />;
   const xaxis = <XAxis dataKey="label" tick={renderTick} interval={0} height={46} />;
-  // левая ось — деньги (выручка/ср.чек), правая — количество чеков (другой масштаб)
-  const yaxisL = <YAxis yAxisId="money" tickFormatter={fmtInt} {...axisProps} />;
-  const yaxisR = <YAxis yAxisId="checks" orientation="right" allowDecimals={false} {...axisProps} />;
+  const yaxisL = <YAxis yAxisId="money" tickFormatter={fmtInt} tick={{ fill: "var(--muted)", fontSize: 12 }} />;
+  const yaxisR = <YAxis yAxisId="checks" orientation="right" allowDecimals={false} tick={{ fill: "var(--muted)", fontSize: 12 }} />;
   const tooltip = (
     <Tooltip
       contentStyle={{ background: "var(--bg)", border: "1px solid var(--grid)", borderRadius: 8 }}
@@ -86,7 +98,24 @@ export function RevenueChart({ data }: Props) {
   );
   const legend = <Legend wrapperStyle={{ fontSize: 12, color: "var(--muted)" }} />;
 
+  // серии для режима «По статусам» (стек по каналам)
+  const channelSeries = (kind: "area" | "line" | "bar") =>
+    visible.map((c) =>
+      kind === "bar" ? (
+        <Bar key={c} yAxisId="money" dataKey={c} stackId="ch" fill={chColor(c)} />
+      ) : kind === "area" ? (
+        <Area key={c} yAxisId="money" type="monotone" dataKey={c} stackId="ch" stroke={chColor(c)} fill={chColor(c)} fillOpacity={0.35} />
+      ) : (
+        <Line key={c} yAxisId="money" type={type === "step" ? "stepAfter" : "monotone"} dataKey={c} stroke={chColor(c)} strokeWidth={2} dot={false} />
+      ),
+    );
+
   const renderChart = () => {
+    if (byChannel) {
+      if (type === "bar") return <BarChart data={chartData}>{grid}{xaxis}{yaxisL}{tooltip}{legend}{channelSeries("bar")}</BarChart>;
+      if (type === "area") return <AreaChart data={chartData}>{grid}{xaxis}{yaxisL}{tooltip}{legend}{channelSeries("area")}</AreaChart>;
+      return <LineChart data={chartData}>{grid}{xaxis}{yaxisL}{tooltip}{legend}{channelSeries("line")}</LineChart>;
+    }
     if (type === "bar") {
       return (
         <BarChart data={chartData}>
@@ -113,7 +142,6 @@ export function RevenueChart({ data }: Props) {
         </AreaChart>
       );
     }
-    // line / step
     return (
       <LineChart data={chartData}>
         {grid}{xaxis}{yaxisL}{yaxisR}{tooltip}{legend}
@@ -128,36 +156,47 @@ export function RevenueChart({ data }: Props) {
     <div style={{ background: "var(--card)", borderRadius: 12, padding: "20px 24px" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
         <div style={{ color: "var(--text)", fontWeight: 600 }}>Выручка по дням</div>
-        <div style={{ display: "flex", background: "var(--bg)", borderRadius: 8, padding: 3, gap: 2 }}>
-          {CHART_TYPES.map((t) => (
-            <button key={t.key} onClick={() => setType(t.key)} style={miniBtn(type === t.key)}>
-              {t.label}
-            </button>
-          ))}
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", background: "var(--bg)", borderRadius: 8, padding: 3, gap: 2 }}>
+            <button onClick={() => setByChannel(false)} style={miniBtn(!byChannel)}>Сумма</button>
+            <button onClick={() => setByChannel(true)} style={miniBtn(byChannel)}>По статусам</button>
+          </div>
+          <div style={{ display: "flex", background: "var(--bg)", borderRadius: 8, padding: 3, gap: 2 }}>
+            {CHART_TYPES.map((t) => (
+              <button key={t.key} onClick={() => setType(t.key)} style={miniBtn(type === t.key)}>{t.label}</button>
+            ))}
+          </div>
         </div>
       </div>
 
-      {/* Мультивыбор дней недели: пусто = все дни */}
       <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 16 }}>
         <span style={{ color: "var(--muted)", fontSize: 12, marginRight: 2 }}>Дни:</span>
         {WEEKDAYS_ALL.map((d) => (
-          <button key={d} onClick={() => toggleDay(d)} style={chip(days.has(d))}>
-            {d}
-          </button>
+          <button key={d} onClick={() => toggleDay(d)} style={chip(days.has(d))}>{d}</button>
         ))}
-        <span style={{ width: 1, height: 18, background: "var(--grid)", margin: "0 4px" }} />
-        <button onClick={() => setPreset([])} style={chip(days.size === 0)}>Все</button>
-        <button onClick={() => setPreset(WEEKDAYS_WORK)} style={chip(false)}>Будни</button>
-        <button onClick={() => setPreset(WEEKDAYS_WEEKEND)} style={chip(false)}>Выходные</button>
+        <button onClick={() => setDays(new Set())} style={chip(days.size === 0)}>Все</button>
+        <button onClick={() => setDays(new Set(WEEKDAYS_WORK))} style={chip(false)}>Будни</button>
+        <button onClick={() => setDays(new Set(WEEKDAYS_WEEKEND))} style={chip(false)}>Выходные</button>
+        {byChannel && channels.length > 0 && (
+          <>
+            <span style={{ width: 1, height: 18, background: "var(--grid)", margin: "0 4px" }} />
+            <span style={{ color: "var(--muted)", fontSize: 12 }}>Статус:</span>
+            {channels.map((c) => (
+              <button key={c} onClick={() => toggleChannel(c)} style={chanChip(!hidden.has(c), chColor(c))}>{c}</button>
+            ))}
+          </>
+        )}
       </div>
+
       <ResponsiveContainer width="100%" height={CHART_HEIGHT}>
         {renderChart()}
       </ResponsiveContainer>
 
-      {chartData.length === 0 && (
-        <div style={{ color: "var(--muted)", textAlign: "center", padding: 24 }}>
-          Нет данных для выбранного фильтра
-        </div>
+      {byChannel && chQ.isLoading && (
+        <div style={{ color: "var(--muted)", textAlign: "center", padding: 24 }}>Загрузка разреза по статусам…</div>
+      )}
+      {chartData.length === 0 && !chQ.isLoading && (
+        <div style={{ color: "var(--muted)", textAlign: "center", padding: 24 }}>Нет данных для выбранного фильтра</div>
       )}
     </div>
   );
@@ -169,10 +208,16 @@ const miniBtn = (active: boolean): React.CSSProperties => ({
   background: active ? COLORS.primary : "transparent",
   color: active ? "var(--text)" : "var(--muted)",
 });
-
 const chip = (active: boolean): React.CSSProperties => ({
   padding: "4px 10px", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 600,
   border: `1px solid ${active ? COLORS.primary : "var(--grid)"}`,
   background: active ? COLORS.primary : "transparent",
   color: active ? "var(--text)" : "var(--muted)",
+});
+const chanChip = (active: boolean, color: string): React.CSSProperties => ({
+  padding: "4px 10px", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 600,
+  border: `1px solid ${color}`,
+  background: active ? color : "transparent",
+  color: active ? "var(--text)" : "var(--muted)",
+  opacity: active ? 1 : 0.6,
 });

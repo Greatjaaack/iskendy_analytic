@@ -76,6 +76,34 @@ export interface DishResponse {
   data: DishRow[];
 }
 
+// Выручка/часы в разрезе каналов (зал/с собой/доставка). Ключи каналов — в channels.
+export interface ChannelDay {
+  date: string;
+  day_of_week: string;
+  total: number;
+  [channel: string]: number | string;
+}
+export interface RevenueByChannel {
+  period: Period | "custom";
+  date_from: string;
+  date_to: string;
+  channels: string[];
+  data: ChannelDay[];
+}
+export interface ChannelHour {
+  hour: number;
+  label: string;
+  total: number;
+  [channel: string]: number | string;
+}
+export interface HourlyByChannel {
+  period: Period | "custom";
+  date_from: string;
+  date_to: string;
+  channels: string[];
+  data: ChannelHour[];
+}
+
 // Разрез блюдо × канал обслуживания (#4). Ключи каналов («в зале»/«с собой»/«доставка»)
 // приходят в channels; значения по ним — числа (кол-во).
 export interface ServiceBreakdownRow {
