@@ -22,6 +22,7 @@ from datetime import date, datetime
 import openpyxl
 
 from models import (
+    DishMapping,
     Ingredient,
     SessionLocal,
     Supplier,
@@ -382,7 +383,13 @@ def import_ttk_matrix(path: str = SEED_PATH) -> dict:
 
     wb = openpyxl.load_workbook(path, data_only=True)
     with SessionLocal() as db:
-        # очистка прежнего импорта (поставщиков НЕ трогаем — у них могут быть файлы)
+        # привязки блюдо↔ТТК ссылаются на ttk_id, а ТТК пересоздаются с новыми id —
+        # запоминаем нормализованное имя цели, чтобы перелинковать после импорта
+        old_target = {
+            m.id: (m.ttk.name_norm if m.ttk else None) for m in db.query(DishMapping).all()
+        }
+
+        # очистка прежнего импорта (поставщиков и привязки НЕ трогаем)
         db.query(TtkIngredient).delete()
         db.query(Ttk).delete()
         db.query(SupplierPrice).delete()
@@ -390,6 +397,15 @@ def import_ttk_matrix(path: str = SEED_PATH) -> dict:
         db.flush()
 
         counters = _Importer(db).run(wb)
+
+        # перелинковка привязок по имени ТТК (предпочитаем НЕ-п/ф — is_semi False первыми)
+        new_by_norm: dict[str, int] = {}
+        for t in db.query(Ttk).order_by(Ttk.is_semi).all():
+            new_by_norm.setdefault(t.name_norm, t.id)
+        for m in db.query(DishMapping).all():
+            nn = old_target.get(m.id)
+            if nn and nn in new_by_norm:
+                m.ttk_id = new_by_norm[nn]
 
         db.add(SyncLog(sync_type="import_ttk", status="ok", message=str(counters)))
         db.commit()

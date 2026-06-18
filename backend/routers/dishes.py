@@ -45,8 +45,13 @@ def _dish_unit_cost() -> dict[str, float]:
     """
     out: dict[str, float] = {}
     with SessionLocal() as db:
-        # авто: по совпадению нормализованного имени блюда с именем ТТК
-        for n, c in db.execute(select(Ttk.name_norm, Ttk.cost_full)).all():
+        # авто: по совпадению нормализованного имени блюда с НЕ-полуфабрикатной ТТК.
+        # П/ф исключаем: их не продают напрямую, а их имя часто совпадает с блюдом
+        # («Чечевичный суп» — и блюдо-порция, и п/ф-котёл) — иначе подставилась бы
+        # батч-себестоимость п/ф вместо порционной.
+        for n, c in db.execute(
+            select(Ttk.name_norm, Ttk.cost_full).where(Ttk.is_semi.is_(False))
+        ).all():
             if c:
                 out[n] = c
         # ручные привязки имеют приоритет (перезаписывают авто)
