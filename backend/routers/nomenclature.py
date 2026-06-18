@@ -1,7 +1,5 @@
 """Роутер номенклатуры: ингредиенты, ТТК и привязка проданное блюдо ↔ ТТК."""
 
-import re
-
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy import func, select
@@ -15,13 +13,9 @@ from models import (
     Ttk,
     TtkIngredient,
 )
+from utils import normalize_name
 
 router = APIRouter(prefix="/api", tags=["nomenclature"])
-
-
-def _norm(s: str) -> str:
-    """Нормализация имени для сопоставления (lower, ё→е, схлоп пробелов)."""
-    return re.sub(r"\s+", " ", str(s or "").strip().lower().replace("ё", "е"))
 
 
 # ---------- Ингредиенты (номенклатура) ----------
@@ -207,7 +201,7 @@ def upsert_dish_mapping(data: DishMapIn):
     with SessionLocal() as db:
         if not db.get(Ttk, data.ttk_id):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "ТТК не найдена")
-        nn = _norm(data.sale_name)
+        nn = normalize_name(data.sale_name)
         m = db.execute(
             select(DishMapping).where(DishMapping.sale_name_norm == nn)
         ).scalar_one_or_none()

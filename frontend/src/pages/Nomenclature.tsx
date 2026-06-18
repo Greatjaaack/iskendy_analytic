@@ -3,8 +3,8 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { fetchTtkList, fetchIngredients } from "../api";
 import { DishTtkMapping } from "../components/DishTtkMapping";
-
-const fmt = (n: number) => new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(n);
+import { COLORS } from "../constants";
+import { fmtNum } from "../format";
 
 /** Номенклатура: вкладки ТТК, Ингредиенты и Блюда↔ТТК (привязка продаж к тех-картам). */
 export function Nomenclature() {
@@ -53,15 +53,15 @@ export function Nomenclature() {
                   <td style={{ ...td, color: "var(--muted)" }}>{t.category || "—"}</td>
                   <td style={td}>
                     {t.is_semi ? (
-                      <span style={{ color: "#f59e0b", fontSize: 12 }}>п/ф</span>
+                      <span style={{ color: COLORS.warn, fontSize: 12 }}>п/ф</span>
                     ) : (
-                      <span style={{ color: "#10b981", fontSize: 12 }}>блюдо</span>
+                      <span style={{ color: COLORS.good, fontSize: 12 }}>блюдо</span>
                     )}
                   </td>
                   <td style={{ ...td, textAlign: "right", color: "var(--muted)" }}>
-                    {t.yield_qty ? `${fmt(t.yield_qty)} ${t.yield_unit}` : "—"}
+                    {t.yield_qty ? `${fmtNum(t.yield_qty)} ${t.yield_unit}` : "—"}
                   </td>
-                  <td style={{ ...td, textAlign: "right", color: "#a5b4fc", fontWeight: 600 }}>{fmt(t.cost_total)}</td>
+                  <td style={{ ...td, textAlign: "right", color: COLORS.indigoText, fontWeight: 600 }}>{fmtNum(t.cost_total)}</td>
                 </tr>
               ))}
             </tbody>
@@ -86,7 +86,7 @@ export function Nomenclature() {
                   <td style={td}>{i.name}</td>
                   <td style={{ ...td, color: "var(--muted)" }}>{i.unit}</td>
                   <td style={{ ...td, textAlign: "right" }}>{i.prices}</td>
-                  <td style={{ ...td, color: i.iiko_product_id ? "#10b981" : "var(--muted)" }}>
+                  <td style={{ ...td, color: i.iiko_product_id ? COLORS.good : "var(--muted)" }}>
                     {i.iiko_product_id ? "привязан" : "—"}
                   </td>
                 </tr>
@@ -106,7 +106,7 @@ function Tab({ active, onClick, children }: { active: boolean; onClick: () => vo
       style={{
         padding: "6px 16px", borderRadius: 6, border: "none", cursor: "pointer",
         fontSize: 13, fontWeight: 600,
-        background: active ? "#6366f1" : "transparent", color: active ? "var(--text)" : "var(--muted)",
+        background: active ? COLORS.primary : "transparent", color: active ? "var(--text)" : "var(--muted)",
       }}
     >
       {children}

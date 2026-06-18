@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { createSupplier, uploadSupplierFile, type SupplierInput } from "../api";
+import { COLORS } from "../constants";
 
 const fields: { key: keyof SupplierInput; label: string }[] = [
   { key: "name", label: "Название *" },
@@ -83,7 +84,7 @@ const input: React.CSSProperties = {
   background: "var(--card)", color: "var(--text)", fontSize: 14, boxSizing: "border-box",
 };
 const btnPrimary: React.CSSProperties = {
-  padding: "9px 18px", borderRadius: 8, border: "none", background: "#6366f1",
+  padding: "9px 18px", borderRadius: 8, border: "none", background: COLORS.primary,
   color: "var(--text)", fontSize: 13, fontWeight: 600, cursor: "pointer",
 };
 const btnGhost: React.CSSProperties = {

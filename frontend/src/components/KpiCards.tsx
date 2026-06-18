@@ -1,21 +1,19 @@
 import type { RevenueSummary } from "../api";
 import { COLORS, FOODCOST_GOOD, FOODCOST_WARN } from "../constants";
+import { fmtInt } from "../format";
 
 interface Props {
   summary: RevenueSummary;
 }
-
-const fmt = (n: number) =>
-  new Intl.NumberFormat("ru-RU", { style: "decimal", maximumFractionDigits: 0 }).format(n);
 
 const foodCostColor = (pct: number) =>
   pct <= FOODCOST_GOOD ? COLORS.good : pct <= FOODCOST_WARN ? COLORS.warn : COLORS.bad;
 
 export function KpiCards({ summary }: Props) {
   const cards = [
-    { label: "Выручка", value: fmt(summary.total_revenue) + " ₽", color: COLORS.primary },
-    { label: "Средний чек", value: fmt(summary.avg_check) + " ₽", color: COLORS.good },
-    { label: "Чеков", value: fmt(summary.total_checks), color: COLORS.warn },
+    { label: "Выручка", value: fmtInt(summary.total_revenue) + " ₽", color: COLORS.primary },
+    { label: "Средний чек", value: fmtInt(summary.avg_check) + " ₽", color: COLORS.good },
+    { label: "Чеков", value: fmtInt(summary.total_checks), color: COLORS.warn },
     { label: "Food cost", value: summary.food_cost_pct + " %", color: foodCostColor(summary.food_cost_pct) },
   ];
 

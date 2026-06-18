@@ -12,5 +12,5 @@ def run_import():
     try:
         counters = import_ttk_matrix()
     except FileNotFoundError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(e))
     return {"status": "ok", "imported": counters}

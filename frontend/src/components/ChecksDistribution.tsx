@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { fetchCheckDistribution, rangeKey, type RangeSel } from "../api";
-import { REFETCH_INTERVAL_MS } from "../constants";
+import { REFETCH_INTERVAL_MS, COLORS } from "../constants";
 
 interface Props {
   range: RangeSel;
@@ -8,11 +8,11 @@ interface Props {
 
 // Цвета по типу обслуживания (стабильные, читаемы в обеих темах).
 const TYPE_COLORS: Record<string, string> = {
-  "Доставка": "#6366f1",
-  "В зале": "#10b981",
-  "С собой": "#f59e0b",
+  "Доставка": COLORS.primary,
+  "В зале": COLORS.good,
+  "С собой": COLORS.warn,
 };
-const colorFor = (t: string) => TYPE_COLORS[t] ?? "#22d3ee";
+const colorFor = (t: string) => TYPE_COLORS[t] ?? COLORS.accent;
 
 /** Распределение чеков по типу обслуживания (#1): доставка / в зале / с собой.
  *  Данные — из количества модификаторов категории «Статус». */

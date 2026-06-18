@@ -2,8 +2,7 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { fetchHourlyBreakdown, rangeKey, type RangeSel, type DishGroupBy } from "../api";
 import { REFETCH_INTERVAL_MS, COLORS } from "../constants";
-
-const fmt = (n: number) => new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 0 }).format(n);
+import { fmtInt } from "../format";
 
 interface Props {
   range: RangeSel;
@@ -86,7 +85,7 @@ export function HourlyBreakdown({ range }: Props) {
               <tr key={it.name} style={{ borderTop: "1px solid var(--grid)" }}>
                 <td style={td}>{it.name}</td>
                 <td style={{ ...td, textAlign: "right" }}>{it.quantity}</td>
-                <td style={{ ...td, textAlign: "right" }}>{fmt(it.revenue)}</td>
+                <td style={{ ...td, textAlign: "right" }}>{fmtInt(it.revenue)}</td>
                 <td style={{ ...td, textAlign: "right", color: COLORS.indigoText }}>
                   {current.revenue ? Math.round((it.revenue / current.revenue) * 100) : 0}%
                 </td>

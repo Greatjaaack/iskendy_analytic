@@ -5,9 +5,8 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from "recharts";
 import { fetchHourly, rangeKey, type RangeSel } from "../api";
-import { CHART_HEIGHT, REFETCH_INTERVAL_MS, CHART_TYPES, type ChartKind } from "../constants";
-
-const fmt = (n: number) => new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 0 }).format(n);
+import { CHART_HEIGHT, REFETCH_INTERVAL_MS, CHART_TYPES, COLORS, type ChartKind } from "../constants";
+import { fmtInt } from "../format";
 
 interface Props {
   range: RangeSel;
@@ -29,13 +28,13 @@ export function HourlyChart({ range }: Props) {
 
   const grid = <CartesianGrid strokeDasharray="3 3" stroke="var(--grid)" />;
   const xaxis = <XAxis dataKey="label" tick={{ fill: "var(--muted)", fontSize: 12 }} />;
-  const yaxisL = <YAxis yAxisId="money" tickFormatter={fmt} tick={{ fill: "var(--muted)", fontSize: 12 }} />;
+  const yaxisL = <YAxis yAxisId="money" tickFormatter={fmtInt} tick={{ fill: "var(--muted)", fontSize: 12 }} />;
   const yaxisR = <YAxis yAxisId="checks" orientation="right" allowDecimals={false} tick={{ fill: "var(--muted)", fontSize: 12 }} />;
   const tooltip = (
     <Tooltip
       contentStyle={{ background: "var(--bg)", border: "1px solid var(--grid)", borderRadius: 8 }}
       labelStyle={{ color: "var(--text)" }}
-      formatter={(val, name) => (name === "Чеки" ? `${val} шт` : `${fmt(Number(val))} ₽`)}
+      formatter={(val, name) => (name === "Чеки" ? `${val} шт` : `${fmtInt(Number(val))} ₽`)}
     />
   );
   const legend = <Legend wrapperStyle={{ fontSize: 12, color: "var(--muted)" }} />;
@@ -45,8 +44,8 @@ export function HourlyChart({ range }: Props) {
       return (
         <AreaChart data={chartData}>
           {grid}{xaxis}{yaxisL}{yaxisR}{tooltip}{legend}
-          <Area yAxisId="money" type="monotone" dataKey="Выручка" stroke="#6366f1" strokeWidth={2} fill="#6366f1" fillOpacity={0.2} />
-          <Area yAxisId="checks" type="monotone" dataKey="Чеки" stroke="#10b981" strokeWidth={2} fill="transparent" />
+          <Area yAxisId="money" type="monotone" dataKey="Выручка" stroke={COLORS.primary} strokeWidth={2} fill={COLORS.primary} fillOpacity={0.2} />
+          <Area yAxisId="checks" type="monotone" dataKey="Чеки" stroke={COLORS.good} strokeWidth={2} fill="transparent" />
         </AreaChart>
       );
     }
@@ -55,16 +54,16 @@ export function HourlyChart({ range }: Props) {
       return (
         <LineChart data={chartData}>
           {grid}{xaxis}{yaxisL}{yaxisR}{tooltip}{legend}
-          <Line yAxisId="money" type={t} dataKey="Выручка" stroke="#6366f1" strokeWidth={2} dot={false} />
-          <Line yAxisId="checks" type={t} dataKey="Чеки" stroke="#10b981" strokeWidth={2} dot={false} />
+          <Line yAxisId="money" type={t} dataKey="Выручка" stroke={COLORS.primary} strokeWidth={2} dot={false} />
+          <Line yAxisId="checks" type={t} dataKey="Чеки" stroke={COLORS.good} strokeWidth={2} dot={false} />
         </LineChart>
       );
     }
     return (
       <BarChart data={chartData}>
         {grid}{xaxis}{yaxisL}{yaxisR}{tooltip}{legend}
-        <Bar yAxisId="money" dataKey="Выручка" fill="#6366f1" radius={[4, 4, 0, 0]} />
-        <Bar yAxisId="checks" dataKey="Чеки" fill="#10b981" radius={[4, 4, 0, 0]} />
+        <Bar yAxisId="money" dataKey="Выручка" fill={COLORS.primary} radius={[4, 4, 0, 0]} />
+        <Bar yAxisId="checks" dataKey="Чеки" fill={COLORS.good} radius={[4, 4, 0, 0]} />
       </BarChart>
     );
   };
@@ -81,7 +80,7 @@ export function HourlyChart({ range }: Props) {
               style={{
                 padding: "5px 12px", borderRadius: 6, border: "none", cursor: "pointer",
                 fontSize: 12, fontWeight: 600,
-                background: type === t.key ? "#6366f1" : "transparent",
+                background: type === t.key ? COLORS.primary : "transparent",
                 color: type === t.key ? "var(--text)" : "var(--muted)",
               }}
             >

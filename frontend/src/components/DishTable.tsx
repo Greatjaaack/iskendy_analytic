@@ -2,8 +2,7 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { fetchDishes, rangeKey, type RangeSel, type DishGroupBy, type DishRow } from "../api";
 import { REFETCH_INTERVAL_MS, MARGIN_GOOD, MARGIN_OK, COLORS } from "../constants";
-
-const fmt = (n: number) => new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 0 }).format(n);
+import { fmtInt } from "../format";
 
 interface Props {
   range: RangeSel;
@@ -154,15 +153,15 @@ export function DishTable({ range }: Props) {
             </tr>
           </thead>
           <tbody>
-            {rows.map((d, i) => (
-              <tr key={d.key} style={{ borderTop: `1px solid ${COLORS.grid}`, color: i % 2 === 0 ? "var(--text)" : "var(--text)" }}>
+            {rows.map((d) => (
+              <tr key={d.key} style={{ borderTop: `1px solid ${COLORS.grid}` }}>
                 <td style={td}>{d.name}</td>
                 {groupBy === "dish" && <td style={{ ...td, color: COLORS.muted }}>{d.group_name}</td>}
                 <td style={tdR}>{d.quantity}</td>
                 <td style={{ ...tdR, color: COLORS.muted }}>{d.qty_share}%</td>
-                <td style={tdR}>{fmt(d.revenue)}</td>
+                <td style={tdR}>{fmtInt(d.revenue)}</td>
                 <td style={{ ...tdR, color: COLORS.indigoText }}>{d.revenue_share}%</td>
-                <td style={tdR}>{fmt(d.cost_sum)}</td>
+                <td style={tdR}>{fmtInt(d.cost_sum)}</td>
                 <td style={{ ...tdR, color: COLORS.muted }}>{d.cost_pct}%</td>
                 <td style={{ ...tdR, color: d.margin_pct >= MARGIN_GOOD ? COLORS.good : d.margin_pct >= MARGIN_OK ? COLORS.warn : COLORS.bad, fontWeight: 600 }}>
                   {d.margin_pct}%

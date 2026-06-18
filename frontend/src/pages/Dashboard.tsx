@@ -8,13 +8,7 @@ import { HourlyChart } from "../components/HourlyChart";
 import { HourlyBreakdown } from "../components/HourlyBreakdown";
 import { DishTable } from "../components/DishTable";
 import { ChecksDistribution } from "../components/ChecksDistribution";
-import { REFETCH_INTERVAL_MS, COLORS, weatherInfo } from "../constants";
-
-const PERIODS: { key: Period; label: string }[] = [
-  { key: "day", label: "Сегодня" },
-  { key: "week", label: "Неделя" },
-  { key: "month", label: "Месяц" },
-];
+import { REFETCH_INTERVAL_MS, COLORS, PERIODS, weatherInfo } from "../constants";
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const daysAgoISO = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);

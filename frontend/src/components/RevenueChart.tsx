@@ -4,29 +4,24 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from "recharts";
 import type { RevenueDay } from "../api";
-import { CHART_HEIGHT, weatherInfo } from "../constants";
+import {
+  CHART_HEIGHT,
+  CHART_TYPES,
+  COLORS,
+  WEEKDAYS_ALL,
+  WEEKDAYS_WEEKEND,
+  WEEKDAYS_WORK,
+  weatherInfo,
+  type ChartKind,
+} from "../constants";
+import { fmtInt } from "../format";
 
 interface Props {
   data: RevenueDay[];
 }
 
-const fmt = (n: number) =>
-  new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 0 }).format(n);
-
-type ChartType = "area" | "line" | "step" | "bar";
-const CHART_TYPES: { key: ChartType; label: string }[] = [
-  { key: "area", label: "Область" },
-  { key: "line", label: "Линия" },
-  { key: "step", label: "Ступени" },
-  { key: "bar", label: "Столбцы" },
-];
-
-const ALL_DAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
-const WEEKDAYS = ["Пн", "Вт", "Ср", "Чт", "Пт"];
-const WEEKEND = ["Сб", "Вс"];
-
 export function RevenueChart({ data }: Props) {
-  const [type, setType] = useState<ChartType>("area");
+  const [type, setType] = useState<ChartKind>("area");
   // мультивыбор дней недели; пустое множество = показывать все дни
   const [days, setDays] = useState<Set<string>>(new Set());
 
@@ -54,13 +49,13 @@ export function RevenueChart({ data }: Props) {
   const grid = <CartesianGrid strokeDasharray="3 3" stroke="var(--grid)" />;
   const xaxis = <XAxis dataKey="label" {...axisProps} />;
   // левая ось — деньги (выручка/ср.чек), правая — количество чеков (другой масштаб)
-  const yaxisL = <YAxis yAxisId="money" tickFormatter={fmt} {...axisProps} />;
+  const yaxisL = <YAxis yAxisId="money" tickFormatter={fmtInt} {...axisProps} />;
   const yaxisR = <YAxis yAxisId="checks" orientation="right" allowDecimals={false} {...axisProps} />;
   const tooltip = (
     <Tooltip
       contentStyle={{ background: "var(--bg)", border: "1px solid var(--grid)", borderRadius: 8 }}
       labelStyle={{ color: "var(--text)" }}
-      formatter={(val, name) => (name === "Чеки" ? `${val} шт` : `${fmt(Number(val))} ₽`)}
+      formatter={(val, name) => (name === "Чеки" ? `${val} шт` : `${fmtInt(Number(val))} ₽`)}
     />
   );
   const legend = <Legend wrapperStyle={{ fontSize: 12, color: "var(--muted)" }} />;
@@ -70,9 +65,9 @@ export function RevenueChart({ data }: Props) {
       return (
         <BarChart data={chartData}>
           {grid}{xaxis}{yaxisL}{yaxisR}{tooltip}{legend}
-          <Bar yAxisId="money" dataKey="Выручка" fill="#6366f1" radius={[4, 4, 0, 0]} />
-          <Bar yAxisId="money" dataKey="Ср. чек" fill="#22d3ee" radius={[4, 4, 0, 0]} />
-          <Bar yAxisId="checks" dataKey="Чеки" fill="#10b981" radius={[4, 4, 0, 0]} />
+          <Bar yAxisId="money" dataKey="Выручка" fill={COLORS.primary} radius={[4, 4, 0, 0]} />
+          <Bar yAxisId="money" dataKey="Ср. чек" fill={COLORS.accent} radius={[4, 4, 0, 0]} />
+          <Bar yAxisId="checks" dataKey="Чеки" fill={COLORS.good} radius={[4, 4, 0, 0]} />
         </BarChart>
       );
     }
@@ -81,14 +76,14 @@ export function RevenueChart({ data }: Props) {
         <AreaChart data={chartData}>
           <defs>
             <linearGradient id="revGrad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%" stopColor="#6366f1" stopOpacity={0.4} />
-              <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
+              <stop offset="5%" stopColor={COLORS.primary} stopOpacity={0.4} />
+              <stop offset="95%" stopColor={COLORS.primary} stopOpacity={0} />
             </linearGradient>
           </defs>
           {grid}{xaxis}{yaxisL}{yaxisR}{tooltip}{legend}
-          <Area yAxisId="money" type="monotone" dataKey="Выручка" stroke="#6366f1" strokeWidth={2} fill="url(#revGrad)" />
-          <Area yAxisId="money" type="monotone" dataKey="Ср. чек" stroke="#22d3ee" strokeWidth={2} fill="transparent" />
-          <Area yAxisId="checks" type="monotone" dataKey="Чеки" stroke="#10b981" strokeWidth={2} fill="transparent" />
+          <Area yAxisId="money" type="monotone" dataKey="Выручка" stroke={COLORS.primary} strokeWidth={2} fill="url(#revGrad)" />
+          <Area yAxisId="money" type="monotone" dataKey="Ср. чек" stroke={COLORS.accent} strokeWidth={2} fill="transparent" />
+          <Area yAxisId="checks" type="monotone" dataKey="Чеки" stroke={COLORS.good} strokeWidth={2} fill="transparent" />
         </AreaChart>
       );
     }
@@ -96,9 +91,9 @@ export function RevenueChart({ data }: Props) {
     return (
       <LineChart data={chartData}>
         {grid}{xaxis}{yaxisL}{yaxisR}{tooltip}{legend}
-        <Line yAxisId="money" type={type === "step" ? "stepAfter" : "monotone"} dataKey="Выручка" stroke="#6366f1" strokeWidth={2} dot={false} />
-        <Line yAxisId="money" type={type === "step" ? "stepAfter" : "monotone"} dataKey="Ср. чек" stroke="#22d3ee" strokeWidth={2} dot={false} />
-        <Line yAxisId="checks" type={type === "step" ? "stepAfter" : "monotone"} dataKey="Чеки" stroke="#10b981" strokeWidth={2} dot={false} />
+        <Line yAxisId="money" type={type === "step" ? "stepAfter" : "monotone"} dataKey="Выручка" stroke={COLORS.primary} strokeWidth={2} dot={false} />
+        <Line yAxisId="money" type={type === "step" ? "stepAfter" : "monotone"} dataKey="Ср. чек" stroke={COLORS.accent} strokeWidth={2} dot={false} />
+        <Line yAxisId="checks" type={type === "step" ? "stepAfter" : "monotone"} dataKey="Чеки" stroke={COLORS.good} strokeWidth={2} dot={false} />
       </LineChart>
     );
   };
@@ -119,15 +114,15 @@ export function RevenueChart({ data }: Props) {
       {/* Мультивыбор дней недели: пусто = все дни */}
       <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 16 }}>
         <span style={{ color: "var(--muted)", fontSize: 12, marginRight: 2 }}>Дни:</span>
-        {ALL_DAYS.map((d) => (
+        {WEEKDAYS_ALL.map((d) => (
           <button key={d} onClick={() => toggleDay(d)} style={chip(days.has(d))}>
             {d}
           </button>
         ))}
         <span style={{ width: 1, height: 18, background: "var(--grid)", margin: "0 4px" }} />
         <button onClick={() => setPreset([])} style={chip(days.size === 0)}>Все</button>
-        <button onClick={() => setPreset(WEEKDAYS)} style={chip(false)}>Будни</button>
-        <button onClick={() => setPreset(WEEKEND)} style={chip(false)}>Выходные</button>
+        <button onClick={() => setPreset(WEEKDAYS_WORK)} style={chip(false)}>Будни</button>
+        <button onClick={() => setPreset(WEEKDAYS_WEEKEND)} style={chip(false)}>Выходные</button>
       </div>
       <ResponsiveContainer width="100%" height={CHART_HEIGHT}>
         {renderChart()}
@@ -162,13 +157,13 @@ export function RevenueChart({ data }: Props) {
 const miniBtn = (active: boolean): React.CSSProperties => ({
   padding: "5px 12px", borderRadius: 6, border: "none", cursor: "pointer",
   fontSize: 12, fontWeight: 600,
-  background: active ? "#6366f1" : "transparent",
+  background: active ? COLORS.primary : "transparent",
   color: active ? "var(--text)" : "var(--muted)",
 });
 
 const chip = (active: boolean): React.CSSProperties => ({
   padding: "4px 10px", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 600,
-  border: `1px solid ${active ? "#6366f1" : "var(--grid)"}`,
-  background: active ? "#6366f1" : "transparent",
+  border: `1px solid ${active ? COLORS.primary : "var(--grid)"}`,
+  background: active ? COLORS.primary : "transparent",
   color: active ? "var(--text)" : "var(--muted)",
 });

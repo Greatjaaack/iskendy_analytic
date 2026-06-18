@@ -9,6 +9,7 @@
 """
 
 import logging
+from datetime import date, timedelta
 
 import httpx
 
@@ -41,8 +42,6 @@ async def get_weather(date_from: str, date_to: str) -> dict[str, dict]:
 
 
 def _date_range(date_from: str, date_to: str) -> list[str]:
-    from datetime import date, timedelta
-
     d0, d1 = date.fromisoformat(date_from), date.fromisoformat(date_to)
     out, d = [], d0
     while d <= d1:

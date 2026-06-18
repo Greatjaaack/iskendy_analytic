@@ -1,5 +1,6 @@
 import { NavLink } from "react-router-dom";
 import { useTheme } from "../theme";
+import { COLORS } from "../constants";
 
 const items: { to: string; label: string; disabled?: boolean }[] = [
   { to: "/", label: "Дашборд" },
@@ -57,7 +58,7 @@ export function Sidebar() {
                 fontSize: 14,
                 textDecoration: "none",
                 color: isActive ? "var(--text)" : "var(--muted)",
-                background: isActive ? "#6366f1" : "transparent",
+                background: isActive ? COLORS.primary : "transparent",
                 fontWeight: isActive ? 600 : 400,
               })}
             >

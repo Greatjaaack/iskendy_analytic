@@ -2,9 +2,8 @@ import { useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams, Link } from "react-router-dom";
 import { fetchSupplier, uploadSupplierFile, supplierFileUrl } from "../api";
-
-const fmt = (n: number | null) =>
-  n == null ? "—" : new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(n);
+import { COLORS } from "../constants";
+import { fmtNum } from "../format";
 
 /** Карточка поставщика: реквизиты, товары с ценами, прикреплённые файлы (загрузка/скачивание). */
 export function SupplierCard() {
@@ -27,7 +26,7 @@ export function SupplierCard() {
   };
 
   if (q.isLoading) return <div style={{ padding: 24, color: "var(--muted)" }}>Загрузка...</div>;
-  if (!q.data) return <div style={{ padding: 24, color: "#ef4444" }}>Не найдено</div>;
+  if (!q.data) return <div style={{ padding: 24, color: COLORS.bad }}>Не найдено</div>;
   const s = q.data;
 
   return (
@@ -62,9 +61,9 @@ export function SupplierCard() {
               <tr key={p.ingredient_id} style={{ borderTop: "1px solid var(--grid)" }}>
                 <td style={td}>{p.name}</td>
                 <td style={{ ...td, color: "var(--muted)" }}>{p.unit}</td>
-                <td style={{ ...td, textAlign: "right" }}>{fmt(p.pack_size)}</td>
-                <td style={{ ...td, textAlign: "right" }}>{fmt(p.pack_price)}</td>
-                <td style={{ ...td, textAlign: "right", color: "#a5b4fc" }}>{fmt(p.unit_price)}</td>
+                <td style={{ ...td, textAlign: "right" }}>{fmtNum(p.pack_size)}</td>
+                <td style={{ ...td, textAlign: "right" }}>{fmtNum(p.pack_price)}</td>
+                <td style={{ ...td, textAlign: "right", color: COLORS.indigoText }}>{fmtNum(p.unit_price)}</td>
                 <td style={{ ...td, textAlign: "right", color: "var(--muted)" }}>{p.price_date || "—"}</td>
               </tr>
             ))}
@@ -85,7 +84,7 @@ export function SupplierCard() {
               href={supplierFileUrl(sid, f.id)}
               target="_blank"
               rel="noreferrer"
-              style={{ color: "#a5b4fc", fontSize: 13, textDecoration: "none" }}
+              style={{ color: COLORS.indigoText, fontSize: 13, textDecoration: "none" }}
             >
               📄 {f.filename}{" "}
               <span style={{ color: "var(--muted)" }}>· {new Date(f.uploaded_at).toLocaleDateString("ru-RU")}</span>

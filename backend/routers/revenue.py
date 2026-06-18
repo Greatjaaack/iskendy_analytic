@@ -1,6 +1,6 @@
 """Роутер выручки: по дням (из БД либо живой за произвольный диапазон) и по часам."""
 
-from datetime import date, timedelta
+from datetime import date
 
 from fastapi import APIRouter, Query
 from sqlalchemy import select
@@ -16,6 +16,7 @@ from constants import (
 )
 from iiko_web_client import iiko_web
 from models import RevenueDaily, SessionLocal
+from utils import period_range
 from weather import get_weather
 
 router = APIRouter(prefix="/api/revenue", tags=["revenue"])
@@ -24,18 +25,6 @@ router = APIRouter(prefix="/api/revenue", tags=["revenue"])
 def _ru_dow(d: date) -> str:
     """Русское сокращение дня недели для даты."""
     return DAY_NAMES_RU[d.weekday()]
-
-
-def _range(period: str, date_from: str | None, date_to: str | None) -> tuple[date, date]:
-    """Произвольный диапазон (date_from/date_to) имеет приоритет над period."""
-    if date_from and date_to:
-        return date.fromisoformat(date_from), date.fromisoformat(date_to)
-    today = date.today()
-    if period == "day":
-        return today, today
-    if period == "week":
-        return today - timedelta(days=6), today
-    return today - timedelta(days=29), today
 
 
 def _day_dict(d: date, total, checks, avg, disc, refunds, cost) -> dict:
@@ -117,7 +106,7 @@ async def get_revenue(
     date_from: str | None = None,
     date_to: str | None = None,
 ):
-    df, dt = _range(period, date_from, date_to)
+    df, dt = period_range(period, date_from, date_to)
     # произвольный диапазон → живой запрос (в БД может не быть истории); пресет → из БД
     days = await _days_live(df, dt) if (date_from and date_to) else _days_from_db(df, dt)
 
@@ -169,7 +158,7 @@ async def get_hourly(
     date_to: str | None = None,
 ):
     """Продажи по часам (интервалы 11-12, 12-13, …) — живой запрос в iiko."""
-    df, dt = _range(period, date_from, date_to)
+    df, dt = period_range(period, date_from, date_to)
 
     raw = await iiko_web.revenue_by_hour(df.isoformat(), dt.isoformat())
     rev = _parse_hour_matrix(raw.get(METRIC_REV_GROSS, {}))

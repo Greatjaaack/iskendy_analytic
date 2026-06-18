@@ -1,8 +1,5 @@
 """Роутер продаж блюд: список с долями/с-с, распределение чеков, почасовая разбивка (OLAP)."""
 
-import re
-from datetime import date, timedelta
-
 from fastapi import APIRouter, Query
 from sqlalchemy import select
 
@@ -17,13 +14,9 @@ from constants import (
 )
 from iiko_web_client import iiko_web
 from models import DishMapping, SessionLocal, Ttk
+from utils import normalize_name, period_range
 
 router = APIRouter(prefix="/api/dishes", tags=["dishes"])
-
-
-def _norm(s: str) -> str:
-    """Нормализация имени блюда для сопоставления с ТТК (lower, ё→е, схлоп пробелов)."""
-    return re.sub(r"\s+", " ", str(s or "").strip().lower().replace("ё", "е"))
 
 
 def _ttk_portion_cost(t: Ttk) -> float | None:
@@ -52,18 +45,6 @@ def _dish_unit_cost() -> dict[str, float]:
     return out
 
 
-def _period_range(period: str, date_from: str | None, date_to: str | None) -> tuple[date, date]:
-    """Границы периода. Произвольный диапазон (date_from/date_to) приоритетнее period."""
-    if date_from and date_to:
-        return date.fromisoformat(date_from), date.fromisoformat(date_to)
-    today = date.today()
-    if period == "day":
-        return today, today
-    if period == "week":
-        return today - timedelta(days=6), today
-    return today - timedelta(days=29), today
-
-
 @router.get("")
 async def get_dishes(
     period: str = Query("week", enum=["day", "week", "month"]),
@@ -75,7 +56,7 @@ async def get_dishes(
     """Продажи блюд за период (живой запрос в iiko).
     group_by=dish — по блюдам, group_by=category — по категориям.
     Возвращает кол-во, выручку, с/с, маржу и доли (% от выручки и % от кол-ва)."""
-    date_from_d, date_to_d = _period_range(period, date_from, date_to)
+    date_from_d, date_to_d = period_range(period, date_from, date_to)
 
     rows = await iiko_web.dishes_detail(date_from_d.isoformat(), date_to_d.isoformat())
     # rows: dish_id, dish_name, category, product_type, quantity, revenue, cost_sum
@@ -85,7 +66,7 @@ async def get_dishes(
     # с/с по блюду: с/с порции из «Сводной» × количество (iiko-метрика по блюду ~0)
     unit_cost = _dish_unit_cost()
     for r in rows:
-        c = unit_cost.get(_norm(r["dish_name"]))
+        c = unit_cost.get(normalize_name(r["dish_name"]))
         if c is not None:
             r["cost_sum"] = c * r["quantity"]
 
@@ -155,7 +136,7 @@ async def get_check_distribution(
     Считается по модификаторам категории «Статус» (один на заказ) — их количество
     приблизительно равно числу заказов соответствующего типа.
     """
-    date_from_d, date_to_d = _period_range(period, date_from, date_to)
+    date_from_d, date_to_d = period_range(period, date_from, date_to)
 
     rows = await iiko_web.dishes_detail(date_from_d.isoformat(), date_to_d.isoformat())
     status_rows = [r for r in rows if r.get("category") == ORDER_STATUS_CATEGORY]
@@ -195,7 +176,7 @@ async def get_hourly_breakdown(
     Для каждого часового интервала — что и на сколько продавалось (понимание «когда что
     берут»). `get-data` такой разрез не умеет, поэтому используем OLAP SALES.
     """
-    date_from_d, date_to_d = _period_range(period, date_from, date_to)
+    date_from_d, date_to_d = period_range(period, date_from, date_to)
     dim = OLAP_FIELD_DISH_CATEGORY if group == "category" else OLAP_FIELD_DISH_NAME
 
     rows = await iiko_web.olap_sales(

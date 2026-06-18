@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { fetchSuppliers, runImport } from "../api";
+import { COLORS } from "../constants";
 
 /** Список поставщиков (таблица) + кнопки импорта из файла и создания нового. */
 export function Suppliers() {
@@ -37,7 +38,7 @@ export function Suppliers() {
         </div>
       </div>
 
-      {msg && <div style={{ color: "#a5b4fc", fontSize: 13, marginBottom: 16 }}>{msg}</div>}
+      {msg && <div style={{ color: COLORS.indigoText, fontSize: 13, marginBottom: 16 }}>{msg}</div>}
       {q.isLoading && <div style={{ color: "var(--muted)" }}>Загрузка...</div>}
 
       {q.data && q.data.length > 0 && (
@@ -63,7 +64,7 @@ export function Suppliers() {
                   <td style={{ ...td, color: "var(--text)" }}>{s.contact_person || "—"}</td>
                   <td style={{ ...td, color: "var(--text)" }}>{s.phone || "—"}</td>
                   <td style={{ ...td, color: "var(--text)" }}>{s.min_delivery || "—"}</td>
-                  <td style={{ ...td, textAlign: "right", color: "#a5b4fc" }}>{s.products}</td>
+                  <td style={{ ...td, textAlign: "right", color: COLORS.indigoText }}>{s.products}</td>
                 </tr>
               ))}
             </tbody>
@@ -82,7 +83,7 @@ export function Suppliers() {
 const th: React.CSSProperties = { padding: "8px 12px" };
 const td: React.CSSProperties = { padding: "8px 12px" };
 const btnPrimary: React.CSSProperties = {
-  padding: "8px 16px", borderRadius: 8, border: "none", background: "#6366f1",
+  padding: "8px 16px", borderRadius: 8, border: "none", background: COLORS.primary,
   color: "var(--text)", fontSize: 13, fontWeight: 600, cursor: "pointer",
 };
 const btnGhost: React.CSSProperties = {
