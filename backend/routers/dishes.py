@@ -1,5 +1,7 @@
 """Роутер продаж блюд: список с долями/с-с, распределение чеков, почасовая разбивка (OLAP)."""
 
+from collections import defaultdict
+
 from fastapi import APIRouter, Query
 from sqlalchemy import select
 
@@ -8,6 +10,7 @@ from constants import (
     CHANNEL_DINEIN,
     CHANNEL_TAKEAWAY,
     DELIVERY_CATEGORY,
+    NON_PRODUCT_CATEGORIES,
     OLAP_FIELD_DISH_CATEGORY,
     OLAP_FIELD_DISH_NAME,
     OLAP_FIELD_HOUR,
@@ -373,3 +376,143 @@ async def get_order_types(
     ]
     values.sort(key=lambda x: x["qty"], reverse=True)
     return {"field": OLAP_FIELD_ORDER_TYPE, "values": values}
+
+
+def _split3(value: str) -> tuple[str, str, str]:
+    """field0 «Hour, OrderNum, Категория» → 3 части."""
+    parts = (str(value).split(", ", 2) + ["", "", ""])[:3]
+    return parts[0], parts[1], parts[2]
+
+
+@router.get("/check-composition")
+async def get_check_composition(
+    period: str = Query("week", enum=["day", "week", "month"]),
+    date_from: str | None = None,
+    date_to: str | None = None,
+):
+    """Состав чека (#5): средняя доля категорий в чеке — по кол-ву и по выручке, за период
+    и по часам. Доля считается на каждый чек (категория / итог чека), затем усредняется.
+    """
+    df, dt = period_range(period, date_from, date_to)
+    rows = await iiko_web.olap_sales(
+        group_fields=[OLAP_FIELD_HOUR, OLAP_FIELD_ORDER_NUM, OLAP_FIELD_DISH_CATEGORY],
+        data_fields=[OLAP_FIELD_QTY, OLAP_FIELD_SUM],
+        date_from=df.isoformat(),
+        date_to=dt.isoformat(),
+    )
+    # заказ → {категория: [qty, sum]}, заказ → час
+    orders: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(lambda: [0.0, 0.0]))
+    order_hour: dict[str, str] = {}
+    for r in rows:
+        hour, ordernum, category = _split3(r.get("field0", {}).get("value", ""))
+        if not ordernum or not category or category in NON_PRODUCT_CATEGORIES:
+            continue
+        orders[ordernum][category][0] += float(r.get("field1", {}).get("value", 0) or 0)
+        orders[ordernum][category][1] += float(r.get("field2", {}).get("value", 0) or 0)
+        order_hour[ordernum] = hour
+
+    def new_acc():
+        return {"checks": 0, "cats": defaultdict(lambda: [0.0, 0.0])}
+
+    total = new_acc()
+    hourly: dict[str, dict] = defaultdict(new_acc)
+    for ordernum, cats in orders.items():
+        tq = sum(c[0] for c in cats.values())
+        ts = sum(c[1] for c in cats.values())
+        if tq <= 0:
+            continue
+        for bk in (total, hourly[order_hour.get(ordernum, "")]):
+            bk["checks"] += 1
+            for cat, (q, s) in cats.items():
+                bk["cats"][cat][0] += q / tq
+                bk["cats"][cat][1] += (s / ts) if ts else 0
+
+    def fin(bk) -> dict:
+        n = bk["checks"] or 1
+        return {
+            cat: {"qty": round(v[0] / n * 100, 1), "rev": round(v[1] / n * 100, 1)}
+            for cat, v in bk["cats"].items()
+        }
+
+    cats_sorted = sorted(total["cats"], key=lambda c: total["cats"][c][0], reverse=True)
+    hourly_out = []
+    for hk in sorted((h for h in hourly if h.isdigit()), key=int):
+        h = int(hk)
+        hourly_out.append(
+            {
+                "hour": h,
+                "label": f"{h:02d}-{h + 1:02d}",
+                "checks": hourly[hk]["checks"],
+                "by": fin(hourly[hk]),
+            }
+        )
+    return {
+        "period": "custom" if (date_from and date_to) else period,
+        "date_from": df.isoformat(),
+        "date_to": dt.isoformat(),
+        "categories": cats_sorted,
+        "total": {"checks": total["checks"], "by": fin(total)},
+        "hourly": hourly_out,
+    }
+
+
+@router.get("/check-fullness")
+async def get_check_fullness(
+    period: str = Query("week", enum=["day", "week", "month"]),
+    date_from: str | None = None,
+    date_to: str | None = None,
+):
+    """Распределение чеков по числу позиций (1 / 2 / 3 / 4+), по часам (#6).
+
+    Позиция — отдельное товарное блюдо в заказе (служебные категории не считаются).
+    """
+    df, dt = period_range(period, date_from, date_to)
+    rows = await iiko_web.olap_sales(
+        group_fields=[
+            OLAP_FIELD_HOUR,
+            OLAP_FIELD_ORDER_NUM,
+            OLAP_FIELD_DISH_CATEGORY,
+            OLAP_FIELD_DISH_NAME,
+        ],
+        data_fields=[OLAP_FIELD_QTY],
+        date_from=df.isoformat(),
+        date_to=dt.isoformat(),
+    )
+    positions: dict[tuple[str, str], set] = defaultdict(set)
+    for r in rows:
+        parts = str(r.get("field0", {}).get("value", "")).split(", ")
+        if len(parts) < 4:
+            continue
+        hour, ordernum, category, name = parts[0], parts[1], parts[2], ", ".join(parts[3:])
+        if not name or category in NON_PRODUCT_CATEGORIES:
+            continue
+        positions[(hour, ordernum)].add(name)
+
+    buckets = ["1", "2", "3", "4+"]
+
+    def bucket(n: int) -> str:
+        return "4+" if n >= 4 else str(n)
+
+    per_hour: dict[str, dict] = defaultdict(lambda: {b: 0 for b in buckets})
+    total = {b: 0 for b in buckets}
+    for (hour, _ordernum), names in positions.items():
+        if not names:
+            continue
+        b = bucket(len(names))
+        per_hour[hour][b] += 1
+        total[b] += 1
+
+    data = []
+    for hk in sorted((h for h in per_hour if h.isdigit()), key=int):
+        h = int(hk)
+        row = {"hour": h, "label": f"{h:02d}-{h + 1:02d}", **per_hour[hk]}
+        row["total"] = sum(per_hour[hk].values())
+        data.append(row)
+    return {
+        "period": "custom" if (date_from and date_to) else period,
+        "date_from": df.isoformat(),
+        "date_to": dt.isoformat(),
+        "buckets": buckets,
+        "total": total,
+        "data": data,
+    }

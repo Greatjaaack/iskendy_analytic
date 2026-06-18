@@ -1,13 +1,10 @@
 import type { RevenueSummary } from "../api";
-import { COLORS, FOODCOST_GOOD, FOODCOST_WARN } from "../constants";
+import { COLORS } from "../constants";
 import { fmtInt } from "../format";
 
 interface Props {
   summary: RevenueSummary;
 }
-
-const foodCostColor = (pct: number) =>
-  pct <= FOODCOST_GOOD ? COLORS.good : pct <= FOODCOST_WARN ? COLORS.warn : COLORS.bad;
 
 /** Дельта к прошлому периоду в %, либо null если сравнивать не с чем. */
 const delta = (cur: number, prev: number | null): number | null =>
@@ -34,16 +31,10 @@ export function KpiCards({ summary }: Props) {
       color: COLORS.warn,
       delta: delta(summary.total_checks, p.total_checks),
     },
-    {
-      label: "Food cost",
-      value: summary.food_cost_pct + " %",
-      color: foodCostColor(summary.food_cost_pct),
-      delta: null,
-    },
   ];
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16 }}>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
       {cards.map((c) => (
         <div
           key={c.label}

@@ -3,7 +3,9 @@
 import axios from "axios";
 
 import type {
+  CheckComposition,
   CheckDistribution,
+  CheckFullness,
   ContactInput,
   DishGroupBy,
   DishMapping,
@@ -69,6 +71,12 @@ export const fetchHourlyBreakdown = (range: RangeSel, group: DishGroupBy): Promi
   api
     .get<HourlyBreakdown>(`/api/dishes/hourly-breakdown?group=${group}&${rangeQS(range)}`)
     .then((r) => r.data);
+
+export const fetchCheckComposition = (range: RangeSel): Promise<CheckComposition> =>
+  api.get<CheckComposition>(`/api/dishes/check-composition?${rangeQS(range)}`).then((r) => r.data);
+
+export const fetchCheckFullness = (range: RangeSel): Promise<CheckFullness> =>
+  api.get<CheckFullness>(`/api/dishes/check-fullness?${rangeQS(range)}`).then((r) => r.data);
 
 export const fetchServiceBreakdown = (
   range: RangeSel,

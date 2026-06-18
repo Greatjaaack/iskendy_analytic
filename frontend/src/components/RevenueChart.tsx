@@ -57,12 +57,19 @@ export function RevenueChart({ data, prevData, range }: Props) {
 
   const dayOk = (dow: string) => days.size === 0 || days.has(dow);
 
-  // погода под датой на оси X
+  // погода под датой на оси X + дельта температуры к тому же дню прошлого периода
   const weatherByLabel: Record<string, string> = {};
-  data.forEach((d) => {
+  data.forEach((d, i) => {
     const info = d.weather ? weatherInfo(d.weather.weather_code) : null;
+    if (!info) return;
     const t = d.weather?.temp_max;
-    if (info) weatherByLabel[`${d.day_of_week} ${d.date.slice(5)}`] = `${info.icon}${t != null ? ` ${Math.round(t)}°` : ""}`;
+    let s = `${info.icon}${t != null ? ` ${Math.round(t)}°` : ""}`;
+    const pt = prevData[i]?.temp_max;
+    if (t != null && pt != null) {
+      const dl = Math.round(t - pt);
+      s += ` ${dl >= 0 ? "+" : ""}${dl}°`;
+    }
+    weatherByLabel[`${d.day_of_week} ${d.date.slice(5)}`] = s;
   });
   const renderTick = (props: { x?: number | string; y?: number | string; payload?: { value?: string | number } }) => {
     const label = String(props.payload?.value ?? "");

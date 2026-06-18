@@ -7,6 +7,8 @@ import { RevenueChart } from "../components/RevenueChart";
 import { HourlyChart } from "../components/HourlyChart";
 import { HourlyBreakdown } from "../components/HourlyBreakdown";
 import { ServiceBreakdown } from "../components/ServiceBreakdown";
+import { CheckComposition } from "../components/CheckComposition";
+import { CheckFullness } from "../components/CheckFullness";
 import { DishTable } from "../components/DishTable";
 import { ChecksDistribution } from "../components/ChecksDistribution";
 import { REFETCH_INTERVAL_MS, COLORS, PERIODS, weatherInfo } from "../constants";
@@ -121,6 +123,8 @@ export function Dashboard() {
           <RevenueChart data={revenueQ.data.data} prevData={revenueQ.data.prev_data} range={sel} />
           <ChecksDistribution range={sel} />
           <HourlyChart range={sel} />
+          <CheckFullness range={sel} />
+          <CheckComposition range={sel} />
           <HourlyBreakdown range={sel} />
           <ServiceBreakdown range={sel} />
           <DishTable range={sel} />

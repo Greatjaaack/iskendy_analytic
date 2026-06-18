@@ -8,15 +8,16 @@ interface Props {
   range: RangeSel;
 }
 
-// Цвет канала (совпадает с «Чеки по типу обслуживания»).
 const channelColor = (ch: string) =>
   ch === "доставка" ? COLORS.primary : ch === "с собой" ? COLORS.warn : COLORS.good;
 
-/** Сколько каждого блюда/категории берут в зале / с собой / в доставку (#4).
- *  Данные — OLAP SALES (блюдо × тип заказа), `/api/dishes/service-breakdown`. */
+/** Сколько каждого блюда/категории берут в зале / с собой / в доставку (#4), с долями
+ *  и сортировкой по любой колонке. Данные — OLAP SALES, `/api/dishes/service-breakdown`. */
 export function ServiceBreakdown({ range }: Props) {
   const [group, setGroup] = useState<DishGroupBy>("dish");
   const [search, setSearch] = useState("");
+  const [sortKey, setSortKey] = useState<string>("total"); // "name" | канал | "total"
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
   const q = useQuery({
     queryKey: ["service-breakdown", rangeKey(range), group],
@@ -25,11 +26,27 @@ export function ServiceBreakdown({ range }: Props) {
   });
 
   const channels = q.data?.channels ?? [];
+
+  const onSort = (k: string) => {
+    if (k === sortKey) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else {
+      setSortKey(k);
+      setSortDir(k === "name" ? "asc" : "desc");
+    }
+  };
+
   const rows = useMemo(() => {
     const all = q.data?.data ?? [];
     const s = search.trim().toLowerCase();
-    return s ? all.filter((r) => r.name.toLowerCase().includes(s)) : all;
-  }, [q.data, search]);
+    const filtered = s ? all.filter((r) => r.name.toLowerCase().includes(s)) : all;
+    const dir = sortDir === "asc" ? 1 : -1;
+    return [...filtered].sort((a, b) => {
+      if (sortKey === "name") return String(a.name).localeCompare(String(b.name), "ru") * dir;
+      return (Number(a[sortKey] ?? 0) - Number(b[sortKey] ?? 0)) * dir;
+    });
+  }, [q.data, search, sortKey, sortDir]);
+
+  const arrow = (k: string) => (sortKey === k ? (sortDir === "asc" ? " ↑" : " ↓") : "");
 
   return (
     <div style={{ background: COLORS.card, borderRadius: 12, padding: "20px 24px" }}>
@@ -65,11 +82,15 @@ export function ServiceBreakdown({ range }: Props) {
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
           <thead>
             <tr style={{ color: COLORS.muted, textAlign: "left" }}>
-              <th style={td}>{group === "category" ? "Категория" : "Блюдо"}</th>
+              <th style={thSort} onClick={() => onSort("name")}>
+                {group === "category" ? "Категория" : "Блюдо"}{arrow("name")}
+              </th>
               {channels.map((ch) => (
-                <th key={ch} style={{ ...tdR, color: channelColor(ch) }}>{ch}</th>
+                <th key={ch} style={{ ...thSort, textAlign: "right", color: channelColor(ch) }} onClick={() => onSort(ch)}>
+                  {ch}{arrow(ch)}
+                </th>
               ))}
-              <th style={tdR}>всего</th>
+              <th style={{ ...thSort, textAlign: "right" }} onClick={() => onSort("total")}>всего{arrow("total")}</th>
             </tr>
           </thead>
           <tbody>
@@ -102,3 +123,4 @@ export function ServiceBreakdown({ range }: Props) {
 
 const td: React.CSSProperties = { padding: "8px 12px" };
 const tdR: React.CSSProperties = { padding: "8px 12px", textAlign: "right" };
+const thSort: React.CSSProperties = { padding: "8px 12px", cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" };

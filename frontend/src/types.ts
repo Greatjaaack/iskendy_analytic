@@ -111,6 +111,34 @@ export interface HourlyByChannel {
   data: ChannelHour[];
 }
 
+// Состав чека (#5): средняя доля категорий в чеке (по кол-ву и выручке), период + часы.
+export interface CompositionShare {
+  qty: number;
+  rev: number;
+}
+export interface CompositionBucket {
+  checks: number;
+  by: Record<string, CompositionShare>;
+}
+export interface CheckComposition {
+  period: Period | "custom";
+  date_from: string;
+  date_to: string;
+  categories: string[];
+  total: CompositionBucket;
+  hourly: ({ hour: number; label: string } & CompositionBucket)[];
+}
+
+// Наполненность чеков (#6): распределение по числу позиций (1/2/3/4+) по часам.
+export interface CheckFullness {
+  period: Period | "custom";
+  date_from: string;
+  date_to: string;
+  buckets: string[];
+  total: Record<string, number>;
+  data: ({ hour: number; label: string; total: number } & Record<string, number>)[];
+}
+
 // Разрез блюдо × канал обслуживания (#4). Ключи каналов («в зале»/«с собой»/«доставка»)
 // приходят в channels; значения по ним — числа (кол-во).
 export interface ServiceBreakdownRow {
