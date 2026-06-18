@@ -2,33 +2,58 @@
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy import func, select
 
 import storage
-from models import Ingredient, SessionLocal, Supplier, SupplierFile, SupplierPrice
+from models import (
+    Ingredient,
+    SessionLocal,
+    Supplier,
+    SupplierContact,
+    SupplierFile,
+    SupplierPrice,
+)
+from utils import normalize_phone
 
 router = APIRouter(prefix="/api/suppliers", tags=["suppliers"])
 
 
 class SupplierIn(BaseModel):
     name: str
-    contact_person: str = ""
-    phone: str = ""
     address: str = ""
     min_delivery: str = ""
     comment: str = ""
+
+
+class ContactIn(BaseModel):
+    phone: str
+    contact_person: str = ""
+    comment: str = ""
+
+    @field_validator("phone")
+    @classmethod
+    def _valid_phone(cls, v: str) -> str:
+        return normalize_phone(v)
+
+
+def _contact_dict(c: SupplierContact) -> dict:
+    return {
+        "id": c.id,
+        "phone": c.phone,
+        "contact_person": c.contact_person,
+        "comment": c.comment,
+    }
 
 
 def _supplier_brief(s: Supplier, products: int = 0) -> dict:
     return {
         "id": s.id,
         "name": s.name,
-        "contact_person": s.contact_person,
-        "phone": s.phone,
         "address": s.address,
         "min_delivery": s.min_delivery,
         "comment": s.comment,
+        "contacts": [_contact_dict(c) for c in s.contacts],
         "products": products,
     }
 
@@ -113,6 +138,42 @@ def update_supplier(supplier_id: int, data: SupplierIn):
             setattr(s, k, v)
         db.commit()
         return _supplier_brief(s)
+
+
+@router.post("/{supplier_id}/contacts")
+def add_contact(supplier_id: int, data: ContactIn):
+    with SessionLocal() as db:
+        if not db.get(Supplier, supplier_id):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "поставщик не найден")
+        c = SupplierContact(supplier_id=supplier_id, **data.model_dump())
+        db.add(c)
+        db.commit()
+        db.refresh(c)
+        return _contact_dict(c)
+
+
+@router.put("/{supplier_id}/contacts/{contact_id}")
+def update_contact(supplier_id: int, contact_id: int, data: ContactIn):
+    with SessionLocal() as db:
+        c = db.get(SupplierContact, contact_id)
+        if not c or c.supplier_id != supplier_id:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "контакт не найден")
+        for k, v in data.model_dump().items():
+            setattr(c, k, v)
+        db.commit()
+        db.refresh(c)
+        return _contact_dict(c)
+
+
+@router.delete("/{supplier_id}/contacts/{contact_id}")
+def delete_contact(supplier_id: int, contact_id: int):
+    with SessionLocal() as db:
+        c = db.get(SupplierContact, contact_id)
+        if not c or c.supplier_id != supplier_id:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "контакт не найден")
+        db.delete(c)
+        db.commit()
+        return {"status": "ok"}
 
 
 @router.post("/{supplier_id}/files")

@@ -78,8 +78,6 @@ class Supplier(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String, unique=True, index=True)
-    contact_person = Column(String, default="")
-    phone = Column(String, default="")
     address = Column(String, default="")
     min_delivery = Column(String, default="")  # мин. поставка (текстом: сумма/условия)
     comment = Column(String, default="")
@@ -88,6 +86,24 @@ class Supplier(Base):
 
     files = relationship("SupplierFile", back_populates="supplier", cascade="all, delete-orphan")
     prices = relationship("SupplierPrice", back_populates="supplier", cascade="all, delete-orphan")
+    contacts = relationship(
+        "SupplierContact", back_populates="supplier", cascade="all, delete-orphan"
+    )
+
+
+class SupplierContact(Base):
+    """Контакт поставщика: телефон + контактное лицо (много на одного поставщика)."""
+
+    __tablename__ = "supplier_contacts"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    supplier_id = Column(Integer, ForeignKey("suppliers.id"))
+    contact_person = Column(String, default="")  # чьё это лицо/роль
+    phone = Column(String, default="")  # нормализованный «+7XXXXXXXXXX»
+    comment = Column(String, default="")  # напр. «склад», «бухгалтерия»
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    supplier = relationship("Supplier", back_populates="contacts")
 
 
 class SupplierFile(Base):

@@ -1,11 +1,19 @@
 import { useRef, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams, Link } from "react-router-dom";
-import { fetchSupplier, uploadSupplierFile, supplierFileUrl } from "../api";
+import {
+  addSupplierContact,
+  deleteSupplierContact,
+  fetchSupplier,
+  supplierFileUrl,
+  uploadSupplierFile,
+} from "../api";
+import type { SupplierContact } from "../api";
 import { COLORS } from "../constants";
 import { fmtNum } from "../format";
+import { normalizePhone } from "../validation";
 
-/** Карточка поставщика: реквизиты, товары с ценами, прикреплённые файлы (загрузка/скачивание). */
+/** Карточка поставщика: реквизиты, контакты (телефоны/лица), товары, файлы. */
 export function SupplierCard() {
   const { id } = useParams();
   const sid = Number(id);
@@ -37,12 +45,12 @@ export function SupplierCard() {
       <div style={{ fontSize: 22, fontWeight: 700, margin: "8px 0 20px" }}>{s.name}</div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
-        <Info label="Контактное лицо" value={s.contact_person} />
-        <Info label="Телефон" value={s.phone} />
         <Info label="Адрес" value={s.address} />
         <Info label="Мин. поставка" value={s.min_delivery} />
         <Info label="Комментарий" value={s.comment} />
       </div>
+
+      <ContactsSection sid={sid} contacts={s.contacts} />
 
       <Section title={`Товары (${s.products_list.length})`}>
         <table style={tbl}>
@@ -97,6 +105,83 @@ export function SupplierCard() {
   );
 }
 
+/** Секция контактов: список телефонов/лиц + добавление и удаление с валидацией. */
+function ContactsSection({ sid, contacts }: { sid: number; contacts: SupplierContact[] }) {
+  const qc = useQueryClient();
+  const [phone, setPhone] = useState("");
+  const [person, setPerson] = useState("");
+  const [comment, setComment] = useState("");
+  const [err, setErr] = useState("");
+
+  const invalidate = () => qc.invalidateQueries({ queryKey: ["supplier", sid] });
+  const addMut = useMutation({
+    mutationFn: () => addSupplierContact(sid, { phone, contact_person: person, comment }),
+    onSuccess: () => {
+      setPhone("");
+      setPerson("");
+      setComment("");
+      setErr("");
+      invalidate();
+    },
+    onError: () => setErr("Не удалось сохранить контакт"),
+  });
+  const delMut = useMutation({
+    mutationFn: (cid: number) => deleteSupplierContact(sid, cid),
+    onSuccess: invalidate,
+  });
+
+  const add = () => {
+    if (!normalizePhone(phone)) {
+      setErr("Некорректный телефон. Ожидается российский номер.");
+      return;
+    }
+    addMut.mutate();
+  };
+
+  return (
+    <Section title={`Контакты (${contacts.length})`}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
+        {contacts.map((c) => (
+          <div key={c.id} style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 14 }}>
+            <span style={{ fontWeight: 600, minWidth: 150 }}>{c.phone}</span>
+            <span style={{ flex: 1 }}>{c.contact_person || "—"}</span>
+            {c.comment && <span style={{ color: "var(--muted)", fontSize: 13 }}>{c.comment}</span>}
+            <button onClick={() => delMut.mutate(c.id)} style={iconBtn} title="Удалить">
+              ✕
+            </button>
+          </div>
+        ))}
+        {contacts.length === 0 && <Empty />}
+      </div>
+
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <input
+          placeholder="+7 ..."
+          value={phone}
+          onChange={(e) => setPhone(e.target.value)}
+          style={{ ...inputSm, flex: "0 0 160px" }}
+        />
+        <input
+          placeholder="Контактное лицо"
+          value={person}
+          onChange={(e) => setPerson(e.target.value)}
+          style={{ ...inputSm, flex: 1, minWidth: 140 }}
+        />
+        <input
+          placeholder="Заметка"
+          value={comment}
+          onChange={(e) => setComment(e.target.value)}
+          style={{ ...inputSm, flex: "0 0 130px" }}
+        />
+        <button onClick={add} disabled={addMut.isPending} style={btnGhost}>
+          + Добавить
+        </button>
+      </div>
+      {err && <div style={{ color: COLORS.bad, fontSize: 13, marginTop: 8 }}>{err}</div>}
+    </Section>
+  );
+}
+
 function Info({ label, value }: { label: string; value: string }) {
   return (
     <div style={{ background: "var(--card)", borderRadius: 10, padding: "10px 14px" }}>
@@ -122,4 +207,12 @@ const td: React.CSSProperties = { padding: "7px 10px" };
 const btnGhost: React.CSSProperties = {
   padding: "8px 16px", borderRadius: 8, border: "1px solid var(--grid)",
   background: "transparent", color: "var(--text)", fontSize: 13, cursor: "pointer",
+};
+const inputSm: React.CSSProperties = {
+  padding: "8px 10px", borderRadius: 8, border: "1px solid var(--grid)",
+  background: "var(--bg)", color: "var(--text)", fontSize: 13, boxSizing: "border-box",
+};
+const iconBtn: React.CSSProperties = {
+  padding: "6px 9px", borderRadius: 8, border: "1px solid var(--grid)",
+  background: "transparent", color: "var(--muted)", fontSize: 13, cursor: "pointer",
 };

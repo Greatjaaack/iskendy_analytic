@@ -4,6 +4,7 @@ import axios from "axios";
 
 import type {
   CheckDistribution,
+  ContactInput,
   DishGroupBy,
   DishMapping,
   DishResponse,
@@ -15,6 +16,7 @@ import type {
   RevenueResponse,
   SupplierBrief,
   SupplierCard,
+  SupplierContact,
   SupplierInput,
   TtkBrief,
   TtkCard,
@@ -72,6 +74,24 @@ export const createSupplier = (data: SupplierInput): Promise<SupplierBrief> =>
 
 export const updateSupplier = (id: number, data: SupplierInput): Promise<SupplierBrief> =>
   api.put<SupplierBrief>(`/api/suppliers/${id}`, data).then((r) => r.data);
+
+export const addSupplierContact = (
+  supplierId: number,
+  data: ContactInput,
+): Promise<SupplierContact> =>
+  api.post<SupplierContact>(`/api/suppliers/${supplierId}/contacts`, data).then((r) => r.data);
+
+export const updateSupplierContact = (
+  supplierId: number,
+  contactId: number,
+  data: ContactInput,
+): Promise<SupplierContact> =>
+  api
+    .put<SupplierContact>(`/api/suppliers/${supplierId}/contacts/${contactId}`, data)
+    .then((r) => r.data);
+
+export const deleteSupplierContact = (supplierId: number, contactId: number) =>
+  api.delete(`/api/suppliers/${supplierId}/contacts/${contactId}`).then((r) => r.data);
 
 export const uploadSupplierFile = (id: number, file: File, fileType = "other") => {
   const form = new FormData();

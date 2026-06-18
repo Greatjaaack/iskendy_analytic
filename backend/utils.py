@@ -20,6 +20,20 @@ def split_delivery(name: str) -> tuple[str, bool]:
     return s, False
 
 
+def normalize_phone(raw: str) -> str:
+    """Валидирует и нормализует российский номер → «+7XXXXXXXXXX».
+
+    Принимает любой ввод с разделителями (пробелы, скобки, дефисы), а также формы
+    `8XXXXXXXXXX`, `+7XXXXXXXXXX`, `XXXXXXXXXX`. Бросает ValueError на некорректном.
+    """
+    digits = re.sub(r"\D", "", str(raw or ""))
+    if len(digits) == 11 and digits[0] in ("7", "8"):
+        digits = digits[1:]
+    if len(digits) != 10:
+        raise ValueError("Некорректный номер: ожидается российский, 10 цифр (без кода +7/8)")
+    return "+7" + digits
+
+
 def normalize_name(s: str) -> str:
     """Нормализация имени для сопоставления (lower, ё→е, схлоп пробелов).
 

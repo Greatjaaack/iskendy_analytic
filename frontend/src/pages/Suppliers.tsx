@@ -61,8 +61,13 @@ export function Suppliers() {
                       {s.name}
                     </Link>
                   </td>
-                  <td style={{ ...td, color: "var(--text)" }}>{s.contact_person || "—"}</td>
-                  <td style={{ ...td, color: "var(--text)" }}>{s.phone || "—"}</td>
+                  <td style={{ ...td, color: "var(--text)" }}>{s.contacts[0]?.contact_person || "—"}</td>
+                  <td style={{ ...td, color: "var(--text)" }}>
+                    {s.contacts[0]?.phone || "—"}
+                    {s.contacts.length > 1 && (
+                      <span style={{ color: "var(--muted)" }}> +{s.contacts.length - 1}</span>
+                    )}
+                  </td>
                   <td style={{ ...td, color: "var(--text)" }}>{s.min_delivery || "—"}</td>
                   <td style={{ ...td, textAlign: "right", color: COLORS.indigoText }}>{s.products}</td>
                 </tr>

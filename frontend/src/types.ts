@@ -128,14 +128,26 @@ export interface CheckDistribution {
 
 // ---------- Поставщики ----------
 
+export interface SupplierContact {
+  id: number;
+  phone: string;
+  contact_person: string;
+  comment: string;
+}
+
+export interface ContactInput {
+  phone: string;
+  contact_person?: string;
+  comment?: string;
+}
+
 export interface SupplierBrief {
   id: number;
   name: string;
-  contact_person: string;
-  phone: string;
   address: string;
   min_delivery: string;
   comment: string;
+  contacts: SupplierContact[];
   products: number;
 }
 
@@ -163,8 +175,6 @@ export interface SupplierCard extends SupplierBrief {
 
 export interface SupplierInput {
   name: string;
-  contact_person?: string;
-  phone?: string;
   address?: string;
   min_delivery?: string;
   comment?: string;
