@@ -145,6 +145,7 @@ class SupplierPrice(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     supplier_id = Column(Integer, ForeignKey("suppliers.id"))
     ingredient_id = Column(Integer, ForeignKey("ingredients.id"))
+    brand = Column(String, default="")  # торговая марка товара у этого поставщика
     pack_size = Column(Float, nullable=True)  # вес/объём упаковки в ед.изм ингредиента
     pack_unit = Column(String, default="")
     pack_price = Column(Float, nullable=True)  # стоимость упаковки

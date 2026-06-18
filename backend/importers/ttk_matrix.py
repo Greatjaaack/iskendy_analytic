@@ -388,6 +388,14 @@ def import_ttk_matrix(path: str = SEED_PATH) -> dict:
         old_target = {
             m.id: (m.ttk.name_norm if m.ttk else None) for m in db.query(DishMapping).all()
         }
+        # торговые марки заданы вручную на SupplierPrice, а прайс пересоздаётся — сохраняем
+        # по ключу (имя поставщика casefold, name_norm ингредиента), затем восстанавливаем
+        brand_map: dict[tuple[str, str], str] = {}
+        for sp in db.query(SupplierPrice).filter(SupplierPrice.brand != "").all():
+            sup = db.get(Supplier, sp.supplier_id)
+            ing = db.get(Ingredient, sp.ingredient_id)
+            if sup and ing:
+                brand_map[(sup.name.casefold(), ing.name_norm)] = sp.brand
 
         # очистка прежнего импорта (поставщиков и привязки НЕ трогаем)
         db.query(TtkIngredient).delete()
@@ -397,6 +405,16 @@ def import_ttk_matrix(path: str = SEED_PATH) -> dict:
         db.flush()
 
         counters = _Importer(db).run(wb)
+
+        # восстановление торговых марок на новых строках прайса
+        if brand_map:
+            for sp in db.query(SupplierPrice).all():
+                sup = db.get(Supplier, sp.supplier_id)
+                ing = db.get(Ingredient, sp.ingredient_id)
+                if sup and ing:
+                    brand = brand_map.get((sup.name.casefold(), ing.name_norm))
+                    if brand:
+                        sp.brand = brand
 
         # перелинковка привязок по имени ТТК (предпочитаем НЕ-п/ф — is_semi False первыми)
         new_by_norm: dict[str, int] = {}

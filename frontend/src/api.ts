@@ -123,6 +123,9 @@ export const supplierFileUrl = (supplierId: number, fileId: number) =>
 /** URL выгрузки всех поставщиков в Excel (открывается напрямую/скачивается). */
 export const suppliersExportUrl = () => `${BASE}/api/suppliers/export`;
 
+export const updateProductBrand = (supplierId: number, priceId: number, brand: string) =>
+  api.put(`/api/suppliers/${supplierId}/products/${priceId}`, { brand }).then((r) => r.data);
+
 // ---------- Номенклатура / ТТК ----------
 
 export const fetchIngredients = (): Promise<IngredientBrief[]> =>

@@ -217,7 +217,9 @@ export interface SupplierBrief {
 
 export interface SupplierProduct {
   ingredient_id: number;
+  price_id: number;
   name: string;
+  brand: string;
   unit: string;
   pack_size: number | null;
   pack_price: number | null;

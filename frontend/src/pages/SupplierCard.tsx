@@ -6,10 +6,16 @@ import {
   deleteSupplierContact,
   fetchSupplier,
   supplierFileUrl,
+  updateProductBrand,
   updateSupplier,
   uploadSupplierFile,
 } from "../api";
-import type { SupplierCard as SupplierCardT, SupplierContact, SupplierInput } from "../api";
+import type {
+  SupplierCard as SupplierCardT,
+  SupplierContact,
+  SupplierInput,
+  SupplierProduct,
+} from "../api";
 import { COLORS } from "../constants";
 import { fmtNum } from "../format";
 import { isValidEmail, normalizePhone } from "../validation";
@@ -52,6 +58,7 @@ export function SupplierCard() {
           <thead>
             <tr style={th}>
               <td style={td}>Товар</td>
+              <td style={td}>Торговая марка</td>
               <td style={td}>Ед.</td>
               <td style={{ ...td, textAlign: "right" }}>Фасовка</td>
               <td style={{ ...td, textAlign: "right" }}>Цена упак.</td>
@@ -63,6 +70,7 @@ export function SupplierCard() {
             {s.products_list.map((p) => (
               <tr key={p.ingredient_id} style={{ borderTop: "1px solid var(--grid)" }}>
                 <td style={td}>{p.name}</td>
+                <td style={td}><BrandCell sid={sid} p={p} /></td>
                 <td style={{ ...td, color: "var(--muted)" }}>{p.unit}</td>
                 <td style={{ ...td, textAlign: "right" }}>{fmtNum(p.pack_size)}</td>
                 <td style={{ ...td, textAlign: "right" }}>{fmtNum(p.pack_price)}</td>
@@ -217,6 +225,29 @@ const Chan = ({ label, value }: { label: string; value: string }) => (
     <span style={{ color: "var(--muted)" }}>{label} </span>{value}
   </span>
 );
+
+/** Инлайн-редактирование торговой марки позиции прайса (сохранение по потере фокуса). */
+function BrandCell({ sid, p }: { sid: number; p: SupplierProduct }) {
+  const qc = useQueryClient();
+  const [val, setVal] = useState(p.brand);
+  const mut = useMutation({
+    mutationFn: (brand: string) => updateProductBrand(sid, p.price_id, brand),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["supplier", sid] }),
+  });
+  return (
+    <input
+      value={val}
+      placeholder="—"
+      onChange={(e) => setVal(e.target.value)}
+      onBlur={() => val.trim() !== p.brand && mut.mutate(val.trim())}
+      style={{
+        width: "100%", minWidth: 90, padding: "4px 8px", borderRadius: 6,
+        border: "1px solid var(--grid)", background: "var(--bg)", color: "var(--text)",
+        fontSize: 13, boxSizing: "border-box",
+      }}
+    />
+  );
+}
 
 function Field({ label, value }: { label: string; value: string }) {
   return (

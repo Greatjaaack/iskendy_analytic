@@ -185,7 +185,9 @@ def get_supplier(supplier_id: int):
         for p, ing in prices:
             latest[ing.id] = {
                 "ingredient_id": ing.id,
+                "price_id": p.id,
                 "name": ing.name,
+                "brand": p.brand,
                 "unit": ing.unit,
                 "pack_size": p.pack_size,
                 "pack_price": p.pack_price,
@@ -232,6 +234,22 @@ def update_supplier(supplier_id: int, data: SupplierIn):
             setattr(s, k, v)
         db.commit()
         return _supplier_brief(s)
+
+
+class ProductPatch(BaseModel):
+    brand: str = ""
+
+
+@router.put("/{supplier_id}/products/{price_id}")
+def update_product(supplier_id: int, price_id: int, data: ProductPatch):
+    """Обновить торговую марку конкретной позиции прайса поставщика."""
+    with SessionLocal() as db:
+        p = db.get(SupplierPrice, price_id)
+        if not p or p.supplier_id != supplier_id:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "позиция не найдена")
+        p.brand = data.brand.strip()
+        db.commit()
+        return {"id": p.id, "brand": p.brand}
 
 
 @router.post("/{supplier_id}/contacts")
