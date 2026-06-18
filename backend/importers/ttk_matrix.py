@@ -244,10 +244,34 @@ class _Importer:
                 return r
         return 3
 
+    @staticmethod
+    def _col_map(ws, hr: int) -> dict[str, int]:
+        """Позиции колонок по шапке. Раскладка плавает: у комбо-листов нет колонок
+        потерь, поэтому «с/с руб.» и «Выход» сдвинуты (5/7 вместо 7/9). Дефолты — под
+        обычный 9-колоночный лист.
+        """
+        cols = {"gross": 2, "net": 3, "unit": 4, "cost": 7, "yield": 9}
+        for c in range(1, 14):
+            h = str(ws.cell(hr, c).value or "").strip().lower()
+            if h == "брутто":
+                cols["gross"] = c
+            elif h == "нетто":
+                cols["net"] = c
+            elif h.startswith("ед"):
+                cols["unit"] = c
+            elif h.startswith("% потери"):
+                cols["waste"] = c
+            elif h.startswith("с/с руб"):
+                cols["cost"] = c
+            elif h.startswith("выход"):
+                cols["yield"] = c
+        return cols
+
     def parse_ttk(self, ws, name: str, is_semi: bool):
         """Создаёт Ttk, возвращает (ttk, raw_lines) для второго прохода."""
         hr = self._find_header_row(ws)
-        yield_unit = _yield_unit_from_header(ws.cell(hr, 9).value)
+        cols = self._col_map(ws, hr)
+        yield_unit = _yield_unit_from_header(ws.cell(hr, cols["yield"]).value)
 
         lines = []
         yield_qty = None
@@ -261,17 +285,17 @@ class _Importer:
                     break
                 continue
             if ls.lower() == "итого":
-                yield_qty = _num(ws.cell(r, 9).value)
-                cost_total = _num(ws.cell(r, 7).value) or 0.0
+                yield_qty = _num(ws.cell(r, cols["yield"]).value)
+                cost_total = _num(ws.cell(r, cols["cost"]).value) or 0.0
                 break
             lines.append(
                 {
                     "raw_name": ls,
-                    "gross": _num(ws.cell(r, 2).value),
-                    "net": _num(ws.cell(r, 3).value),
-                    "unit": _clean_unit(ws.cell(r, 4).value),
-                    "waste_pct": _num(ws.cell(r, 6).value),
-                    "cost_rub": _num(ws.cell(r, 7).value),
+                    "gross": _num(ws.cell(r, cols["gross"]).value),
+                    "net": _num(ws.cell(r, cols["net"]).value),
+                    "unit": _clean_unit(ws.cell(r, cols["unit"]).value),
+                    "waste_pct": _num(ws.cell(r, cols["waste"]).value) if "waste" in cols else None,
+                    "cost_rub": _num(ws.cell(r, cols["cost"]).value),
                 }
             )
 
@@ -310,9 +334,10 @@ class _Importer:
             info = summary.get(b1_norm) or summary.get(_norm(name)) or {}
             ttk.category = info.get("category", "")
             ttk.sale_price = info.get("price")
-            # порционная с/с с листа («Итого с/с») — основной источник; «Сводная» —
-            # запасной (она заполнена лишь у части блюд)
-            ttk.cost_full = _portion_cost(ws) or info.get("cost_full")
+            # порционная с/с: «Итого с/с» с листа (осн.) → «Сводная» → «Итого» рецепта.
+            # Последний резерв — для комбо: у них нет «Итого с/с», но «Итого» по столбцу
+            # с/с уже включает упаковку и идёт за одну порцию (выход = 1 комбо).
+            ttk.cost_full = _portion_cost(ws) or info.get("cost_full") or ttk.cost_total
             pending.append((ttk, lines))
             index_all.setdefault(_norm(name), ttk)
             if is_semi:

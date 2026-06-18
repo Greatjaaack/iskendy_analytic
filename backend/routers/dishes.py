@@ -21,7 +21,7 @@ from constants import (
 )
 from iiko_web_client import iiko_web
 from models import DishMapping, SessionLocal, Ttk
-from utils import classify_channel, normalize_name, period_range, split_delivery
+from utils import classify_channel, normalize_name, period_range
 
 router = APIRouter(prefix="/api/dishes", tags=["dishes"])
 
@@ -76,13 +76,12 @@ async def get_dishes(
     rows = [r for r in rows if r.get("product_type") != PRODUCT_TYPE_MODIFIER]
 
     # с/с по блюду: порционная с/с × количество (iiko-метрика по блюду ~0).
-    # канал «доставка» — по принадлежности к категории «Доставка» (а не по постфиксу);
-    # `_д` срезаем ТОЛЬКО для подбора с/с (у доставочной позиции та же ТТК, что у базовой).
+    # канал «доставка» — по принадлежности к категории «Доставка»; имя матчим как есть
+    # (привязка несовпадающих имён POS↔ТТК — через DishMapping).
     unit_cost = _dish_unit_cost()
     for r in rows:
-        base_name, _ = split_delivery(r["dish_name"])
         r["channel"] = CHANNEL_DELIVERY if r.get("category") == DELIVERY_CATEGORY else ""
-        c = unit_cost.get(normalize_name(base_name))
+        c = unit_cost.get(normalize_name(r["dish_name"]))
         if c is not None:
             r["cost_sum"] = c * r["quantity"]
 

@@ -3,22 +3,6 @@
 import re
 from datetime import date, timedelta
 
-# Постфикс в названии продажи iiko, помечающий доставочную версию позиции:
-# «Напиток_д» — это «Напиток», проданный в доставку (отдельная POS-позиция).
-DELIVERY_SUFFIX = "_д"
-
-
-def split_delivery(name: str) -> tuple[str, bool]:
-    """('Напиток_д') → ('Напиток', True); ('Напиток') → ('Напиток', False).
-
-    Срезает постфикс `_д` (доставка), чтобы доставочная позиция сопоставлялась с той
-    же ТТК, что и обычная, и чтобы можно было пометить канал «доставка».
-    """
-    s = str(name or "").strip()
-    if s.lower().endswith(DELIVERY_SUFFIX):
-        return s[: -len(DELIVERY_SUFFIX)].rstrip(), True
-    return s, False
-
 
 def normalize_phone(raw: str) -> str:
     """Валидирует и нормализует российский номер → «+7XXXXXXXXXX».
@@ -34,15 +18,12 @@ def normalize_phone(raw: str) -> str:
     return "+7" + digits
 
 
-def classify_channel(order_type: str, dish_name: str = "") -> str:
-    """Канал обслуживания позиции: «доставка» / «с собой» / «в зале».
+def classify_channel(order_type: str) -> str:
+    """Эвристика канала по значению OrderType (только для диагностики `/order-types`).
 
-    Приоритет — постфикс `_д` в названии (явный признак доставки); иначе эвристика по
-    значению OrderType из OLAP. Неизвестное/пустое трактуем как «в зале» (зал — основной
-    канал). Значения OrderType подтвердить на живом API (см. constants.OLAP_FIELD_ORDER_TYPE).
+    В реальном разрезе канал берётся из категории «Доставка» и модификатора «Статус»
+    заказа, а не отсюда — у этой точки OrderType почти всегда пуст.
     """
-    if str(dish_name or "").strip().lower().endswith(DELIVERY_SUFFIX):
-        return "доставка"
     t = str(order_type or "").lower()
     if "достав" in t or "курьер" in t or "delivery" in t:
         return "доставка"
