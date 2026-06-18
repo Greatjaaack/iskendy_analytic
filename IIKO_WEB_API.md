@@ -105,6 +105,20 @@
 ```
 olapType: `TRANSACTIONS` (проводки/доходы-расходы), `SALES` (продажи). Точные имена полей SALES — добрать из готового пресета (валидные ловятся из ошибки fetch-status).
 
+### Проверенные поля OLAP SALES (Искенди, июнь 2026)
+Группировки: `OrderNum` (номер заказа), `DishName`, `DishCategory`, `HourOpen`,
+`OpenTime`/`CloseTime` (ISO-таймстамп), `SessionNum`, `Cashier`, `Department`.
+Данные: `DishAmountInt` (кол-во), `DishSumInt` (сумма без скидки).
+Невалидные (OLAP → ERROR): `UniqOrderId`, `OrderId`, `Order.Num`, `Modifier`,
+`ServiceType`, `OrderType.Name`, `Waiter`.
+⚠️ **Тип обслуживания НЕ в `OrderType`/`OrderServiceType`** — они почти всегда пусты
+(только редкие «Обычный заказ»/`COMMON`). Канал (Доставка/В зале/С собой) задаётся
+**модификатором категории «Статус» на уровне заказа** — в OLAP это отдельная строка
+блюда (`DishCategory="Статус"`, `DishName`∈{Доставка,В зале,С собой}). Разрез блюдо×канал:
+группировка `[OrderNum, DishCategory, DishName]`, у каждого заказа берём «Статус» и
+относим к нему все его блюда (см. `/api/dishes/service-breakdown`). field0 склеивает
+группы через «, ».
+
 ## Готовые OLAP-шаблоны (presets)
 Доходы и расходы, Отчёт по официантам, по скидкам, по типам оплаты, почасовой, по ингредиентам.
 `GET /api/analytics/olap/presets/get/<presetId>`

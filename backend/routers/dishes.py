@@ -10,10 +10,12 @@ from constants import (
     OLAP_FIELD_DISH_CATEGORY,
     OLAP_FIELD_DISH_NAME,
     OLAP_FIELD_HOUR,
+    OLAP_FIELD_ORDER_NUM,
     OLAP_FIELD_ORDER_TYPE,
     OLAP_FIELD_QTY,
     OLAP_FIELD_SUM,
     ORDER_STATUS_CATEGORY,
+    ORDER_STATUS_CHANNELS,
     PRODUCT_TYPE_MODIFIER,
 )
 from iiko_web_client import iiko_web
@@ -264,38 +266,57 @@ async def get_service_breakdown(
     date_to: str | None = None,
     limit: int = 200,
 ):
-    """Разрез блюдо × канал обслуживания (#4): сколько берут в зале / с собой / в доставку.
+    """Разрез блюдо/категория × канал обслуживания (#4): в зале / с собой / в доставку.
 
-    Через OLAP SALES: группировка [тип заказа, блюдо/категория], сумма количества/выручки.
-    Канал нормализуется (`classify_channel`); постфикс `_д` форсит «доставка», а «_д» и
-    обычная позиция сводятся в одно блюдо.
+    Тип обслуживания у точки не пишется в OrderType (он пуст) — он задаётся модификатором
+    категории «Статус» на уровне ЗАКАЗА. Поэтому через OLAP SALES группируем по
+    [номер заказа, категория, блюдо]: у каждого заказа из его «Статус»-строки берём канал
+    и относим к нему все блюда заказа. Постфикс `_д` форсит «доставка» (заодно подстраховка,
+    если у заказа нет «Статуса»).
     """
     date_from_d, date_to_d = period_range(period, date_from, date_to)
-    dim = OLAP_FIELD_DISH_CATEGORY if group == "category" else OLAP_FIELD_DISH_NAME
 
     rows = await iiko_web.olap_sales(
-        group_fields=[OLAP_FIELD_ORDER_TYPE, dim],
+        group_fields=[OLAP_FIELD_ORDER_NUM, OLAP_FIELD_DISH_CATEGORY, OLAP_FIELD_DISH_NAME],
         data_fields=[OLAP_FIELD_QTY, OLAP_FIELD_SUM],
         date_from=date_from_d.isoformat(),
         date_to=date_to_d.isoformat(),
     )
 
-    # field0 = "<тип заказа>, <имя>" — тип без запятых, поэтому делим по первому ", "
+    # field0 = "<OrderNum>, <Категория>, <Имя>". OrderNum и категория без запятых; имя
+    # может содержать ", " — поэтому склеиваем хвост обратно.
+    def _split(value: str) -> tuple[str, str, str]:
+        parts = str(value).split(", ")
+        if len(parts) < 3:
+            return "", "", ""
+        return parts[0], parts[1], ", ".join(parts[2:])
+
+    # 1-й проход: канал каждого заказа из его строки категории «Статус»
+    order_channel: dict[str, str] = {}
+    for r in rows:
+        order_num, category, name = _split(r.get("field0", {}).get("value", ""))
+        if category == ORDER_STATUS_CATEGORY:
+            ch = ORDER_STATUS_CHANNELS.get(name.strip().lower())
+            if ch:
+                order_channel[order_num] = ch
+
+    # 2-й проход: блюда заказа → его канал (или доставка по `_д`, иначе зал по умолчанию)
     channels = (CHANNEL_DINEIN, CHANNEL_TAKEAWAY, CHANNEL_DELIVERY)
     agg: dict[str, dict] = {}
     for r in rows:
-        key = str(r.get("field0", {}).get("value", ""))
-        parts = key.split(", ", 1)
-        order_type = parts[0]
-        name = parts[1] if len(parts) > 1 else "—"
-        if name == ORDER_STATUS_CATEGORY:  # модификаторы статуса — не товар
+        order_num, category, name = _split(r.get("field0", {}).get("value", ""))
+        if not name or category == ORDER_STATUS_CATEGORY:
             continue
         qty = float(r.get("field1", {}).get("value", 0) or 0)
         rev = float(r.get("field2", {}).get("value", 0) or 0)
-        channel = classify_channel(order_type, name)
-        base, _ = split_delivery(name)  # «Напиток_д» и «Напиток» — одна позиция
+        base, is_delivery = split_delivery(name)
+        if is_delivery:
+            channel = CHANNEL_DELIVERY
+        else:
+            channel = order_channel.get(order_num, CHANNEL_DINEIN)
+        key = (category or "Без категории") if group == "category" else base
         a = agg.setdefault(
-            base, {"name": base, "total": 0.0, "revenue": 0.0, **{c: 0.0 for c in channels}}
+            key, {"name": key, "total": 0.0, "revenue": 0.0, **{c: 0.0 for c in channels}}
         )
         a["total"] += qty
         a["revenue"] += rev

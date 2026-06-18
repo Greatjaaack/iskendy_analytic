@@ -98,3 +98,14 @@ OLAP_FIELD_ORDER_TYPE = "OrderType"
 CHANNEL_DELIVERY = "доставка"
 CHANNEL_TAKEAWAY = "с собой"
 CHANNEL_DINEIN = "в зале"
+
+# Тип обслуживания у этой точки ведётся НЕ через OrderType (он пуст), а модификатором
+# категории «Статус» на уровне заказа. Маппинг значений модификатора → наши каналы.
+ORDER_STATUS_CHANNELS = {
+    "в зале": CHANNEL_DINEIN,
+    "с собой": CHANNEL_TAKEAWAY,
+    "доставка": CHANNEL_DELIVERY,
+}
+
+# Поле-идентификатор заказа в OLAP SALES (для связи блюд заказа с его «Статусом»).
+OLAP_FIELD_ORDER_NUM = "OrderNum"
