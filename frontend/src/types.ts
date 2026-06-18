@@ -52,6 +52,7 @@ export interface DishRow {
   key: string;
   name: string;
   group_name: string;
+  channel: string; // "доставка" для позиций с постфиксом _д, иначе ""
   quantity: number;
   revenue: number;
   cost_sum: number;

@@ -3,6 +3,22 @@
 import re
 from datetime import date, timedelta
 
+# Постфикс в названии продажи iiko, помечающий доставочную версию позиции:
+# «Напиток_д» — это «Напиток», проданный в доставку (отдельная POS-позиция).
+DELIVERY_SUFFIX = "_д"
+
+
+def split_delivery(name: str) -> tuple[str, bool]:
+    """('Напиток_д') → ('Напиток', True); ('Напиток') → ('Напиток', False).
+
+    Срезает постфикс `_д` (доставка), чтобы доставочная позиция сопоставлялась с той
+    же ТТК, что и обычная, и чтобы можно было пометить канал «доставка».
+    """
+    s = str(name or "").strip()
+    if s.lower().endswith(DELIVERY_SUFFIX):
+        return s[: -len(DELIVERY_SUFFIX)].rstrip(), True
+    return s, False
+
 
 def normalize_name(s: str) -> str:
     """Нормализация имени для сопоставления (lower, ё→е, схлоп пробелов).

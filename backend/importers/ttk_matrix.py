@@ -114,6 +114,25 @@ def _yield_unit_from_header(text) -> str:
     return m.group(1).strip(" .") if m else ""
 
 
+def _portion_cost(ws) -> float | None:
+    """Порционная с/с блюда из блока «Для расчёта цены продажи» → строка «Итого с/с».
+
+    Это полная с/с ОДНОЙ порции (продукты + списания + упаковка) — достоверный источник
+    с/с по блюду. В отличие от `cost_total` («Итого» col7 = с/с за весь выход карты,
+    т.е. БАТЧ: напр. чай 28.84 за 4800 мл ≈ 24 чашки), эта величина не зависит от
+    полноты листа «Сводная» и есть почти у всех продаваемых блюд.
+    """
+    # «Итого с/с» (строка-маркер) живёт в блоке ценообразования у верха листа.
+    # Обычная рецептурная строка зовётся просто «Итого» — её не путаем.
+    for r in range(1, min(ws.max_row, 60) + 1):
+        for c in (1, 2):
+            t = str(ws.cell(r, c).value or "").strip().lower()
+            if "итого" in t and "с/с" in t:
+                # значение порой в колонке «руб» (3), порой смещено в (4)
+                return _num(ws.cell(r, 3).value) or _num(ws.cell(r, 4).value)
+    return None
+
+
 class _Importer:
     def __init__(self, db):
         self.db = db
@@ -291,7 +310,9 @@ class _Importer:
             info = summary.get(b1_norm) or summary.get(_norm(name)) or {}
             ttk.category = info.get("category", "")
             ttk.sale_price = info.get("price")
-            ttk.cost_full = info.get("cost_full")
+            # порционная с/с с листа («Итого с/с») — основной источник; «Сводная» —
+            # запасной (она заполнена лишь у части блюд)
+            ttk.cost_full = _portion_cost(ws) or info.get("cost_full")
             pending.append((ttk, lines))
             index_all.setdefault(_norm(name), ttk)
             if is_semi:

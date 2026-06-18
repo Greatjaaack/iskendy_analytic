@@ -14,14 +14,19 @@ from constants import (
 )
 from iiko_web_client import iiko_web
 from models import DishMapping, SessionLocal, Ttk
-from utils import normalize_name, period_range
+from utils import normalize_name, period_range, split_delivery
 
 router = APIRouter(prefix="/api/dishes", tags=["dishes"])
 
 
 def _ttk_portion_cost(t: Ttk) -> float | None:
-    """С/с одной порции ТТК: `cost_full` из «Сводной» (точно), иначе `cost_total` рецепта."""
-    return t.cost_full if t.cost_full else t.cost_total or None
+    """С/с ОДНОЙ ПОРЦИИ блюда: только `cost_full` (порционная «Итого с/с»).
+
+    `cost_total` сознательно НЕ используется как запасной вариант: это с/с за весь
+    выход карты (батч), а не за порцию (напр. чай — 4800 мл ≈ 24 чашки), и умножение
+    его на проданное количество завышает с/с в разы.
+    """
+    return t.cost_full or None
 
 
 def _dish_unit_cost() -> dict[str, float]:
@@ -63,10 +68,13 @@ async def get_dishes(
     # MODIFIER (Доставка/В зале/С собой и платные добавки) — не блюда, в список не берём
     rows = [r for r in rows if r.get("product_type") != PRODUCT_TYPE_MODIFIER]
 
-    # с/с по блюду: с/с порции из «Сводной» × количество (iiko-метрика по блюду ~0)
+    # с/с по блюду: порционная с/с × количество (iiko-метрика по блюду ~0).
+    # постфикс «_д» (доставка) срезаем перед матчингом — у доставочной позиции та же ТТК.
     unit_cost = _dish_unit_cost()
     for r in rows:
-        c = unit_cost.get(normalize_name(r["dish_name"]))
+        base_name, is_delivery = split_delivery(r["dish_name"])
+        r["channel"] = "доставка" if is_delivery else ""
+        c = unit_cost.get(normalize_name(base_name))
         if c is not None:
             r["cost_sum"] = c * r["quantity"]
 
@@ -85,6 +93,7 @@ async def get_dishes(
                 "key": r["dish_id"],
                 "name": r["dish_name"],
                 "group_name": r.get("category", ""),
+                "channel": r.get("channel", ""),
                 "quantity": r["quantity"],
                 "revenue": r["revenue"],
                 "cost_sum": r["cost_sum"],
@@ -104,6 +113,7 @@ async def get_dishes(
                 "key": i.get("key", i["name"]),
                 "name": i["name"],
                 "group_name": i.get("group_name", ""),
+                "channel": i.get("channel", ""),
                 "quantity": round(i["quantity"], 1),
                 "revenue": round(rev, 2),
                 "cost_sum": round(cost, 2),
