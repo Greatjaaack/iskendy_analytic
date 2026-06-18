@@ -14,6 +14,7 @@ import type {
   IngredientCard,
   RangeSel,
   RevenueResponse,
+  ServiceBreakdown,
   SupplierBrief,
   SupplierCard,
   SupplierContact,
@@ -59,6 +60,14 @@ export const fetchCheckDistribution = (range: RangeSel): Promise<CheckDistributi
 export const fetchHourlyBreakdown = (range: RangeSel, group: DishGroupBy): Promise<HourlyBreakdown> =>
   api
     .get<HourlyBreakdown>(`/api/dishes/hourly-breakdown?group=${group}&${rangeQS(range)}`)
+    .then((r) => r.data);
+
+export const fetchServiceBreakdown = (
+  range: RangeSel,
+  group: DishGroupBy,
+): Promise<ServiceBreakdown> =>
+  api
+    .get<ServiceBreakdown>(`/api/dishes/service-breakdown?group=${group}&${rangeQS(range)}`)
     .then((r) => r.data);
 
 // ---------- Поставщики ----------

@@ -6,6 +6,7 @@ import { KpiCards } from "../components/KpiCards";
 import { RevenueChart } from "../components/RevenueChart";
 import { HourlyChart } from "../components/HourlyChart";
 import { HourlyBreakdown } from "../components/HourlyBreakdown";
+import { ServiceBreakdown } from "../components/ServiceBreakdown";
 import { DishTable } from "../components/DishTable";
 import { ChecksDistribution } from "../components/ChecksDistribution";
 import { REFETCH_INTERVAL_MS, COLORS, PERIODS, weatherInfo } from "../constants";
@@ -121,6 +122,7 @@ export function Dashboard() {
           <ChecksDistribution range={sel} />
           <HourlyChart range={sel} />
           <HourlyBreakdown range={sel} />
+          <ServiceBreakdown range={sel} />
           <DishTable range={sel} />
         </div>
       )}

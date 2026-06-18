@@ -88,3 +88,13 @@ OLAP_FIELD_DISH_NAME = "DishName"
 OLAP_FIELD_SUM = "DishSumInt"  # сумма без скидки (выручка)
 OLAP_FIELD_QTY = "DishAmountInt"  # количество
 OLAP_FILTER_DATE = "OpenDate.Typed"  # поле фильтра по дате
+
+# Тип обслуживания заказа (доставка / с собой / в зале) для разреза блюдо×канал (#4).
+# ⚠️ Имя поля подобрано по стандарту iiko OLAP SALES — ПРОВЕРИТЬ на живом API через
+# GET /api/dishes/order-types; при ошибке OLAP заменить на верное (напр. "ServiceType").
+OLAP_FIELD_ORDER_TYPE = "OrderType"
+
+# Каналы обслуживания — наши канон-значения (в т.ч. для постфикса _д = доставка).
+CHANNEL_DELIVERY = "доставка"
+CHANNEL_TAKEAWAY = "с собой"
+CHANNEL_DINEIN = "в зале"

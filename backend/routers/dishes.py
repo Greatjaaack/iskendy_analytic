@@ -4,9 +4,13 @@ from fastapi import APIRouter, Query
 from sqlalchemy import select
 
 from constants import (
+    CHANNEL_DELIVERY,
+    CHANNEL_DINEIN,
+    CHANNEL_TAKEAWAY,
     OLAP_FIELD_DISH_CATEGORY,
     OLAP_FIELD_DISH_NAME,
     OLAP_FIELD_HOUR,
+    OLAP_FIELD_ORDER_TYPE,
     OLAP_FIELD_QTY,
     OLAP_FIELD_SUM,
     ORDER_STATUS_CATEGORY,
@@ -14,7 +18,7 @@ from constants import (
 )
 from iiko_web_client import iiko_web
 from models import DishMapping, SessionLocal, Ttk
-from utils import normalize_name, period_range, split_delivery
+from utils import classify_channel, normalize_name, period_range, split_delivery
 
 router = APIRouter(prefix="/api/dishes", tags=["dishes"])
 
@@ -250,3 +254,95 @@ async def get_hourly_breakdown(
         "date_to": date_to_d.isoformat(),
         "data": result,
     }
+
+
+@router.get("/service-breakdown")
+async def get_service_breakdown(
+    group: str = Query("dish", enum=["category", "dish"]),
+    period: str = Query("week", enum=["day", "week", "month"]),
+    date_from: str | None = None,
+    date_to: str | None = None,
+    limit: int = 200,
+):
+    """Разрез блюдо × канал обслуживания (#4): сколько берут в зале / с собой / в доставку.
+
+    Через OLAP SALES: группировка [тип заказа, блюдо/категория], сумма количества/выручки.
+    Канал нормализуется (`classify_channel`); постфикс `_д` форсит «доставка», а «_д» и
+    обычная позиция сводятся в одно блюдо.
+    """
+    date_from_d, date_to_d = period_range(period, date_from, date_to)
+    dim = OLAP_FIELD_DISH_CATEGORY if group == "category" else OLAP_FIELD_DISH_NAME
+
+    rows = await iiko_web.olap_sales(
+        group_fields=[OLAP_FIELD_ORDER_TYPE, dim],
+        data_fields=[OLAP_FIELD_QTY, OLAP_FIELD_SUM],
+        date_from=date_from_d.isoformat(),
+        date_to=date_to_d.isoformat(),
+    )
+
+    # field0 = "<тип заказа>, <имя>" — тип без запятых, поэтому делим по первому ", "
+    channels = (CHANNEL_DINEIN, CHANNEL_TAKEAWAY, CHANNEL_DELIVERY)
+    agg: dict[str, dict] = {}
+    for r in rows:
+        key = str(r.get("field0", {}).get("value", ""))
+        parts = key.split(", ", 1)
+        order_type = parts[0]
+        name = parts[1] if len(parts) > 1 else "—"
+        if name == ORDER_STATUS_CATEGORY:  # модификаторы статуса — не товар
+            continue
+        qty = float(r.get("field1", {}).get("value", 0) or 0)
+        rev = float(r.get("field2", {}).get("value", 0) or 0)
+        channel = classify_channel(order_type, name)
+        base, _ = split_delivery(name)  # «Напиток_д» и «Напиток» — одна позиция
+        a = agg.setdefault(
+            base, {"name": base, "total": 0.0, "revenue": 0.0, **{c: 0.0 for c in channels}}
+        )
+        a["total"] += qty
+        a["revenue"] += rev
+        a[channel] += qty
+
+    result = sorted(agg.values(), key=lambda x: x["total"], reverse=True)
+    for a in result:
+        a["total"] = round(a["total"], 1)
+        a["revenue"] = round(a["revenue"], 2)
+        for c in channels:
+            a[c] = round(a[c], 1)
+
+    return {
+        "group_by": group,
+        "period": "custom" if (date_from and date_to) else period,
+        "date_from": date_from_d.isoformat(),
+        "date_to": date_to_d.isoformat(),
+        "channels": list(channels),
+        "data": result[:limit],
+    }
+
+
+@router.get("/order-types")
+async def get_order_types(
+    period: str = Query("week", enum=["day", "week", "month"]),
+    date_from: str | None = None,
+    date_to: str | None = None,
+):
+    """Диагностика #4: распределение количества по «сырому» полю типа заказа OLAP.
+
+    Нужна, чтобы подтвердить имя поля `OLAP_FIELD_ORDER_TYPE` и увидеть реальные значения
+    (доставка/самовывоз/обычный…). При неверном имени поля OLAP вернёт ошибку.
+    """
+    df, dt = period_range(period, date_from, date_to)
+    rows = await iiko_web.olap_sales(
+        group_fields=[OLAP_FIELD_ORDER_TYPE],
+        data_fields=[OLAP_FIELD_QTY],
+        date_from=df.isoformat(),
+        date_to=dt.isoformat(),
+    )
+    values = [
+        {
+            "order_type": str(r.get("field0", {}).get("value", "")),
+            "qty": float(r.get("field1", {}).get("value", 0) or 0),
+            "channel": classify_channel(str(r.get("field0", {}).get("value", ""))),
+        }
+        for r in rows
+    ]
+    values.sort(key=lambda x: x["qty"], reverse=True)
+    return {"field": OLAP_FIELD_ORDER_TYPE, "values": values}

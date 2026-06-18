@@ -34,6 +34,23 @@ def normalize_phone(raw: str) -> str:
     return "+7" + digits
 
 
+def classify_channel(order_type: str, dish_name: str = "") -> str:
+    """Канал обслуживания позиции: «доставка» / «с собой» / «в зале».
+
+    Приоритет — постфикс `_д` в названии (явный признак доставки); иначе эвристика по
+    значению OrderType из OLAP. Неизвестное/пустое трактуем как «в зале» (зал — основной
+    канал). Значения OrderType подтвердить на живом API (см. constants.OLAP_FIELD_ORDER_TYPE).
+    """
+    if str(dish_name or "").strip().lower().endswith(DELIVERY_SUFFIX):
+        return "доставка"
+    t = str(order_type or "").lower()
+    if "достав" in t or "курьер" in t or "delivery" in t:
+        return "доставка"
+    if "вынос" in t or "собой" in t or "самовывоз" in t or "pickup" in t or "take" in t:
+        return "с собой"
+    return "в зале"
+
+
 def normalize_name(s: str) -> str:
     """Нормализация имени для сопоставления (lower, ё→е, схлоп пробелов).
 
