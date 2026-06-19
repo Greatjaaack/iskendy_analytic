@@ -65,6 +65,26 @@ def _dish_unit_cost() -> dict[str, float]:
     return out
 
 
+async def _modifier_filters(date_from_iso: str, date_to_iso: str) -> tuple[set[str], set[str]]:
+    """(норм. имена, категории) платных модификаторов за период.
+
+    OLAP SALES не отдаёт productType, поэтому набор модификаторов («Разрезать 1/2» и пр.)
+    берём из `dishes_detail` (get-data, там есть productType) и исключаем их из
+    OLAP-разрезов продаж: модификаторы — не блюда и в продажи попадать не должны.
+    Категория и имена «Статуса» (Доставка/В зале/С собой) тоже сюда попадают — в разрезах
+    они либо уже отсекаются по категории, либо предварительно дают канал заказа.
+    """
+    rows = await iiko_web.dishes_detail(date_from_iso, date_to_iso)
+    names: set[str] = set()
+    cats: set[str] = set()
+    for r in rows:
+        if r.get("product_type") == PRODUCT_TYPE_MODIFIER:
+            names.add(normalize_name(r["dish_name"]))
+            if r.get("category"):
+                cats.add(r["category"])
+    return names, cats
+
+
 @router.get("")
 async def get_dishes(
     period: str = Query("week", enum=["day", "week", "month"]),
@@ -204,6 +224,7 @@ async def get_hourly_breakdown(
     date_from_d, date_to_d = period_range(period, date_from, date_to)
     dim = OLAP_FIELD_DISH_CATEGORY if group == "category" else OLAP_FIELD_DISH_NAME
 
+    mod_names, mod_cats = await _modifier_filters(date_from_d.isoformat(), date_to_d.isoformat())
     rows = await iiko_web.olap_sales(
         group_fields=[OLAP_FIELD_HOUR, dim],
         data_fields=[OLAP_FIELD_SUM, OLAP_FIELD_QTY],
@@ -220,7 +241,9 @@ async def get_hourly_breakdown(
             continue
         hour = int(parts[0])
         name = parts[1] if len(parts) > 1 else "—"
-        if name == ORDER_STATUS_CATEGORY:  # модификаторы типа обслуживания — не товар
+        # модификаторы — не товар: в режиме категорий name = категория, в режиме блюд = имя
+        is_mod = name in mod_cats if group == "category" else normalize_name(name) in mod_names
+        if name == ORDER_STATUS_CATEGORY or is_mod:
             continue
         rev = float(r.get("field1", {}).get("value", 0) or 0)
         qty = float(r.get("field2", {}).get("value", 0) or 0)
@@ -285,6 +308,7 @@ async def get_service_breakdown(
     """
     date_from_d, date_to_d = period_range(period, date_from, date_to)
 
+    _, mod_cats = await _modifier_filters(date_from_d.isoformat(), date_to_d.isoformat())
     rows = await iiko_web.olap_sales(
         group_fields=[OLAP_FIELD_ORDER_NUM, OLAP_FIELD_DISH_CATEGORY, OLAP_FIELD_DISH_NAME],
         data_fields=[OLAP_FIELD_QTY, OLAP_FIELD_SUM],
@@ -315,7 +339,8 @@ async def get_service_breakdown(
     agg: dict[str, dict] = {}
     for r in rows:
         order_num, category, name = _split(r.get("field0", {}).get("value", ""))
-        if not name or category == ORDER_STATUS_CATEGORY:
+        # пропускаем «Статус» (он дал канал в 1-м проходе) и платные модификаторы — не блюда
+        if not name or category == ORDER_STATUS_CATEGORY or category in mod_cats:
             continue
         qty = float(r.get("field1", {}).get("value", 0) or 0)
         rev = float(r.get("field2", {}).get("value", 0) or 0)
@@ -394,6 +419,7 @@ async def get_check_composition(
     и по часам. Доля считается на каждый чек (категория / итог чека), затем усредняется.
     """
     df, dt = period_range(period, date_from, date_to)
+    _, mod_cats = await _modifier_filters(df.isoformat(), dt.isoformat())
     rows = await iiko_web.olap_sales(
         group_fields=[OLAP_FIELD_HOUR, OLAP_FIELD_ORDER_NUM, OLAP_FIELD_DISH_CATEGORY],
         data_fields=[OLAP_FIELD_QTY, OLAP_FIELD_SUM],
@@ -405,7 +431,12 @@ async def get_check_composition(
     order_hour: dict[str, str] = {}
     for r in rows:
         hour, ordernum, category = _split3(r.get("field0", {}).get("value", ""))
-        if not ordernum or not category or category in NON_PRODUCT_CATEGORIES:
+        if (
+            not ordernum
+            or not category
+            or category in NON_PRODUCT_CATEGORIES
+            or category in mod_cats
+        ):
             continue
         orders[ordernum][category][0] += float(r.get("field1", {}).get("value", 0) or 0)
         orders[ordernum][category][1] += float(r.get("field2", {}).get("value", 0) or 0)
@@ -467,6 +498,7 @@ async def get_check_fullness(
     Позиция — отдельное товарное блюдо в заказе (служебные категории не считаются).
     """
     df, dt = period_range(period, date_from, date_to)
+    _, mod_cats = await _modifier_filters(df.isoformat(), dt.isoformat())
     rows = await iiko_web.olap_sales(
         group_fields=[
             OLAP_FIELD_HOUR,
@@ -484,7 +516,7 @@ async def get_check_fullness(
         if len(parts) < 4:
             continue
         hour, ordernum, category, name = parts[0], parts[1], parts[2], ", ".join(parts[3:])
-        if not name or category in NON_PRODUCT_CATEGORIES:
+        if not name or category in NON_PRODUCT_CATEGORIES or category in mod_cats:
             continue
         positions[(hour, ordernum)].add(name)
 

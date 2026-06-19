@@ -56,6 +56,24 @@ export interface RevenueResponse {
   prev_data: PrevDay[];
 }
 
+// Свод выручки по дням недели (#7): агрегат дней одного дня недели за период.
+export interface WeekdayRow {
+  weekday: string; // Пн … Вс
+  days: number; // сколько таких дней недели в периоде
+  revenue: number; // суммарная выручка
+  avg_day_revenue: number; // средняя выручка за такой день
+  checks: number;
+  avg_check: number;
+  food_cost_pct: number;
+}
+
+export interface WeekdaySummary {
+  period: Period | "custom";
+  date_from: string;
+  date_to: string;
+  data: WeekdayRow[];
+}
+
 // ---------- Продажи блюд ----------
 
 export type DishGroupBy = "dish" | "category";

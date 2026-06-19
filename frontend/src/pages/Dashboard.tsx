@@ -4,11 +4,13 @@ import { fetchRevenue, triggerSync, rangeKey } from "../api";
 import type { Period, RangeSel, RevenueDay } from "../api";
 import { KpiCards } from "../components/KpiCards";
 import { RevenueChart } from "../components/RevenueChart";
+import { WeekdaySummary } from "../components/WeekdaySummary";
 import { HourlyChart } from "../components/HourlyChart";
 import { HourlyBreakdown } from "../components/HourlyBreakdown";
 import { ServiceBreakdown } from "../components/ServiceBreakdown";
 import { CheckComposition } from "../components/CheckComposition";
 import { CheckFullness } from "../components/CheckFullness";
+import { MenuEngineering } from "../components/MenuEngineering";
 import { DishTable } from "../components/DishTable";
 import { ChecksDistribution } from "../components/ChecksDistribution";
 import { REFETCH_INTERVAL_MS, COLORS, PERIODS, weatherInfo } from "../constants";
@@ -24,6 +26,7 @@ export function Dashboard() {
   const [from, setFrom] = useState(daysAgoISO(6));
   const [to, setTo] = useState(todayISO());
   const [syncing, setSyncing] = useState(false);
+  const [tab, setTab] = useState<"pulse" | "ops" | "menu">("pulse");
 
   const isCustom = "from" in sel;
 
@@ -120,14 +123,36 @@ export function Dashboard() {
             <TodayBanner day={revenueQ.data.data[0]} />
           )}
           <KpiCards summary={revenueQ.data.summary} />
-          <RevenueChart data={revenueQ.data.data} prevData={revenueQ.data.prev_data} range={sel} />
-          <ChecksDistribution range={sel} />
-          <HourlyChart range={sel} />
-          <CheckFullness range={sel} />
-          <CheckComposition range={sel} />
-          <HourlyBreakdown range={sel} />
-          <ServiceBreakdown range={sel} />
-          <DishTable range={sel} />
+
+          {/* Разделы дашборда: Пульс / Операции / Меню (один экран не перегружен) */}
+          <div style={{ display: "flex", gap: 4, background: COLORS.card, borderRadius: 8, padding: 4, width: "fit-content" }}>
+            {([["pulse", "Пульс"], ["ops", "Операции"], ["menu", "Меню"]] as const).map(([k, label]) => (
+              <button key={k} onClick={() => setTab(k)} style={tabBtn(tab === k)}>{label}</button>
+            ))}
+          </div>
+
+          {tab === "pulse" && (
+            <>
+              <RevenueChart data={revenueQ.data.data} prevData={revenueQ.data.prev_data} range={sel} />
+              <WeekdaySummary range={sel} />
+            </>
+          )}
+          {tab === "ops" && (
+            <>
+              <ChecksDistribution range={sel} />
+              <HourlyChart range={sel} />
+              <CheckFullness range={sel} />
+              <CheckComposition range={sel} />
+              <HourlyBreakdown range={sel} />
+            </>
+          )}
+          {tab === "menu" && (
+            <>
+              <ServiceBreakdown range={sel} />
+              <MenuEngineering range={sel} />
+              <DishTable range={sel} />
+            </>
+          )}
         </div>
       )}
     </div>

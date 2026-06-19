@@ -55,7 +55,11 @@ export function RevenueChart({ data, prevData, range }: Props) {
     enabled: view === "channel",
   });
 
-  const dayOk = (dow: string) => days.size === 0 || days.has(dow);
+  // фильтр по дням недели имеет смысл только когда дней больше одного; для одного дня
+  // (период «Сегодня» / диапазон из одной даты) он скрыт и не должен ничего отсекать,
+  // иначе стае-выбор (напр. «Будни») оставил бы единственный день пустым (#1).
+  const multiDay = data.length > 1;
+  const dayOk = (dow: string) => !multiDay || days.size === 0 || days.has(dow);
 
   // погода под датой на оси X + дельта температуры к тому же дню прошлого периода
   const weatherByLabel: Record<string, string> = {};
@@ -210,24 +214,30 @@ export function RevenueChart({ data, prevData, range }: Props) {
         </div>
       </div>
 
-      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 16 }}>
-        <span style={{ color: "var(--muted)", fontSize: 12, marginRight: 2 }}>Дни:</span>
-        {WEEKDAYS_ALL.map((d) => (
-          <button key={d} onClick={() => toggleDay(d)} style={chip(days.has(d))}>{d}</button>
-        ))}
-        <button onClick={() => setDays(new Set())} style={chip(days.size === 0)}>Все</button>
-        <button onClick={() => setDays(new Set(WEEKDAYS_WORK))} style={chip(false)}>Будни</button>
-        <button onClick={() => setDays(new Set(WEEKDAYS_WEEKEND))} style={chip(false)}>Выходные</button>
-        {view === "channel" && channels.length > 0 && (
-          <>
-            <span style={{ width: 1, height: 18, background: "var(--grid)", margin: "0 4px" }} />
-            <span style={{ color: "var(--muted)", fontSize: 12 }}>Статус:</span>
-            {channels.map((c) => (
-              <button key={c} onClick={() => toggleChannel(c)} style={chanChip(!hidden.has(c), chColor(c))}>{c}</button>
-            ))}
-          </>
-        )}
-      </div>
+      {(multiDay || (view === "channel" && channels.length > 0)) && (
+        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 16 }}>
+          {multiDay && (
+            <>
+              <span style={{ color: "var(--muted)", fontSize: 12, marginRight: 2 }}>Дни:</span>
+              {WEEKDAYS_ALL.map((d) => (
+                <button key={d} onClick={() => toggleDay(d)} style={chip(days.has(d))}>{d}</button>
+              ))}
+              <button onClick={() => setDays(new Set())} style={chip(days.size === 0)}>Все</button>
+              <button onClick={() => setDays(new Set(WEEKDAYS_WORK))} style={chip(false)}>Будни</button>
+              <button onClick={() => setDays(new Set(WEEKDAYS_WEEKEND))} style={chip(false)}>Выходные</button>
+            </>
+          )}
+          {view === "channel" && channels.length > 0 && (
+            <>
+              {multiDay && <span style={{ width: 1, height: 18, background: "var(--grid)", margin: "0 4px" }} />}
+              <span style={{ color: "var(--muted)", fontSize: 12 }}>Статус:</span>
+              {channels.map((c) => (
+                <button key={c} onClick={() => toggleChannel(c)} style={chanChip(!hidden.has(c), chColor(c))}>{c}</button>
+              ))}
+            </>
+          )}
+        </div>
+      )}
 
       <ResponsiveContainer width="100%" height={CHART_HEIGHT}>
         {renderChart()}

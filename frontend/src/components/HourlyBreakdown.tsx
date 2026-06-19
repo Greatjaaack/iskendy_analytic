@@ -8,11 +8,15 @@ interface Props {
   range: RangeSel;
 }
 
-/** Что и когда берут: разбивка продаж по блюдам/категориям за каждый часовой интервал (#3).
+type SortKey = "name" | "quantity" | "revenue" | "share";
+
+/** Продажи по часам: разбивка продаж по блюдам/категориям за каждый часовой интервал (#3).
  *  Данные — из OLAP-движка iiko (`/api/dishes/hourly-breakdown`). */
 export function HourlyBreakdown({ range }: Props) {
   const [group, setGroup] = useState<DishGroupBy>("category");
   const [hour, setHour] = useState<number | null>(null);
+  const [sortKey, setSortKey] = useState<SortKey>("revenue");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
   const q = useQuery({
     queryKey: ["hourly-breakdown", rangeKey(range), group],
@@ -27,10 +31,32 @@ export function HourlyBreakdown({ range }: Props) {
     [data, hour],
   );
 
+  const onSort = (k: SortKey) => {
+    if (k === sortKey) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else {
+      setSortKey(k);
+      setSortDir(k === "name" ? "asc" : "desc");
+    }
+  };
+  const arrow = (k: SortKey) => (sortKey === k ? (sortDir === "asc" ? " ↑" : " ↓") : "");
+
+  // доля = revenue / итог часа; сортируем по revenue (доля монотонна ему в пределах часа)
+  const items = useMemo(() => {
+    const list = current?.items ?? [];
+    const dir = sortDir === "asc" ? 1 : -1;
+    return [...list].sort((a, b) =>
+      sortKey === "name"
+        ? String(a.name).localeCompare(String(b.name), "ru") * dir
+        : (Number(a[sortKey === "share" ? "revenue" : sortKey]) -
+            Number(b[sortKey === "share" ? "revenue" : sortKey])) *
+          dir,
+    );
+  }, [current, sortKey, sortDir]);
+
   return (
     <div style={{ background: COLORS.card, borderRadius: 12, padding: "20px 24px" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
-        <div style={{ color: "var(--text)", fontWeight: 600 }}>Что берут по часам</div>
+        <div style={{ color: "var(--text)", fontWeight: 600 }}>Продажи по часам</div>
         <div style={{ display: "flex", background: "var(--bg)", borderRadius: 8, padding: 3, gap: 2 }}>
           {(["category", "dish"] as DishGroupBy[]).map((g) => (
             <button
@@ -74,14 +100,16 @@ export function HourlyBreakdown({ range }: Props) {
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
           <thead>
             <tr style={{ color: "var(--muted)", textAlign: "left" }}>
-              <th style={td}>{group === "category" ? "Категория" : "Блюдо"} · {current.label}</th>
-              <th style={{ ...td, textAlign: "right" }}>Кол-во</th>
-              <th style={{ ...td, textAlign: "right" }}>Выручка, ₽</th>
-              <th style={{ ...td, textAlign: "right" }}>Доля</th>
+              <th style={thSort} onClick={() => onSort("name")}>
+                {group === "category" ? "Категория" : "Блюдо"} · {current.label}{arrow("name")}
+              </th>
+              <th style={{ ...thSort, textAlign: "right" }} onClick={() => onSort("quantity")}>Кол-во{arrow("quantity")}</th>
+              <th style={{ ...thSort, textAlign: "right" }} onClick={() => onSort("revenue")}>Выручка, ₽{arrow("revenue")}</th>
+              <th style={{ ...thSort, textAlign: "right" }} onClick={() => onSort("share")}>Доля{arrow("share")}</th>
             </tr>
           </thead>
           <tbody>
-            {current.items.map((it) => (
+            {items.map((it) => (
               <tr key={it.name} style={{ borderTop: "1px solid var(--grid)" }}>
                 <td style={td}>{it.name}</td>
                 <td style={{ ...td, textAlign: "right" }}>{it.quantity}</td>
@@ -104,3 +132,4 @@ export function HourlyBreakdown({ range }: Props) {
 }
 
 const td: React.CSSProperties = { padding: "7px 10px" };
+const thSort: React.CSSProperties = { padding: "7px 10px", cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" };

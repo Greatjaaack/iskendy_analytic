@@ -11,8 +11,9 @@ interface Props {
 const channelColor = (ch: string) =>
   ch === "доставка" ? COLORS.primary : ch === "с собой" ? COLORS.warn : COLORS.good;
 
-/** Сколько каждого блюда/категории берут в зале / с собой / в доставку (#4), с долями
- *  и сортировкой по любой колонке. Данные — OLAP SALES, `/api/dishes/service-breakdown`. */
+/** Что и в каком статусе продаётся: блюдо/категория × зал / с собой / доставка (#4),
+ *  с долей позиции в продажах периода и сортировкой по любой колонке.
+ *  Данные — OLAP SALES, `/api/dishes/service-breakdown`. */
 export function ServiceBreakdown({ range }: Props) {
   const [group, setGroup] = useState<DishGroupBy>("dish");
   const [search, setSearch] = useState("");
@@ -26,6 +27,11 @@ export function ServiceBreakdown({ range }: Props) {
   });
 
   const channels = q.data?.channels ?? [];
+  // итог по всем позициям периода — для доли позиции «в рамках периода» (#3)
+  const grandTotal = useMemo(
+    () => (q.data?.data ?? []).reduce((s, r) => s + Number(r.total ?? 0), 0),
+    [q.data],
+  );
 
   const onSort = (k: string) => {
     if (k === sortKey) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -40,9 +46,11 @@ export function ServiceBreakdown({ range }: Props) {
     const s = search.trim().toLowerCase();
     const filtered = s ? all.filter((r) => r.name.toLowerCase().includes(s)) : all;
     const dir = sortDir === "asc" ? 1 : -1;
+    // «доля» сортируется по total (монотонна ему: total/grandTotal)
+    const key = sortKey === "share" ? "total" : sortKey;
     return [...filtered].sort((a, b) => {
-      if (sortKey === "name") return String(a.name).localeCompare(String(b.name), "ru") * dir;
-      return (Number(a[sortKey] ?? 0) - Number(b[sortKey] ?? 0)) * dir;
+      if (key === "name") return String(a.name).localeCompare(String(b.name), "ru") * dir;
+      return (Number(a[key] ?? 0) - Number(b[key] ?? 0)) * dir;
     });
   }, [q.data, search, sortKey, sortDir]);
 
@@ -51,7 +59,7 @@ export function ServiceBreakdown({ range }: Props) {
   return (
     <div style={{ background: COLORS.card, borderRadius: 12, padding: "20px 24px" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
-        <div style={{ color: "var(--text)", fontWeight: 600 }}>Продажи по статусам</div>
+        <div style={{ color: "var(--text)", fontWeight: 600 }}>Что продаётся по статусам</div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <input
             placeholder={group === "category" ? "Поиск категорий…" : "Поиск блюд…"}
@@ -91,25 +99,24 @@ export function ServiceBreakdown({ range }: Props) {
                 </th>
               ))}
               <th style={{ ...thSort, textAlign: "right" }} onClick={() => onSort("total")}>всего{arrow("total")}</th>
+              <th style={{ ...thSort, textAlign: "right" }} onClick={() => onSort("share")}>доля{arrow("share")}</th>
             </tr>
           </thead>
           <tbody>
-            {rows.map((r) => (
-              <tr key={r.name} style={{ borderTop: `1px solid ${COLORS.grid}` }}>
-                <td style={td}>{r.name}</td>
-                {channels.map((ch) => {
-                  const v = Number(r[ch] ?? 0);
-                  const pct = r.total ? Math.round((v / r.total) * 100) : 0;
-                  return (
-                    <td key={ch} style={tdR}>
-                      {fmtInt(v)}
-                      <span style={{ color: "var(--muted)", marginLeft: 6 }}>{pct}%</span>
-                    </td>
-                  );
-                })}
-                <td style={{ ...tdR, fontWeight: 600 }}>{fmtInt(r.total)}</td>
-              </tr>
-            ))}
+            {rows.map((r) => {
+              // доля позиции в продажах всего периода (по количеству), а не внутри статуса (#3)
+              const share = grandTotal ? Math.round((Number(r.total) / grandTotal) * 100) : 0;
+              return (
+                <tr key={r.name} style={{ borderTop: `1px solid ${COLORS.grid}` }}>
+                  <td style={td}>{r.name}</td>
+                  {channels.map((ch) => (
+                    <td key={ch} style={tdR}>{fmtInt(Number(r[ch] ?? 0))}</td>
+                  ))}
+                  <td style={{ ...tdR, fontWeight: 600 }}>{fmtInt(r.total)}</td>
+                  <td style={{ ...tdR, color: "var(--muted)" }}>{share}%</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
         {q.isLoading && <div style={{ color: COLORS.muted, textAlign: "center", padding: 24 }}>Загрузка…</div>}

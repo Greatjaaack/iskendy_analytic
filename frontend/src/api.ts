@@ -25,6 +25,7 @@ import type {
   SupplierInput,
   TtkBrief,
   TtkCard,
+  WeekdaySummary,
 } from "./types";
 
 export type * from "./types";
@@ -53,6 +54,9 @@ export const fetchHourly = (range: RangeSel): Promise<HourlyResponse> =>
 
 export const fetchRevenueByChannel = (range: RangeSel): Promise<RevenueByChannel> =>
   api.get<RevenueByChannel>(`/api/revenue/by-channel?${rangeQS(range)}`).then((r) => r.data);
+
+export const fetchRevenueByWeekday = (range: RangeSel): Promise<WeekdaySummary> =>
+  api.get<WeekdaySummary>(`/api/revenue/by-weekday?${rangeQS(range)}`).then((r) => r.data);
 
 export const fetchHourlyByChannel = (range: RangeSel): Promise<HourlyByChannel> =>
   api.get<HourlyByChannel>(`/api/revenue/hourly-by-channel?${rangeQS(range)}`).then((r) => r.data);

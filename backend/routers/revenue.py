@@ -220,6 +220,59 @@ async def get_revenue(
     }
 
 
+@router.get("/by-weekday")
+async def get_revenue_by_weekday(
+    period: str = Query("week", enum=["day", "week", "month"]),
+    date_from: str | None = None,
+    date_to: str | None = None,
+):
+    """Свод выручки по дням недели за период: суммируем дни одного дня недели (Пн…Вс).
+
+    На каждый день недели: сколько таких дней попало в период, суммарная и средняя
+    выручка за день, чеки и средний чек. Источник тот же, что у `/api/revenue`
+    (произвольный диапазон → живой запрос, пресет → из БД).
+    """
+    df, dt = period_range(period, date_from, date_to)
+    is_custom = bool(date_from and date_to)
+    days = await _days_live(df, dt) if is_custom else _days_from_db(df, dt)
+
+    agg: dict[int, dict] = {
+        i: {"revenue": 0.0, "checks": 0, "cost": 0.0, "days": 0} for i in range(7)
+    }
+    for d in days:
+        idx = date.fromisoformat(d["date"]).weekday()
+        a = agg[idx]
+        a["revenue"] += d["total_sum"]
+        a["checks"] += d["check_count"]
+        a["cost"] += d["cost_sum"]
+        a["days"] += 1
+
+    data = []
+    for i in range(7):
+        a = agg[i]
+        if not a["days"]:  # нет такого дня недели в периоде — не показываем строку
+            continue
+        rev = a["revenue"]
+        data.append(
+            {
+                "weekday": DAY_NAMES_RU[i],
+                "days": a["days"],
+                "revenue": round(rev, 2),
+                "avg_day_revenue": round(rev / a["days"], 2),
+                "checks": a["checks"],
+                "avg_check": round(rev / a["checks"], 2) if a["checks"] else 0,
+                "food_cost_pct": round(a["cost"] / rev * 100, 1) if rev else 0,
+            }
+        )
+
+    return {
+        "period": "custom" if is_custom else period,
+        "date_from": df.isoformat(),
+        "date_to": dt.isoformat(),
+        "data": data,
+    }
+
+
 def _parse_hour_matrix(block: dict) -> dict[int, float]:
     """DATA_SUMMARY_BY_HOURS: rows={"D11":0,...}, data=[[по датам], ...].
     Возвращает {час: сумма по всем датам}."""

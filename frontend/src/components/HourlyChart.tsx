@@ -15,7 +15,7 @@ interface Props {
   range: RangeSel;
 }
 
-/** Продажи по часам. Режимы: «Сумма» (выручка+чеки) и «По статусам» (зал/с собой/доставка
+/** Выручка по часам. Режимы: «Сумма» (выручка+чеки) и «По статусам» (зал/с собой/доставка
  *  с переключателями каналов). */
 export function HourlyChart({ range }: Props) {
   const [type, setType] = useState<ChartKind>("bar");
@@ -116,7 +116,7 @@ export function HourlyChart({ range }: Props) {
   return (
     <div style={{ background: "var(--card)", borderRadius: 12, padding: "20px 24px" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 16 }}>
-        <div style={{ color: "var(--text)", fontWeight: 600 }}>Продажи по часам</div>
+        <div style={{ color: "var(--text)", fontWeight: 600 }}>Выручка по часам</div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <div style={{ display: "flex", background: "var(--bg)", borderRadius: 8, padding: 3, gap: 2 }}>
             <button onClick={() => setByChannel(false)} style={miniBtn(!byChannel)}>Сумма</button>
