@@ -101,6 +101,20 @@ export interface DishResponse {
   data: DishRow[];
 }
 
+// KPI в разрезе доставка / не доставка (для верхних карточек — комиссия доставки отдельно).
+export interface ChannelKpi {
+  revenue: number;
+  checks: number;
+  avg_check: number;
+}
+export interface KpiByChannel {
+  period: Period | "custom";
+  date_from: string;
+  date_to: string;
+  delivery: ChannelKpi;
+  other: ChannelKpi;
+}
+
 // Выручка/часы в разрезе каналов (зал/с собой/доставка). Ключи каналов — в channels.
 export interface ChannelDay {
   date: string;

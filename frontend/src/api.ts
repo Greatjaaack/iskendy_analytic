@@ -15,6 +15,7 @@ import type {
   HourlyResponse,
   IngredientBrief,
   IngredientCard,
+  KpiByChannel,
   RangeSel,
   RevenueByChannel,
   RevenueResponse,
@@ -54,6 +55,9 @@ export const fetchHourly = (range: RangeSel): Promise<HourlyResponse> =>
 
 export const fetchRevenueByChannel = (range: RangeSel): Promise<RevenueByChannel> =>
   api.get<RevenueByChannel>(`/api/revenue/by-channel?${rangeQS(range)}`).then((r) => r.data);
+
+export const fetchKpiByChannel = (range: RangeSel): Promise<KpiByChannel> =>
+  api.get<KpiByChannel>(`/api/revenue/kpi-by-channel?${rangeQS(range)}`).then((r) => r.data);
 
 export const fetchRevenueByWeekday = (range: RangeSel): Promise<WeekdaySummary> =>
   api.get<WeekdaySummary>(`/api/revenue/by-weekday?${rangeQS(range)}`).then((r) => r.data);

@@ -389,3 +389,57 @@ async def get_hourly_by_channel(
         "channels": list(CHANNELS),
         "data": data,
     }
+
+
+@router.get("/kpi-by-channel")
+async def get_kpi_by_channel(
+    period: str = Query("week", enum=["day", "week", "month"]),
+    date_from: str | None = None,
+    date_to: str | None = None,
+):
+    """KPI (выручка/чеки/средний чек) в разрезе ДОСТАВКА vs НЕ ДОСТАВКА (зал + с собой).
+
+    Нужно, чтобы доставку считать отдельно (в ней комиссия агрегатора). Канал заказа:
+    доставка, если у заказа «Статус» = Доставка ИЛИ есть позиция из меню-категории
+    «Доставка»; иначе — не доставка. Через OLAP SALES по `OrderNum`.
+    """
+    df, dt = period_range(period, date_from, date_to)
+    rows = await iiko_web.olap_sales(
+        group_fields=[OLAP_FIELD_ORDER_NUM, OLAP_FIELD_DISH_CATEGORY, OLAP_FIELD_DISH_NAME],
+        data_fields=[OLAP_FIELD_SUM],
+        date_from=df.isoformat(),
+        date_to=dt.isoformat(),
+    )
+
+    order_rev: dict[str, float] = {}
+    order_delivery: dict[str, bool] = {}
+    for r in rows:
+        parts = str(r.get("field0", {}).get("value", "")).split(", ")
+        if len(parts) < 3:
+            continue
+        order_num, category, name = parts[0], parts[1], ", ".join(parts[2:])
+        if category == ORDER_STATUS_CATEGORY:
+            if ORDER_STATUS_CHANNELS.get(name.strip().lower()) == CHANNEL_DELIVERY:
+                order_delivery[order_num] = True
+            continue
+        if category == DELIVERY_CATEGORY:
+            order_delivery[order_num] = True
+        rev = float(r.get("field1", {}).get("value", 0) or 0)
+        order_rev[order_num] = order_rev.get(order_num, 0.0) + rev
+        order_delivery.setdefault(order_num, False)
+
+    groups = {"delivery": {"revenue": 0.0, "checks": 0}, "other": {"revenue": 0.0, "checks": 0}}
+    for order_num, rev in order_rev.items():
+        g = "delivery" if order_delivery.get(order_num) else "other"
+        groups[g]["revenue"] += rev
+        groups[g]["checks"] += 1
+    for g in groups.values():
+        g["avg_check"] = round(g["revenue"] / g["checks"], 2) if g["checks"] else 0
+        g["revenue"] = round(g["revenue"], 2)
+
+    return {
+        "period": "custom" if (date_from and date_to) else period,
+        "date_from": df.isoformat(),
+        "date_to": dt.isoformat(),
+        **groups,
+    }

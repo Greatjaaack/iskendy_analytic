@@ -122,7 +122,7 @@ export function Dashboard() {
           {!isCustom && sel.period === "day" && revenueQ.data.data[0] && (
             <TodayBanner day={revenueQ.data.data[0]} />
           )}
-          <KpiCards summary={revenueQ.data.summary} />
+          <KpiCards summary={revenueQ.data.summary} range={sel} />
 
           {/* Разделы дашборда: Пульс / Операции / Меню (один экран не перегружен) */}
           <div style={{ display: "flex", gap: 4, background: COLORS.card, borderRadius: 8, padding: 4, width: "fit-content" }}>
