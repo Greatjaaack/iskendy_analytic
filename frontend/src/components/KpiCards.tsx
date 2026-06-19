@@ -21,6 +21,7 @@ export function KpiCards({ summary, range }: Props) {
   });
   const ch = chQ.data;
 
+  const take = ch ? ch.delivery_commission_pct + ch.delivery_ads_pct : 0;
   const cards = [
     {
       label: "Выручка",
@@ -28,6 +29,7 @@ export function KpiCards({ summary, range }: Props) {
       color: COLORS.primary,
       delta: delta(summary.total_revenue, p.total_revenue),
       key: "revenue" as keyof ChannelKpi,
+      netKey: "net_revenue" as keyof ChannelKpi,
       unit: " ₽",
     },
     {
@@ -36,6 +38,7 @@ export function KpiCards({ summary, range }: Props) {
       color: COLORS.good,
       delta: delta(summary.avg_check, p.avg_check),
       key: "avg_check" as keyof ChannelKpi,
+      netKey: "net_avg_check" as keyof ChannelKpi,
       unit: " ₽",
     },
     {
@@ -44,6 +47,7 @@ export function KpiCards({ summary, range }: Props) {
       color: COLORS.warn,
       delta: delta(summary.total_checks, p.total_checks),
       key: "checks" as keyof ChannelKpi,
+      netKey: undefined as keyof ChannelKpi | undefined,
       unit: "",
     },
   ];
@@ -68,16 +72,23 @@ export function KpiCards({ summary, range }: Props) {
               <span style={{ color: COLORS.muted }}> к пр. периоду</span>
             </div>
           )}
-          {ch && (
-            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 8, fontSize: 12 }}>
-              <span title="Доставка (с комиссией)" style={{ color: COLORS.primary }}>
-                🛵 {fmtInt(ch.delivery[c.key])}{c.unit}
-              </span>
-              <span title="Зал + с собой" style={{ color: "var(--muted)" }}>
-                🏠 {fmtInt(ch.other[c.key])}{c.unit}
-              </span>
-            </div>
-          )}
+          {ch && (() => {
+            const gross = Number(ch.delivery[c.key] ?? 0);
+            const net = c.netKey ? Number(ch.delivery[c.netKey] ?? gross) : gross;
+            const title = c.netKey
+              ? `Доставка: ${fmtInt(gross)}${c.unit} − ${take}% (комиссия+реклама) = ${fmtInt(net)}${c.unit}`
+              : "Доставка";
+            return (
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 8, fontSize: 12 }}>
+                <span title={title} style={{ color: COLORS.primary }}>
+                  🛵 {fmtInt(net)}{c.unit}{c.netKey ? " нетто" : ""}
+                </span>
+                <span title="Зал + с собой" style={{ color: "var(--muted)" }}>
+                  🏠 {fmtInt(Number(ch.other[c.key] ?? 0))}{c.unit}
+                </span>
+              </div>
+            );
+          })()}
         </div>
       ))}
     </div>

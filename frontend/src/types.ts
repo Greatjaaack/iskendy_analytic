@@ -106,11 +106,15 @@ export interface ChannelKpi {
   revenue: number;
   checks: number;
   avg_check: number;
+  net_revenue?: number; // только у доставки: за вычетом комиссии+рекламы
+  net_avg_check?: number;
 }
 export interface KpiByChannel {
   period: Period | "custom";
   date_from: string;
   date_to: string;
+  delivery_commission_pct: number;
+  delivery_ads_pct: number;
   delivery: ChannelKpi;
   other: ChannelKpi;
 }

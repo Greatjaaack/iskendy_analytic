@@ -80,6 +80,10 @@ NON_PRODUCT_CATEGORIES = {ORDER_STATUS_CATEGORY, "модификаторы"}
 # категориям. Используется в разрезе блюдо×канал и для бейджа «доставка».
 DELIVERY_CATEGORY = "Доставка"
 
+# Удержания с выручки доставки (для нетто-выручки доставки в KPI). Меняются тут.
+DELIVERY_COMMISSION_PCT = 30.0  # комиссия агрегатора
+DELIVERY_ADS_PCT = 25.0  # доля рекламных расходов в доставке
+
 
 # ─── OLAP-движок iiko (асинхронные отчёты SALES) ─────────────────────────────
 # Поток: POST /api/olap/init (тело=запрос) → GET /api/olap/fetch-status/{hash}
