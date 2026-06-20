@@ -61,4 +61,5 @@ def period_range(period: str, date_from: str | None, date_to: str | None) -> tup
         return today, today
     if period == "week":
         return today - timedelta(days=6), today
-    return today - timedelta(days=29), today
+    # «месяц» = с 1-го числа текущего месяца по сегодня (а не последние 30 дней)
+    return today.replace(day=1), today

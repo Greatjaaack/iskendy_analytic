@@ -15,7 +15,7 @@ const TYPE_COLORS: Record<string, string> = {
 const colorFor = (t: string) => TYPE_COLORS[t] ?? COLORS.accent;
 
 /** Распределение чеков по типу обслуживания (#1): доставка / в зале / с собой.
- *  Данные — из количества модификаторов категории «Статус». */
+ *  Данные — уникальные заказы по каналу (OLAP): сумма по типам = числу чеков. */
 export function ChecksDistribution({ range }: Props) {
   const q = useQuery({
     queryKey: ["check-distribution", rangeKey(range)],

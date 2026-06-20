@@ -107,8 +107,9 @@ async def sync_dishes(days_back: int = 7):
 
 
 async def full_sync():
-    await sync_revenue(days_back=30)
-    await sync_dishes(days_back=30)
+    # 31 день, чтобы покрыть «месяц» = с 1-го числа по сегодня даже в 31-дневном месяце
+    await sync_revenue(days_back=31)
+    await sync_dishes(days_back=31)
 
 
 def setup_scheduler():

@@ -178,23 +178,61 @@ async def get_check_distribution(
 ):
     """Распределение чеков по типу обслуживания: Доставка / В зале / С собой.
 
-    Считается по модификаторам категории «Статус» (один на заказ) — их количество
-    приблизительно равно числу заказов соответствующего типа.
+    Считаем УНИКАЛЬНЫЕ заказы (`OrderNum`) по каналу через OLAP — так сумма по типам
+    равна реальному числу чеков (раньше суммировали кол-во модификаторов «Статус», и
+    оно завышало итог, т.к. на заказ может приходиться больше одной «Статус»-строки).
+    Канал заказа: модификатор «Статус» → иначе доставка по категории «Доставка» → зал.
     """
     date_from_d, date_to_d = period_range(period, date_from, date_to)
 
-    rows = await iiko_web.dishes_detail(date_from_d.isoformat(), date_to_d.isoformat())
-    status_rows = [r for r in rows if r.get("category") == ORDER_STATUS_CATEGORY]
+    rows = await iiko_web.olap_sales(
+        group_fields=[OLAP_FIELD_ORDER_NUM, OLAP_FIELD_DISH_CATEGORY, OLAP_FIELD_DISH_NAME],
+        data_fields=[OLAP_FIELD_QTY],
+        date_from=date_from_d.isoformat(),
+        date_to=date_to_d.isoformat(),
+    )
 
-    total = sum(r["quantity"] for r in status_rows) or 0.0
+    def _split(value: str) -> tuple[str, str, str]:
+        parts = str(value).split(", ")
+        if len(parts) < 3:
+            return "", "", ""
+        return parts[0], parts[1], ", ".join(parts[2:])
+
+    order_channel: dict[str, str] = {}  # канал из «Статус»-строки заказа
+    order_has_delivery: set[str] = set()  # в заказе есть позиция меню-категории «Доставка»
+    orders: set[str] = set()  # все товарные заказы (по которым считаем чеки)
+    for r in rows:
+        order_num, category, name = _split(r.get("field0", {}).get("value", ""))
+        if not order_num:
+            continue
+        if category == ORDER_STATUS_CATEGORY:
+            ch = ORDER_STATUS_CHANNELS.get(name.strip().lower())
+            if ch:
+                order_channel[order_num] = ch
+            continue
+        if not name:
+            continue
+        orders.add(order_num)
+        if category == DELIVERY_CATEGORY:
+            order_has_delivery.add(order_num)
+
+    counts = {CHANNEL_DINEIN: 0, CHANNEL_TAKEAWAY: 0, CHANNEL_DELIVERY: 0}
+    for o in orders:
+        ch = order_channel.get(o) or (
+            CHANNEL_DELIVERY if o in order_has_delivery else CHANNEL_DINEIN
+        )
+        counts[ch] += 1
+
+    total = sum(counts.values())
+    labels = {CHANNEL_DINEIN: "В зале", CHANNEL_TAKEAWAY: "С собой", CHANNEL_DELIVERY: "Доставка"}
     data = sorted(
         (
             {
-                "type": r["dish_name"],
-                "count": int(r["quantity"]),
-                "share": round(r["quantity"] / total * 100, 1) if total else 0,
+                "type": labels[ch],
+                "count": cnt,
+                "share": round(cnt / total * 100, 1) if total else 0,
             }
-            for r in status_rows
+            for ch, cnt in counts.items()
         ),
         key=lambda x: x["count"],
         reverse=True,

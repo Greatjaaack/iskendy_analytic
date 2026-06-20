@@ -134,20 +134,20 @@ export function Dashboard() {
           {tab === "pulse" && (
             <>
               <RevenueChart data={revenueQ.data.data} prevData={revenueQ.data.prev_data} range={sel} />
-              <WeekdaySummary range={sel} />
+              <ChecksDistribution range={sel} />
             </>
           )}
           {tab === "ops" && (
             <>
-              <ChecksDistribution range={sel} />
+              <WeekdaySummary range={sel} />
               <HourlyChart range={sel} />
               <CheckFullness range={sel} />
-              <CheckComposition range={sel} />
               <HourlyBreakdown range={sel} />
             </>
           )}
           {tab === "menu" && (
             <>
+              <CheckComposition range={sel} />
               <ServiceBreakdown range={sel} />
               <MenuEngineering range={sel} />
               <DishTable range={sel} />
