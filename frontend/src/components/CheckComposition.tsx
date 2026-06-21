@@ -57,12 +57,18 @@ export function CheckComposition({ range }: Props) {
     cats.forEach((c) => (r[c] = bucket.by[c] ? bucket.by[c][by] : 0));
     return r;
   };
-  const data =
-    mode === "total"
-      ? q.data
-        ? [{ label: "За период", ...rowOf(q.data.total) }]
-        : []
-      : (q.data?.hourly ?? []).map((h) => ({ label: h.label, ...rowOf(h) }));
+  const data = (q.data?.hourly ?? []).map((h) => ({ label: h.label, ...rowOf(h) }));
+
+  // «За период»: рейтинг категорий по доле (горизонтальные бары, сортировка убыв.) —
+  // читаемее одиночного 100%-стека, где мелкие категории сливаются в полоски.
+  const totalRows = useMemo(() => {
+    if (!q.data) return [];
+    const b = q.data.total.by;
+    return cats
+      .map((c) => ({ name: c, share: b[c] ? b[c][by] : 0 }))
+      .filter((r) => r.share > 0)
+      .sort((a, b) => b.share - a.share);
+  }, [q.data, cats, by]);
 
   return (
     <div style={{ background: "var(--card)", borderRadius: 12, padding: "20px 24px" }}>
@@ -80,25 +86,49 @@ export function CheckComposition({ range }: Props) {
         </div>
       </div>
 
-      <ResponsiveContainer width="100%" height={CHART_HEIGHT}>
-        <BarChart data={data} margin={{ left: 8 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="var(--grid)" />
-          <XAxis dataKey="label" tick={{ fill: "var(--muted)", fontSize: 12 }} />
-          <YAxis unit="%" domain={[0, 100]} tick={{ fill: "var(--muted)", fontSize: 12 }} />
-          <Tooltip
-            contentStyle={{ background: "var(--bg)", border: "1px solid var(--grid)", borderRadius: 8 }}
-            labelStyle={{ color: "var(--text)" }}
-            formatter={(v, n) => [`${v}%`, n]}
-          />
-          <Legend
-            wrapperStyle={{ fontSize: 12, color: "var(--muted)", cursor: "pointer" }}
-            onClick={(e) => setDrillCat(String((e as { value?: string }).value ?? ""))}
-          />
-          {cats.map((c) => (
-            <Bar key={c} dataKey={c} stackId="comp" fill={color(c)} cursor="pointer" onClick={() => setDrillCat(c)} />
+      {mode === "total" ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {totalRows.length === 0 && <div style={{ color: "var(--muted)", padding: 12 }}>Нет данных за период</div>}
+          {totalRows.map((r) => (
+            <div
+              key={r.name}
+              onClick={() => setDrillCat(r.name)}
+              style={{ display: "flex", alignItems: "center", gap: 10, padding: "4px 0", cursor: "pointer" }}
+            >
+              <div style={{ flex: "0 0 38%", color: "var(--text)", fontSize: 13, display: "flex", alignItems: "center", gap: 6, overflow: "hidden" }}>
+                <span style={{ color: color(r.name), flex: "0 0 auto" }}>●</span>
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</span>
+              </div>
+              <div style={{ flex: 1, background: "var(--bg)", borderRadius: 4, height: 16, overflow: "hidden" }}>
+                <div style={{ width: `${r.share}%`, height: "100%", background: color(r.name) }} />
+              </div>
+              <div style={{ flex: "0 0 52px", textAlign: "right", color: "var(--text)", fontSize: 13, fontWeight: 600 }}>
+                {r.share.toFixed(1)}%
+              </div>
+            </div>
           ))}
-        </BarChart>
-      </ResponsiveContainer>
+        </div>
+      ) : (
+        <ResponsiveContainer width="100%" height={CHART_HEIGHT}>
+          <BarChart data={data} margin={{ left: 8 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--grid)" />
+            <XAxis dataKey="label" tick={{ fill: "var(--muted)", fontSize: 12 }} />
+            <YAxis unit="%" domain={[0, 100]} tick={{ fill: "var(--muted)", fontSize: 12 }} />
+            <Tooltip
+              contentStyle={{ background: "var(--bg)", border: "1px solid var(--grid)", borderRadius: 8 }}
+              labelStyle={{ color: "var(--text)" }}
+              formatter={(v, n) => [`${v}%`, n]}
+            />
+            <Legend
+              wrapperStyle={{ fontSize: 12, color: "var(--muted)", cursor: "pointer" }}
+              onClick={(e) => setDrillCat(String((e as { value?: string }).value ?? ""))}
+            />
+            {cats.map((c) => (
+              <Bar key={c} dataKey={c} stackId="comp" fill={color(c)} cursor="pointer" onClick={() => setDrillCat(c)} />
+            ))}
+          </BarChart>
+        </ResponsiveContainer>
+      )}
 
       <div style={{ color: "var(--muted)", fontSize: 12, marginTop: 8 }}>
         Чеков в периоде: {q.data?.total.checks ?? 0}. Доля = средняя по чекам (
