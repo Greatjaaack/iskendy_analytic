@@ -21,5 +21,9 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./iskendi.db"
     files_dir: str = "/data/files"
 
+    # часовой пояс ресторана: определяет границы «сегодня/неделя/месяц» и расписание
+    # синков. Не зависит от TZ контейнера (там обычно UTC). Точка московская (см. погоду).
+    timezone: str = "Europe/Moscow"
+
 
 settings = Settings()

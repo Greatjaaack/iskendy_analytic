@@ -86,8 +86,9 @@ export interface DishRow {
   quantity: number;
   revenue: number;
   cost_sum: number;
-  cost_pct: number; // с/с в % (себестоимость / выручка)
-  margin_pct: number;
+  has_cost: boolean; // нашлась ли порционная с/с (ТТК-привязка)
+  cost_pct: number | null; // с/с в % (себестоимость / выручка); null — нет с/с
+  margin_pct: number | null; // null — нет с/с (не показываем мнимую 100% маржу)
   revenue_share: number;
   qty_share: number;
 }

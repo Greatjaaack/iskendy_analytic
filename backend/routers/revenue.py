@@ -28,7 +28,7 @@ from constants import (
 )
 from iiko_web_client import iiko_web
 from models import RevenueDaily, SessionLocal
-from utils import period_range
+from utils import period_range, prev_period_range
 from weather import get_weather
 
 CHANNELS = (CHANNEL_DINEIN, CHANNEL_TAKEAWAY, CHANNEL_DELIVERY)
@@ -168,11 +168,10 @@ async def get_revenue(
     total_checks = sum(r["check_count"] for r in days)
     total_cost = sum(r["cost_sum"] for r in days)
 
-    # предыдущий аналогичный период (такой же длины, вплотную перед текущим) — для дельт.
+    # предыдущий сопоставимый период — для дельт. Месяц (MTD) сравнивается с тем же
+    # отрезком прошлого месяца, день/неделя/диапазон — со скользящим окном (см. хелпер).
     # Берём из БД (быстро); если истории нет, дельта по этому показателю просто скрыта.
-    span = (dt - df).days
-    prev_dt = df - timedelta(days=1)
-    prev_df = prev_dt - timedelta(days=span)
+    prev_df, prev_dt = prev_period_range(period, df, dt, is_custom)
     prev_days = _days_from_db(prev_df, prev_dt)
     # для «месяца» прошлый период (31–60 дн. назад) обычно не в БД (синк 30 дн.) —
     # тогда берём живым запросом, иначе дельта не показывалась бы

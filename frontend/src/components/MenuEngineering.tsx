@@ -40,7 +40,7 @@ export function MenuEngineering({ range }: Props) {
 
   // ----- Матрица: только блюда с с/с и продажами -----
   const matrix = useMemo(() => {
-    const costed = all.filter((d) => d.quantity > 0 && d.cost_sum > 0);
+    const costed = all.filter((d) => d.quantity > 0 && d.has_cost && d.cost_sum > 0);
     const totalQty = costed.reduce((s, d) => s + d.quantity, 0);
     const totalCM = costed.reduce((s, d) => s + (d.revenue - d.cost_sum), 0);
     const avgCM = totalQty ? totalCM / totalQty : 0; // средняя маржа на единицу, ₽
@@ -55,7 +55,7 @@ export function MenuEngineering({ range }: Props) {
       const highCM = cm >= avgCM;
       const quad: Quad = popular ? (highCM ? "star" : "plow") : highCM ? "puzzle" : "dog";
       return {
-        x: d.quantity, y: Math.round(cm), name: d.name, mpct: d.margin_pct, rev: d.revenue, quad,
+        x: d.quantity, y: Math.round(cm), name: d.name, mpct: d.margin_pct ?? 0, rev: d.revenue, quad,
         label: topNames.has(d.name) ? d.name : "",
       };
     });
@@ -64,7 +64,9 @@ export function MenuEngineering({ range }: Props) {
 
   // ----- ABC: Парето по выручке или по марже -----
   const abc = useMemo(() => {
-    const base = all
+    // по прибыли — только блюда с известной с/с (без неё «прибыль» = выручка, искажает)
+    const src = abcBasis === "rev" ? all : all.filter((d) => d.has_cost);
+    const base = src
       .map((d) => ({ name: d.name, value: abcBasis === "rev" ? d.revenue : d.revenue - d.cost_sum }))
       .filter((d) => d.value > 0)
       .sort((a, b) => b.value - a.value);

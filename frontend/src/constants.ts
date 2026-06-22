@@ -68,6 +68,25 @@ export const COLORS = {
   indigoText: "#a5b4fc",    // светло-индиговый: доли, акцентные числа
 } as const;
 
+// ─── Группы дней недели (раскраска столбцов «Выручка по дням») ───────────────
+// Бизнес-логика точки: Пн и Чт — особые дни (свой цвет), Вт/Ср — обычные
+// (нейтральный), Пт–Вс считаем выходными (акцент). Цвет столбца = группа дня.
+export interface WeekdayGroup {
+  key: string;
+  label: string;
+  days: string[];
+  color: string;
+}
+export const WEEKDAY_GROUPS: WeekdayGroup[] = [
+  { key: "mon", label: "Понедельник", days: ["Пн"], color: COLORS.primary },
+  { key: "ordinary", label: "Вт–Ср", days: ["Вт", "Ср"], color: COLORS.muted },
+  { key: "thu", label: "Четверг", days: ["Чт"], color: COLORS.accent },
+  { key: "weekend", label: "Выходные (Пт–Вс)", days: ["Пт", "Сб", "Вс"], color: COLORS.warn },
+];
+/** Группа дня недели по короткому имени («Пн» …); по умолчанию — обычные дни. */
+export const weekdayGroup = (dow: string): WeekdayGroup =>
+  WEEKDAY_GROUPS.find((g) => g.days.includes(dow)) ?? WEEKDAY_GROUPS[1];
+
 // ─── Погода: коды WMO (Open-Meteo) → эмодзи + описание ───────────────────────
 // https://open-meteo.com/en/docs — weather_code. Группируем близкие коды.
 export const WEATHER_CODES: Record<number, { icon: string; label: string }> = {

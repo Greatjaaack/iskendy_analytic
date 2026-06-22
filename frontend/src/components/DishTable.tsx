@@ -57,7 +57,8 @@ export function DishTable({ range }: Props) {
     }
     const dir = sortDir === "asc" ? 1 : -1;
     return [...r].sort((a, b) => {
-      const va = a[sortKey], vb = b[sortKey];
+      // null (нет с/с) сортируем как самое маленькое, чтобы такие строки уходили вниз
+      const va = a[sortKey] ?? -Infinity, vb = b[sortKey] ?? -Infinity;
       if (typeof va === "number" && typeof vb === "number") return (va - vb) * dir;
       return String(va).localeCompare(String(vb), "ru") * dir;
     });
@@ -161,11 +162,17 @@ export function DishTable({ range }: Props) {
                 <td style={{ ...tdR, color: COLORS.muted }}>{d.qty_share}%</td>
                 <td style={tdR}>{fmtInt(d.revenue)}</td>
                 <td style={{ ...tdR, color: COLORS.indigoText }}>{d.revenue_share}%</td>
-                <td style={tdR}>{fmtInt(d.cost_sum)}</td>
-                <td style={{ ...tdR, color: COLORS.muted }}>{d.cost_pct}%</td>
-                <td style={{ ...tdR, color: d.margin_pct >= MARGIN_GOOD ? COLORS.good : d.margin_pct >= MARGIN_OK ? COLORS.warn : COLORS.bad, fontWeight: 600 }}>
-                  {d.margin_pct}%
+                <td style={{ ...tdR, color: d.has_cost ? "var(--text)" : COLORS.muted }}>
+                  {d.has_cost ? fmtInt(d.cost_sum) : "—"}
                 </td>
+                <td style={{ ...tdR, color: COLORS.muted }}>{d.cost_pct == null ? "—" : `${d.cost_pct}%`}</td>
+                {d.margin_pct == null ? (
+                  <td style={{ ...tdR, color: COLORS.muted }} title="Нет с/с — нужна привязка ТТК">—</td>
+                ) : (
+                  <td style={{ ...tdR, color: d.margin_pct >= MARGIN_GOOD ? COLORS.good : d.margin_pct >= MARGIN_OK ? COLORS.warn : COLORS.bad, fontWeight: 600 }}>
+                    {d.margin_pct}%
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>

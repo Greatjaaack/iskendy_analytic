@@ -1,7 +1,20 @@
 """Мелкие общие хелперы, переиспользуемые роутерами/синком."""
 
 import re
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
+
+from config import settings
+
+
+def today() -> date:
+    """Сегодняшняя дата в часовом поясе ресторана (`settings.timezone`).
+
+    Используем её вместо `date.today()`, который берёт TZ контейнера (в Docker — UTC),
+    из-за чего «сегодня» перекатывалось бы не в местную полночь и текущий день мог быть
+    неполным/смещённым. Погода и расписание синков опираются на тот же пояс.
+    """
+    return datetime.now(ZoneInfo(settings.timezone)).date()
 
 
 def normalize_phone(raw: str) -> str:
@@ -56,10 +69,29 @@ def period_range(period: str, date_from: str | None, date_to: str | None) -> tup
     """Границы периода. Произвольный диапазон (date_from/date_to) приоритетнее period."""
     if date_from and date_to:
         return date.fromisoformat(date_from), date.fromisoformat(date_to)
-    today = date.today()
+    now = today()
     if period == "day":
-        return today, today
+        return now, now
     if period == "week":
-        return today - timedelta(days=6), today
+        return now - timedelta(days=6), now
     # «месяц» = с 1-го числа текущего месяца по сегодня (а не последние 30 дней)
-    return today.replace(day=1), today
+    return now.replace(day=1), now
+
+
+def prev_period_range(period: str, df: date, dt: date, is_custom: bool) -> tuple[date, date]:
+    """Границы предыдущего сопоставимого периода (для KPI-дельт «к пр. периоду»).
+
+    Пресет «месяц» (MTD) сравниваем с **тем же отрезком прошлого месяца** (1-е число
+    прошлого месяца по тот же день месяца; если прошлый месяц короче — по его последний
+    день), а не со скользящим окном — иначе MTD «1–22 июня» сравнивался бы с «10–31 мая».
+    День/неделя/произвольный диапазон → окно той же длины вплотную перед текущим.
+    """
+    if period == "month" and not is_custom:
+        prev_last = df - timedelta(days=1)  # последний день прошлого месяца
+        prev_df = prev_last.replace(day=1)
+        prev_dt = prev_df.replace(day=min(dt.day, prev_last.day))
+        return prev_df, prev_dt
+    span = (dt - df).days
+    prev_dt = df - timedelta(days=1)
+    prev_df = prev_dt - timedelta(days=span)
+    return prev_df, prev_dt

@@ -106,21 +106,28 @@ async def get_dishes(
     # с/с по блюду: порционная с/с × количество (iiko-метрика по блюду ~0).
     # канал «доставка» — по принадлежности к категории «Доставка»; имя матчим как есть
     # (привязка несовпадающих имён POS↔ТТК — через DishMapping).
+    # has_cost: нашлась ли порционная с/с (ТТК-привязка). Без неё с/с = 0 — НЕ выдаём
+    # cost_pct/margin_pct (иначе блюдо выглядело бы как 100% маржа и искажало бы рейтинги).
     unit_cost = _dish_unit_cost()
     for r in rows:
         r["channel"] = CHANNEL_DELIVERY if r.get("category") == DELIVERY_CATEGORY else ""
         c = unit_cost.get(normalize_name(r["dish_name"]))
-        if c is not None:
-            r["cost_sum"] = c * r["quantity"]
+        r["has_cost"] = c is not None
+        r["cost_sum"] = c * r["quantity"] if c is not None else 0.0
 
     if group_by == "category":
         agg: dict[str, dict] = {}
         for r in rows:
             cat = r.get("category") or "Без категории"
-            a = agg.setdefault(cat, {"name": cat, "quantity": 0.0, "revenue": 0.0, "cost_sum": 0.0})
+            a = agg.setdefault(
+                cat,
+                {"name": cat, "quantity": 0.0, "revenue": 0.0, "cost_sum": 0.0, "has_cost": True},
+            )
             a["quantity"] += r["quantity"]
             a["revenue"] += r["revenue"]
             a["cost_sum"] += r["cost_sum"]
+            # с/с категории полна только если у ВСЕХ её блюд есть привязка
+            a["has_cost"] = a["has_cost"] and r["has_cost"]
         items = list(agg.values())
     else:
         items = [
@@ -132,6 +139,7 @@ async def get_dishes(
                 "quantity": r["quantity"],
                 "revenue": r["revenue"],
                 "cost_sum": r["cost_sum"],
+                "has_cost": r["has_cost"],
             }
             for r in rows
         ]
@@ -143,6 +151,10 @@ async def get_dishes(
     for i in items:
         rev = i["revenue"] or 0.0
         cost = i["cost_sum"] or 0.0
+        has_cost = i.get("has_cost", False)
+        # с/с-проценты считаем только при наличии полной с/с — иначе null («—» на фронте)
+        cost_pct = round(cost / rev * 100, 1) if (rev and has_cost) else None
+        margin_pct = round((rev - cost) / rev * 100, 1) if (rev and has_cost) else None
         result.append(
             {
                 "key": i.get("key", i["name"]),
@@ -152,8 +164,9 @@ async def get_dishes(
                 "quantity": round(i["quantity"], 1),
                 "revenue": round(rev, 2),
                 "cost_sum": round(cost, 2),
-                "cost_pct": round(cost / rev * 100, 1) if rev else 0,
-                "margin_pct": round((rev - cost) / rev * 100, 1) if rev else 0,
+                "has_cost": has_cost,
+                "cost_pct": cost_pct,
+                "margin_pct": margin_pct,
                 "revenue_share": round(rev / total_rev * 100, 1) if total_rev else 0,
                 "qty_share": round(i["quantity"] / total_qty * 100, 1) if total_qty else 0,
             }
@@ -533,7 +546,10 @@ async def get_check_fullness(
 ):
     """Распределение чеков по числу позиций (1 / 2 / 3 / 4+), по часам (#6).
 
-    Позиция — отдельное товарное блюдо в заказе (служебные категории не считаются).
+    «Позиция» = проданная единица товара (сумма `qty` по товарным строкам заказа), а не
+    число РАЗНЫХ блюд: заказ из двух одинаковых кофе — это чек на 2 позиции, а не на 1
+    (иначе занижался бы апсейл-сигнал). Служебные/модификаторные категории не считаются.
+    Дробный вес округляется до целого (минимум 1, если в чеке вообще есть товар).
     """
     df, dt = period_range(period, date_from, date_to)
     _, mod_cats = await _modifier_filters(df.isoformat(), dt.isoformat())
@@ -548,7 +564,7 @@ async def get_check_fullness(
         date_from=df.isoformat(),
         date_to=dt.isoformat(),
     )
-    positions: dict[tuple[str, str], set] = defaultdict(set)
+    positions: dict[tuple[str, str], float] = defaultdict(float)
     for r in rows:
         parts = str(r.get("field0", {}).get("value", "")).split(", ")
         if len(parts) < 4:
@@ -556,7 +572,7 @@ async def get_check_fullness(
         hour, ordernum, category, name = parts[0], parts[1], parts[2], ", ".join(parts[3:])
         if not name or category in NON_PRODUCT_CATEGORIES or category in mod_cats:
             continue
-        positions[(hour, ordernum)].add(name)
+        positions[(hour, ordernum)] += float(r.get("field1", {}).get("value", 0) or 0)
 
     buckets = ["1", "2", "3", "4+"]
 
@@ -565,10 +581,10 @@ async def get_check_fullness(
 
     per_hour: dict[str, dict] = defaultdict(lambda: {b: 0 for b in buckets})
     total = {b: 0 for b in buckets}
-    for (hour, _ordernum), names in positions.items():
-        if not names:
+    for (hour, _ordernum), qty_sum in positions.items():
+        if qty_sum <= 0:
             continue
-        b = bucket(len(names))
+        b = bucket(max(1, round(qty_sum)))
         per_hour[hour][b] += 1
         total[b] += 1
 

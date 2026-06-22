@@ -9,13 +9,17 @@ from datetime import date, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
+from config import settings
 from constants import DAY_NAMES_EN
 from iiko_web_client import iiko_web
 from models import DishSale, RevenueDaily, SessionLocal, SyncLog
+from utils import today
 
 logger = logging.getLogger(__name__)
 
-scheduler = AsyncIOScheduler(timezone="Asia/Almaty")
+# Тот же пояс, что у границ «сегодня» (settings.timezone) — синки и определение
+# текущего дня живут в одном времени, иначе ночной full_sync ловил бы не тот день.
+scheduler = AsyncIOScheduler(timezone=settings.timezone)
 
 
 def _g(metric: dict, code: str, key: str, default=0):
@@ -26,7 +30,7 @@ def _g(metric: dict, code: str, key: str, default=0):
 async def sync_revenue(days_back: int = 7):
     """Выручка/чеки/средний чек/себестоимость по дням."""
     logger.info(f"Синк выручки за {days_back} дн...")
-    date_to = date.today()
+    date_to = today()
     date_from = date_to - timedelta(days=days_back - 1)
 
     try:
@@ -72,7 +76,7 @@ async def sync_revenue(days_back: int = 7):
 async def sync_dishes(days_back: int = 7):
     """Расход блюд (по UUID; названия резолвятся отдельно — TODO словарь блюд)."""
     logger.info(f"Синк блюд за {days_back} дн...")
-    date_to = date.today()
+    date_to = today()
     date_from = date_to - timedelta(days=days_back - 1)
 
     try:

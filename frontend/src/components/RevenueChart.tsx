@@ -1,13 +1,14 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
-  AreaChart, Area, LineChart, Line, BarChart, Bar, ComposedChart,
+  AreaChart, Area, LineChart, Line, BarChart, Bar, Cell, ComposedChart,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ReferenceLine,
 } from "recharts";
 import { fetchRevenueByChannel, rangeKey, type PrevDay, type RangeSel, type RevenueDay } from "../api";
 import {
   CHART_HEIGHT, CHART_TYPES, COLORS, REFETCH_INTERVAL_MS,
-  WEEKDAYS_ALL, WEEKDAYS_WEEKEND, WEEKDAYS_WORK, weatherInfo, type ChartKind,
+  WEEKDAY_GROUPS, WEEKDAYS_ALL, WEEKDAYS_WEEKEND, WEEKDAYS_WORK,
+  weatherInfo, weekdayGroup, type ChartKind,
 } from "../constants";
 import { fmtInt } from "../format";
 
@@ -91,6 +92,7 @@ export function RevenueChart({ data, prevData, range }: Props) {
 
   const sumData = data.filter((d) => dayOk(d.day_of_week)).map((d) => ({
     label: `${d.day_of_week} ${d.date.slice(5)}`,
+    dow: d.day_of_week,
     Выручка: d.total_sum,
     "Ср. чек": d.avg_check,
     Чеки: d.check_count,
@@ -121,7 +123,6 @@ export function RevenueChart({ data, prevData, range }: Props) {
   const grid = <CartesianGrid strokeDasharray="3 3" stroke="var(--grid)" />;
   const xaxis = <XAxis dataKey="label" tick={renderTick} interval={0} height={46} />;
   const yMoney = <YAxis yAxisId="money" tickFormatter={fmtInt} tick={{ fill: "var(--muted)", fontSize: 12 }} />;
-  const yChecks = <YAxis yAxisId="checks" orientation="right" allowDecimals={false} tick={{ fill: "var(--muted)", fontSize: 12 }} />;
   const yTemp = <YAxis yAxisId="temp" orientation="right" unit="°" tick={{ fill: "var(--muted)", fontSize: 12 }} />;
   const tooltip = (
     <Tooltip
@@ -133,6 +134,16 @@ export function RevenueChart({ data, prevData, range }: Props) {
     />
   );
   const legend = <Legend wrapperStyle={{ fontSize: 12, color: "var(--muted)" }} />;
+  // подсказка режима «Сумма»: выручка + ср. чек + чеки одного дня (последние два
+  // больше не рисуются столбцами, поэтому собираем их из строки данных вручную)
+  const sumTooltip = <Tooltip cursor={{ fill: "var(--grid)", opacity: 0.3 }} content={SumTooltip} />;
+  // точка на линии/области, окрашенная по группе дня недели (для типов Линия/Область/Ступени)
+  const groupDot = (p: { cx?: number; cy?: number; payload?: { dow?: string } }) => {
+    if (p.cx == null || p.cy == null) return <g />;
+    return (
+      <circle cx={p.cx} cy={p.cy} r={4} fill={weekdayGroup(p.payload?.dow ?? "").color} stroke="var(--card)" strokeWidth={1.5} />
+    );
+  };
   // опорная линия среднего рисуется только когда дней > 1 (для одного дня бессмысленна)
   const avgLine = sumData.length > 1 && (
     <ReferenceLine
@@ -172,13 +183,18 @@ export function RevenueChart({ data, prevData, range }: Props) {
       if (type === "area") return <AreaChart data={chartData}>{grid}{xaxis}{yMoney}{tooltip}{legend}{channelSeries("area")}</AreaChart>;
       return <LineChart data={chartData}>{grid}{xaxis}{yMoney}{tooltip}{legend}{channelSeries("line")}</LineChart>;
     }
+    // Режим «Сумма»: один ряд «Выручка», окрашенный по группе дня недели
+    // (Пн / Вт-Ср / Чт / выходные Пт-Вс). Ср. чек и Чеки — не отдельные столбцы,
+    // а строки во всплывающей подсказке (sumTooltip), чтобы не дробить график.
     if (type === "bar") {
       return (
         <BarChart data={chartData}>
-          {grid}{xaxis}{yMoney}{yChecks}{tooltip}{legend}{avgLine}
-          <Bar yAxisId="money" dataKey="Выручка" fill={COLORS.primary} radius={[4, 4, 0, 0]} />
-          <Bar yAxisId="money" dataKey="Ср. чек" fill={COLORS.accent} radius={[4, 4, 0, 0]} />
-          <Bar yAxisId="checks" dataKey="Чеки" fill={COLORS.good} radius={[4, 4, 0, 0]} />
+          {grid}{xaxis}{yMoney}{sumTooltip}{avgLine}
+          <Bar yAxisId="money" dataKey="Выручка" radius={[4, 4, 0, 0]}>
+            {sumData.map((r) => (
+              <Cell key={r.label} fill={weekdayGroup(r.dow).color} />
+            ))}
+          </Bar>
         </BarChart>
       );
     }
@@ -191,19 +207,15 @@ export function RevenueChart({ data, prevData, range }: Props) {
               <stop offset="95%" stopColor={COLORS.primary} stopOpacity={0} />
             </linearGradient>
           </defs>
-          {grid}{xaxis}{yMoney}{yChecks}{tooltip}{legend}{avgLine}
-          <Area yAxisId="money" type="monotone" dataKey="Выручка" stroke={COLORS.primary} strokeWidth={2} fill="url(#revGrad)" />
-          <Area yAxisId="money" type="monotone" dataKey="Ср. чек" stroke={COLORS.accent} strokeWidth={2} fill="transparent" />
-          <Area yAxisId="checks" type="monotone" dataKey="Чеки" stroke={COLORS.good} strokeWidth={2} fill="transparent" />
+          {grid}{xaxis}{yMoney}{sumTooltip}{avgLine}
+          <Area yAxisId="money" type="monotone" dataKey="Выручка" stroke={COLORS.primary} strokeWidth={2} fill="url(#revGrad)" dot={groupDot} activeDot={{ r: 5 }} />
         </AreaChart>
       );
     }
     return (
       <LineChart data={chartData}>
-        {grid}{xaxis}{yMoney}{yChecks}{tooltip}{legend}{avgLine}
-        <Line yAxisId="money" type={type === "step" ? "stepAfter" : "monotone"} dataKey="Выручка" stroke={COLORS.primary} strokeWidth={2} dot={false} />
-        <Line yAxisId="money" type={type === "step" ? "stepAfter" : "monotone"} dataKey="Ср. чек" stroke={COLORS.accent} strokeWidth={2} dot={false} />
-        <Line yAxisId="checks" type={type === "step" ? "stepAfter" : "monotone"} dataKey="Чеки" stroke={COLORS.good} strokeWidth={2} dot={false} />
+        {grid}{xaxis}{yMoney}{sumTooltip}{avgLine}
+        <Line yAxisId="money" type={type === "step" ? "stepAfter" : "monotone"} dataKey="Выручка" stroke={COLORS.primary} strokeWidth={2} dot={groupDot} activeDot={{ r: 5 }} />
       </LineChart>
     );
   };
@@ -253,6 +265,17 @@ export function RevenueChart({ data, prevData, range }: Props) {
         </div>
       )}
 
+      {view === "sum" && (
+        <div style={{ display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
+          {WEEKDAY_GROUPS.map((g) => (
+            <span key={g.key} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--muted)" }}>
+              <span style={{ width: 10, height: 10, borderRadius: 3, background: g.color, display: "inline-block" }} />
+              {g.label}
+            </span>
+          ))}
+        </div>
+      )}
+
       <ResponsiveContainer width="100%" height={CHART_HEIGHT}>
         {renderChart()}
       </ResponsiveContainer>
@@ -263,6 +286,38 @@ export function RevenueChart({ data, prevData, range }: Props) {
       {chartData.length === 0 && !chQ.isLoading && (
         <div style={{ color: "var(--muted)", textAlign: "center", padding: 24 }}>Нет данных для выбранного фильтра</div>
       )}
+    </div>
+  );
+}
+
+interface SumRow {
+  label: string;
+  dow: string;
+  Выручка: number;
+  "Ср. чек": number;
+  Чеки: number;
+}
+
+// Всплывающая подсказка режима «Сумма»: выручка дня + ср. чек + число чеков
+// (в самом графике остаётся только столбец выручки, окрашенный по группе дня).
+function SumTooltip({ active, payload }: { active?: boolean; payload?: readonly { payload?: SumRow }[] }) {
+  const r = active ? payload?.[0]?.payload : undefined;
+  if (!r) return null;
+  const g = weekdayGroup(r.dow);
+  const row = (label: string, value: string) => (
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 16 }}>
+      <span style={{ color: "var(--muted)" }}>{label}</span>
+      <span style={{ color: "var(--text)", fontWeight: 600 }}>{value}</span>
+    </div>
+  );
+  return (
+    <div style={{ background: "var(--bg)", border: "1px solid var(--grid)", borderRadius: 8, padding: "8px 12px", fontSize: 12, minWidth: 160 }}>
+      <div style={{ color: "var(--text)", fontWeight: 600, marginBottom: 6 }}>
+        {r.label} · <span style={{ color: g.color }}>{g.label}</span>
+      </div>
+      {row("Выручка", `${fmtInt(r["Выручка"])} ₽`)}
+      {row("Ср. чек", `${fmtInt(r["Ср. чек"])} ₽`)}
+      {row("Чеки", `${r["Чеки"]} шт`)}
     </div>
   );
 }
