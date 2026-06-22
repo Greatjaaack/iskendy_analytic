@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   AreaChart, Area, LineChart, Line, BarChart, Bar, ComposedChart,
-  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
+  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ReferenceLine,
 } from "recharts";
 import { fetchRevenueByChannel, rangeKey, type PrevDay, type RangeSel, type RevenueDay } from "../api";
 import {
@@ -95,6 +95,10 @@ export function RevenueChart({ data, prevData, range }: Props) {
     "Ср. чек": d.avg_check,
     Чеки: d.check_count,
   }));
+  // среднесуточная выручка за период — опорная линия, чтобы видеть дни выше/ниже нормы
+  const avgRev = sumData.length
+    ? Math.round(sumData.reduce((s, r) => s + r.Выручка, 0) / sumData.length)
+    : 0;
   const chData = (chQ.data?.data ?? []).filter((d) => dayOk(d.day_of_week)).map((d) => {
     const row: Record<string, number | string> = { label: `${d.day_of_week} ${d.date.slice(5)}` };
     channels.forEach((c) => (row[c] = Number(d[c] ?? 0)));
@@ -129,6 +133,16 @@ export function RevenueChart({ data, prevData, range }: Props) {
     />
   );
   const legend = <Legend wrapperStyle={{ fontSize: 12, color: "var(--muted)" }} />;
+  // опорная линия среднего рисуется только когда дней > 1 (для одного дня бессмысленна)
+  const avgLine = sumData.length > 1 && (
+    <ReferenceLine
+      yAxisId="money"
+      y={avgRev}
+      stroke="var(--muted)"
+      strokeDasharray="6 4"
+      label={{ value: `ср. ${fmtInt(avgRev)} ₽`, fill: "var(--muted)", fontSize: 11, position: "insideTopRight" }}
+    />
+  );
 
   const channelSeries = (kind: "area" | "line" | "bar") =>
     visible.map((c) =>
@@ -161,7 +175,7 @@ export function RevenueChart({ data, prevData, range }: Props) {
     if (type === "bar") {
       return (
         <BarChart data={chartData}>
-          {grid}{xaxis}{yMoney}{yChecks}{tooltip}{legend}
+          {grid}{xaxis}{yMoney}{yChecks}{tooltip}{legend}{avgLine}
           <Bar yAxisId="money" dataKey="Выручка" fill={COLORS.primary} radius={[4, 4, 0, 0]} />
           <Bar yAxisId="money" dataKey="Ср. чек" fill={COLORS.accent} radius={[4, 4, 0, 0]} />
           <Bar yAxisId="checks" dataKey="Чеки" fill={COLORS.good} radius={[4, 4, 0, 0]} />
@@ -177,7 +191,7 @@ export function RevenueChart({ data, prevData, range }: Props) {
               <stop offset="95%" stopColor={COLORS.primary} stopOpacity={0} />
             </linearGradient>
           </defs>
-          {grid}{xaxis}{yMoney}{yChecks}{tooltip}{legend}
+          {grid}{xaxis}{yMoney}{yChecks}{tooltip}{legend}{avgLine}
           <Area yAxisId="money" type="monotone" dataKey="Выручка" stroke={COLORS.primary} strokeWidth={2} fill="url(#revGrad)" />
           <Area yAxisId="money" type="monotone" dataKey="Ср. чек" stroke={COLORS.accent} strokeWidth={2} fill="transparent" />
           <Area yAxisId="checks" type="monotone" dataKey="Чеки" stroke={COLORS.good} strokeWidth={2} fill="transparent" />
@@ -186,7 +200,7 @@ export function RevenueChart({ data, prevData, range }: Props) {
     }
     return (
       <LineChart data={chartData}>
-        {grid}{xaxis}{yMoney}{yChecks}{tooltip}{legend}
+        {grid}{xaxis}{yMoney}{yChecks}{tooltip}{legend}{avgLine}
         <Line yAxisId="money" type={type === "step" ? "stepAfter" : "monotone"} dataKey="Выручка" stroke={COLORS.primary} strokeWidth={2} dot={false} />
         <Line yAxisId="money" type={type === "step" ? "stepAfter" : "monotone"} dataKey="Ср. чек" stroke={COLORS.accent} strokeWidth={2} dot={false} />
         <Line yAxisId="checks" type={type === "step" ? "stepAfter" : "monotone"} dataKey="Чеки" stroke={COLORS.good} strokeWidth={2} dot={false} />

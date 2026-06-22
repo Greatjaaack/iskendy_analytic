@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
-  ScatterChart, Scatter, ComposedChart, Bar, Line, Cell,
-  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Legend,
+  ScatterChart, Scatter, ComposedChart, Bar, Line, Cell, LabelList,
+  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, Legend,
 } from "recharts";
 import { fetchDishes, rangeKey, type RangeSel, type DishRow } from "../api";
 import { CHART_HEIGHT, REFETCH_INTERVAL_MS, COLORS } from "../constants";
@@ -21,7 +21,7 @@ const QUAD = {
 } as const;
 type Quad = keyof typeof QUAD;
 
-interface Point { x: number; y: number; name: string; mpct: number; rev: number; quad: Quad }
+interface Point { x: number; y: number; name: string; mpct: number; rev: number; quad: Quad; label: string }
 
 const ABC_COLOR: Record<string, string> = { A: COLORS.good, B: COLORS.warn, C: COLORS.bad };
 
@@ -45,12 +45,19 @@ export function MenuEngineering({ range }: Props) {
     const totalCM = costed.reduce((s, d) => s + (d.revenue - d.cost_sum), 0);
     const avgCM = totalQty ? totalCM / totalQty : 0; // средняя маржа на единицу, ₽
     const popThr = costed.length ? (totalQty / costed.length) * 0.7 : 0; // правило 70%
+    // подписываем на графике только топ-6 по выручке — иначе подписи сливаются
+    const topNames = new Set(
+      [...costed].sort((a, b) => b.revenue - a.revenue).slice(0, 6).map((d) => d.name),
+    );
     const points: Point[] = costed.map((d) => {
       const cm = (d.revenue - d.cost_sum) / d.quantity;
       const popular = d.quantity >= popThr;
       const highCM = cm >= avgCM;
       const quad: Quad = popular ? (highCM ? "star" : "plow") : highCM ? "puzzle" : "dog";
-      return { x: d.quantity, y: Math.round(cm), name: d.name, mpct: d.margin_pct, rev: d.revenue, quad };
+      return {
+        x: d.quantity, y: Math.round(cm), name: d.name, mpct: d.margin_pct, rev: d.revenue, quad,
+        label: topNames.has(d.name) ? d.name : "",
+      };
     });
     return { points, avgCM: Math.round(avgCM), popThr: Math.round(popThr), excluded: all.length - costed.length };
   }, [all]);
@@ -105,6 +112,11 @@ export function MenuEngineering({ range }: Props) {
               <CartesianGrid strokeDasharray="3 3" stroke="var(--grid)" />
               <XAxis type="number" dataKey="x" name="Продано" unit=" шт" tick={{ fill: "var(--muted)", fontSize: 12 }} />
               <YAxis type="number" dataKey="y" name="Маржа/шт" unit=" ₽" tick={{ fill: "var(--muted)", fontSize: 12 }} />
+              {/* бледная заливка квадрантов — зона блюда читается мгновенно, без сверки с осями */}
+              <ReferenceArea x1={matrix.popThr} y1={matrix.avgCM} fill={QUAD.star.color} fillOpacity={0.07} />
+              <ReferenceArea x1={matrix.popThr} y2={matrix.avgCM} fill={QUAD.plow.color} fillOpacity={0.07} />
+              <ReferenceArea x2={matrix.popThr} y1={matrix.avgCM} fill={QUAD.puzzle.color} fillOpacity={0.07} />
+              <ReferenceArea x2={matrix.popThr} y2={matrix.avgCM} fill={QUAD.dog.color} fillOpacity={0.07} />
               <ReferenceLine x={matrix.popThr} stroke="var(--muted)" strokeDasharray="4 4" label={{ value: "популярность", fill: "var(--muted)", fontSize: 11, position: "top" }} />
               <ReferenceLine y={matrix.avgCM} stroke="var(--muted)" strokeDasharray="4 4" label={{ value: "ср. маржа", fill: "var(--muted)", fontSize: 11, position: "right" }} />
               <Tooltip
@@ -122,7 +134,9 @@ export function MenuEngineering({ range }: Props) {
                 }}
               />
               {(Object.keys(QUAD) as Quad[]).map((k) => (
-                <Scatter key={k} name={QUAD[k].label} data={matrix.points.filter((p) => p.quad === k)} fill={QUAD[k].color} />
+                <Scatter key={k} name={QUAD[k].label} data={matrix.points.filter((p) => p.quad === k)} fill={QUAD[k].color}>
+                  <LabelList dataKey="label" position="top" style={{ fill: "var(--muted)", fontSize: 10 }} />
+                </Scatter>
               ))}
             </ScatterChart>
           </ResponsiveContainer>

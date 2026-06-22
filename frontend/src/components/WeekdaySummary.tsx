@@ -40,6 +40,9 @@ export function WeekdaySummary({ range }: Props) {
 
   const arrow = (k: SortKey) => (sortKey === k ? (sortDir === "asc" ? " ↑" : " ↓") : "");
 
+  // максимум для нормировки встроенных баров в колонке «Ср. за день»
+  const maxAvg = useMemo(() => Math.max(0, ...rows.map((r) => r.avg_day_revenue)), [rows]);
+
   return (
     <div style={{ background: COLORS.card, borderRadius: 12, padding: "20px 24px" }}>
       <div style={{ color: "var(--text)", fontWeight: 600, marginBottom: 12 }}>
@@ -64,7 +67,14 @@ export function WeekdaySummary({ range }: Props) {
                 <td style={{ ...td, fontWeight: 600 }}>{r.weekday}</td>
                 <td style={tdR}>{r.days}</td>
                 <td style={tdR}>{fmtInt(r.revenue)}</td>
-                <td style={tdR}>{fmtInt(r.avg_day_revenue)}</td>
+                <td style={td}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <div style={{ flex: 1, height: 8, background: COLORS.bg, borderRadius: 4, overflow: "hidden" }}>
+                      <div style={{ width: `${maxAvg ? (r.avg_day_revenue / maxAvg) * 100 : 0}%`, height: "100%", background: COLORS.primary }} />
+                    </div>
+                    <span style={{ flex: "0 0 64px", textAlign: "right" }}>{fmtInt(r.avg_day_revenue)}</span>
+                  </div>
+                </td>
                 <td style={tdR}>{r.checks}</td>
                 <td style={tdR}>{fmtInt(r.avg_check)}</td>
               </tr>

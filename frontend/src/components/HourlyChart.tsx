@@ -4,9 +4,12 @@ import {
   AreaChart, Area, LineChart, Line, BarChart, Bar,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from "recharts";
-import { fetchHourly, fetchHourlyByChannel, rangeKey, type RangeSel } from "../api";
+import {
+  fetchHourly, fetchHourlyByChannel, rangeKey,
+  type RangeSel, type HourRow, type ChannelHour,
+} from "../api";
 import { CHART_HEIGHT, REFETCH_INTERVAL_MS, CHART_TYPES, COLORS, type ChartKind } from "../constants";
-import { fmtInt } from "../format";
+import { fmtInt, fillHourGaps, hourLabel } from "../format";
 
 const chColor = (ch: string) =>
   ch === "доставка" ? COLORS.primary : ch === "с собой" ? COLORS.warn : COLORS.good;
@@ -46,8 +49,13 @@ export function HourlyChart({ range }: Props) {
   const channels = chQ.data?.channels ?? [];
   const visible = channels.filter((c) => !hidden.has(c));
 
-  const sumData = (sumQ.data?.data ?? []).map((h) => ({ label: h.label, Выручка: h.revenue, Чеки: h.checks }));
-  const chData = (chQ.data?.data ?? []).map((h) => {
+  // заполняем пропуски часов → равномерная ось X (часы без продаж не схлопываются)
+  const sumRaw = fillHourGaps(sumQ.data?.data ?? [], (h): HourRow => ({
+    hour: h, label: hourLabel(h), revenue: 0, checks: 0, avg_check: 0,
+  }));
+  const sumData = sumRaw.map((h) => ({ label: h.label, Выручка: h.revenue, Чеки: h.checks }));
+  const chRaw = fillHourGaps(chQ.data?.data ?? [], (h): ChannelHour => ({ hour: h, label: hourLabel(h), total: 0 }));
+  const chData = chRaw.map((h) => {
     const row: Record<string, number | string> = { label: h.label };
     channels.forEach((c) => (row[c] = Number(h[c] ?? 0)));
     return row;

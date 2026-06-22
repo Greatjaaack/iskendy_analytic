@@ -5,7 +5,7 @@ import {
 } from "recharts";
 import { fetchHourlyBreakdown, rangeKey, type RangeSel, type DishGroupBy } from "../api";
 import { REFETCH_INTERVAL_MS, COLORS } from "../constants";
-import { fmtInt } from "../format";
+import { fmtInt, fillHourGaps, hourLabel } from "../format";
 
 interface Props {
   range: RangeSel;
@@ -27,6 +27,7 @@ export function HourlyBreakdown({ range }: Props) {
   const [group, setGroup] = useState<DishGroupBy>("category");
   const [hour, setHour] = useState<number | null>(null);
   const [metric, setMetric] = useState<Metric>("revenue");
+  const [chartMode, setChartMode] = useState<"abs" | "share">("abs");
   const [sortKey, setSortKey] = useState<SortKey>("revenue");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
@@ -64,9 +65,20 @@ export function HourlyBreakdown({ range }: Props) {
   // строки диаграммы: на каждый час — значение каждой категории по выбранной метрике (стек)
   const chartData = useMemo(
     () =>
-      (catQ.data?.data ?? []).map((h) => {
-        const row: Record<string, number | string> = { label: h.label, hour: h.hour };
-        h.items.forEach((it) => (row[it.name] = val(it)));
+      // пропуски часов заполняем пустыми барами → ось X совпадает с другими почасовыми графиками
+      fillHourGaps(catQ.data?.data ?? [], (h) => ({
+        hour: h, label: hourLabel(h), revenue: 0, quantity: 0, items: [],
+      })).map((h) => {
+        // __total — итог часа по выбранной метрике; нужен тултипу в режиме «Доли»
+        // (recharts stackOffset="expand" отдаёт в формат-функцию сырое значение, не долю)
+        const row: Record<string, number | string> = { label: h.label, hour: h.hour, __total: 0 };
+        let total = 0;
+        h.items.forEach((it) => {
+          const v = val(it);
+          row[it.name] = v;
+          total += v;
+        });
+        row.__total = total;
         return row;
       }),
     [catQ.data, val],
@@ -81,18 +93,24 @@ export function HourlyBreakdown({ range }: Props) {
   };
   const arrow = (k: SortKey) => (sortKey === k ? (sortDir === "asc" ? " ↑" : " ↓") : "");
 
-  // доля = revenue / итог часа; сортируем по revenue (доля монотонна ему в пределах часа)
+  // доля = значение по выбранной метрике / итог часа по ней; сортировка по «доле»
+  // эквивалентна сортировке по самой метрике (в пределах часа доля ей монотонна)
   const items = useMemo(() => {
     const list = current?.items ?? [];
     const dir = sortDir === "asc" ? 1 : -1;
+    const byMetric = (k: SortKey) => (k === "share" ? metric : k);
     return [...list].sort((a, b) =>
       sortKey === "name"
         ? String(a.name).localeCompare(String(b.name), "ru") * dir
-        : (Number(a[sortKey === "share" ? "revenue" : sortKey]) -
-            Number(b[sortKey === "share" ? "revenue" : sortKey])) *
-          dir,
+        : (Number(a[byMetric(sortKey)]) - Number(b[byMetric(sortKey)])) * dir,
     );
-  }, [current, sortKey, sortDir]);
+  }, [current, sortKey, sortDir, metric]);
+
+  // база и лидер часа по выбранной метрике — для процента и длины инлайн-бара доли
+  const hourTotal = current ? (metric === "revenue" ? current.revenue : current.quantity) : 0;
+  const maxVal = items.length
+    ? Math.max(...items.map((it) => (metric === "revenue" ? it.revenue : it.quantity)))
+    : 0;
 
   return (
     <div style={{ background: COLORS.card, borderRadius: 12, padding: "20px 24px" }}>
@@ -102,6 +120,10 @@ export function HourlyBreakdown({ range }: Props) {
           <div style={{ display: "flex", background: "var(--bg)", borderRadius: 8, padding: 3, gap: 2 }}>
             <button onClick={() => setMetric("revenue")} style={mini(metric === "revenue")}>Выручка</button>
             <button onClick={() => setMetric("quantity")} style={mini(metric === "quantity")}>Кол-во</button>
+          </div>
+          <div style={{ display: "flex", background: "var(--bg)", borderRadius: 8, padding: 3, gap: 2 }}>
+            <button onClick={() => setChartMode("abs")} style={mini(chartMode === "abs")}>Объём</button>
+            <button onClick={() => setChartMode("share")} style={mini(chartMode === "share")}>Доли</button>
           </div>
           <div style={{ display: "flex", background: "var(--bg)", borderRadius: 8, padding: 3, gap: 2 }}>
             {(["category", "dish"] as DishGroupBy[]).map((g) => (
@@ -117,15 +139,28 @@ export function HourlyBreakdown({ range }: Props) {
           Выбранный час подсвечен (остальные приглушены). */}
       {chartData.length > 0 && (
         <ResponsiveContainer width="100%" height={220}>
-          <BarChart data={chartData} margin={{ left: 8 }}>
+          <BarChart data={chartData} margin={{ left: 8 }} stackOffset={chartMode === "share" ? "expand" : "none"}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--grid)" />
             <XAxis dataKey="label" tick={{ fill: "var(--muted)", fontSize: 11 }} interval={0} />
-            <YAxis tickFormatter={fmtInt} tick={{ fill: "var(--muted)", fontSize: 11 }} width={48} />
+            <YAxis
+              tickFormatter={chartMode === "share" ? (v) => `${Math.round(Number(v) * 100)}%` : fmtInt}
+              tick={{ fill: "var(--muted)", fontSize: 11 }}
+              width={48}
+              domain={chartMode === "share" ? [0, 1] : undefined}
+            />
             <Tooltip
               cursor={{ fill: "var(--grid)", opacity: 0.3 }}
               contentStyle={{ background: "var(--bg)", border: "1px solid var(--grid)", borderRadius: 8 }}
               labelStyle={{ color: "var(--text)" }}
-              formatter={(v, n) => [metric === "revenue" ? `${fmtInt(Number(v))} ₽` : `${fmtInt(Number(v))} шт`, n]}
+              formatter={(v, n, item) => {
+                const num = Number(v);
+                const base = metric === "revenue" ? `${fmtInt(num)} ₽` : `${fmtInt(num)} шт`;
+                if (chartMode === "share") {
+                  const t = Number((item?.payload as { __total?: number })?.__total ?? 0);
+                  return [`${t ? Math.round((num / t) * 100) : 0}% · ${base}`, n];
+                }
+                return [base, n];
+              }}
             />
             <Legend wrapperStyle={{ fontSize: 11, color: "var(--muted)" }} />
             {cats.map((c) => (
@@ -176,20 +211,34 @@ export function HourlyBreakdown({ range }: Props) {
               </th>
               <th style={{ ...thSort, textAlign: "right" }} onClick={() => onSort("quantity")}>Кол-во{arrow("quantity")}</th>
               <th style={{ ...thSort, textAlign: "right" }} onClick={() => onSort("revenue")}>Выручка, ₽{arrow("revenue")}</th>
-              <th style={{ ...thSort, textAlign: "right" }} onClick={() => onSort("share")}>Доля{arrow("share")}</th>
+              <th style={{ ...thSort, textAlign: "right" }} onClick={() => onSort("share")}>
+                Доля {metric === "revenue" ? "(₽)" : "(шт)"}{arrow("share")}
+              </th>
             </tr>
           </thead>
           <tbody>
-            {items.map((it) => (
-              <tr key={it.name} style={{ borderTop: "1px solid var(--grid)" }}>
-                <td style={td}>{it.name}</td>
-                <td style={{ ...td, textAlign: "right" }}>{it.quantity}</td>
-                <td style={{ ...td, textAlign: "right" }}>{fmtInt(it.revenue)}</td>
-                <td style={{ ...td, textAlign: "right", color: COLORS.indigoText }}>
-                  {current.revenue ? Math.round((it.revenue / current.revenue) * 100) : 0}%
-                </td>
-              </tr>
-            ))}
+            {items.map((it) => {
+              const v = metric === "revenue" ? it.revenue : it.quantity;
+              const share = hourTotal ? v / hourTotal : 0;
+              const rel = maxVal ? v / maxVal : 0; // длина бара: относительно лидера часа
+              return (
+                <tr key={it.name} style={{ borderTop: "1px solid var(--grid)" }}>
+                  <td style={td}>{it.name}</td>
+                  <td style={{ ...td, textAlign: "right" }}>{it.quantity}</td>
+                  <td style={{ ...td, textAlign: "right" }}>{fmtInt(it.revenue)}</td>
+                  <td style={td}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "flex-end" }}>
+                      <div style={{ flex: 1, maxWidth: 90, height: 6, background: "var(--grid)", borderRadius: 3, overflow: "hidden" }}>
+                        <div style={{ width: `${rel * 100}%`, height: "100%", background: COLORS.indigoText, borderRadius: 3 }} />
+                      </div>
+                      <span style={{ color: COLORS.indigoText, minWidth: 34, textAlign: "right" }}>
+                        {Math.round(share * 100)}%
+                      </span>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       )}
