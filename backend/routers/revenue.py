@@ -29,7 +29,7 @@ from constants import (
 )
 from iiko_web_client import iiko_web
 from models import RevenueDaily, SessionLocal
-from utils import period_range, prev_period_range
+from utils import period_range, prev_period_range, today
 from weather import get_weather
 
 CHANNELS = (CHANNEL_DINEIN, CHANNEL_TAKEAWAY, CHANNEL_DELIVERY)
@@ -69,26 +69,17 @@ def _channel_revenue(rows: list[dict]) -> dict[str, dict[str, float]]:
 
 
 def _delivery_per_bucket(rows: list[dict]) -> dict[str, dict[str, float]]:
-    """{bucket → {"revenue": сумма доставки, "checks": число заказов доставки}}.
+    """{bucket → {"revenue": выручка доставки, "checks": число заказов доставки}}.
 
-    Заказ считается доставкой, если его «Статус» = Доставка ИЛИ есть позиция из
-    меню-категории «Доставка» (та же логика, что в `kpi-by-channel`): тогда ВСЯ
-    выручка заказа — доставка. bucket = 1-е group-поле (дата/час).
+    Доставка = строго меню-категория «Доставка» (в ней продаются реальные блюда):
+    выручка — сумма по таким позициям, чек — заказ, в котором есть хотя бы одна.
+    bucket = 1-е group-поле (дата/час).
     """
-    delivery_orders: set[str] = set()
-    for r in rows:
-        _b, ordernum, category, name = _split4(r.get("field0", {}).get("value", ""))
-        if category == ORDER_STATUS_CATEGORY:
-            if ORDER_STATUS_CHANNELS.get(name.strip().lower()) == CHANNEL_DELIVERY:
-                delivery_orders.add(ordernum)
-        elif category == DELIVERY_CATEGORY:
-            delivery_orders.add(ordernum)
-
     out: dict[str, dict[str, float]] = {}
     seen: dict[str, set[str]] = {}
     for r in rows:
         bucket, ordernum, category, name = _split4(r.get("field0", {}).get("value", ""))
-        if not name or category == ORDER_STATUS_CATEGORY or ordernum not in delivery_orders:
+        if not name or category != DELIVERY_CATEGORY:
             continue
         rev = float(r.get("field1", {}).get("value", 0) or 0)
         e = out.setdefault(bucket, {"revenue": 0.0, "checks": 0})
@@ -212,6 +203,25 @@ async def _days_live(date_from: date, date_to: date) -> list[dict]:
     return days
 
 
+async def _load_days(df: date, dt: date, is_custom: bool) -> list[dict]:
+    """Дни периода: произвольный диапазон → живой; пресет → из БД.
+
+    Текущий день в пресетах подменяем живым get-data: hourly-синк отстаёт до часа,
+    из-за чего показатели из БД расходились бы с живыми OLAP-виджетами на том же
+    дашборде. Используется и в `/api/revenue`, и в `/by-weekday` — чтобы они сходились.
+    """
+    days = await _days_live(df, dt) if is_custom else _days_from_db(df, dt)
+    if not is_custom and dt >= today():
+        live_today = await _days_live(today(), today())
+        if live_today:
+            td = live_today[0]["date"]
+            days = sorted(
+                [d for d in days if d["date"] != td] + live_today,
+                key=lambda d: d["date"],
+            )
+    return days
+
+
 @router.get("")
 async def get_revenue(
     period: str = Query("week", enum=["day", "week", "month"]),
@@ -221,8 +231,7 @@ async def get_revenue(
 ):
     df, dt = period_range(period, date_from, date_to)
     is_custom = bool(date_from and date_to)
-    # произвольный диапазон → живой запрос (в БД может не быть истории); пресет → из БД
-    days = await _days_live(df, dt) if is_custom else _days_from_db(df, dt)
+    days = await _load_days(df, dt, is_custom)
 
     # галка «без доставки»: вычитаем выручку/чеки доставки (OLAP) из REV_GROSS-дней
     if not include_delivery:
@@ -308,7 +317,7 @@ async def get_revenue_by_weekday(
     """
     df, dt = period_range(period, date_from, date_to)
     is_custom = bool(date_from and date_to)
-    days = await _days_live(df, dt) if is_custom else _days_from_db(df, dt)
+    days = await _load_days(df, dt, is_custom)
 
     # food cost считаем от полной выручки дня (с/с по каналам не делится) — фиксируем до вычета
     full_rev = {d["date"]: d["total_sum"] for d in days}

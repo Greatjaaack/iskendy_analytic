@@ -28,7 +28,7 @@ export function Dashboard() {
   const [syncing, setSyncing] = useState(false);
   const [tab, setTab] = useState<"pulse" | "ops" | "menu">("pulse");
   // галка «с доставкой»: выкл → бэкенд вычитает выручку/чеки доставки из revenue-виджетов
-  const [withDelivery, setWithDelivery] = useState(true);
+  const [withDelivery, setWithDelivery] = useState(false);
 
   const isCustom = "from" in sel;
   // Один день («Сегодня» или диапазон из одной даты): «по дням» вырождается в один

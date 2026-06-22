@@ -10,7 +10,6 @@
 
 import asyncio
 import logging
-from datetime import date, timedelta
 
 import httpx
 
@@ -253,8 +252,10 @@ class IikoWebClient:
         `{"field0": {"value": "<группа>"}, "field1": {"value": <число>}, ...}`,
         где field0 — склейка group_fields через ", ", далее идут data_fields по порядку.
         """
-        # dateTo делаем эксклюзивным концом следующего дня, чтобы включить весь date_to
-        date_to_excl = (date.fromisoformat(date_to) + timedelta(days=1)).isoformat()
+        # ВАЖНО: фильтр date_range по OpenDate.Typed трактует dateTo ВКЛЮЧИТЕЛЬНО как
+        # целый день (живой API игнорирует includeRight=False). Поэтому dateTo передаём
+        # как есть (= date_to), без +1: иначе в выборку попадал бы лишний день после
+        # диапазона (для одного дня это удваивало все метрики).
         req = {
             "storeIds": [self.store_id],
             "olapType": OLAP_TYPE_SALES,
@@ -265,9 +266,9 @@ class IikoWebClient:
                     "filterType": "date_range",
                     "field": OLAP_FILTER_DATE,
                     "dateFrom": date_from,
-                    "dateTo": date_to_excl,
+                    "dateTo": date_to,
                     "includeLeft": True,
-                    "includeRight": False,
+                    "includeRight": True,
                 }
             ],
             "includeVoidTransactions": False,
