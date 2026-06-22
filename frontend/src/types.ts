@@ -130,19 +130,6 @@ export interface RevenueByChannel {
   channels: string[];
   data: ChannelDay[];
 }
-export interface ChannelHour {
-  hour: number;
-  label: string;
-  total: number;
-  [channel: string]: number | string;
-}
-export interface HourlyByChannel {
-  period: Period | "custom";
-  date_from: string;
-  date_to: string;
-  channels: string[];
-  data: ChannelHour[];
-}
 
 // Состав чека (#5): средняя доля категорий в чеке (по кол-ву и выручке), период + часы.
 export interface CompositionShare {
@@ -170,24 +157,6 @@ export interface CheckFullness {
   buckets: string[];
   total: Record<string, number>;
   data: ({ hour: number; label: string; total: number } & Record<string, number>)[];
-}
-
-// Разрез блюдо × канал обслуживания (#4). Ключи каналов («в зале»/«с собой»/«доставка»)
-// приходят в channels; значения по ним — числа (кол-во).
-export interface ServiceBreakdownRow {
-  name: string;
-  total: number;
-  revenue: number;
-  [channel: string]: number | string;
-}
-
-export interface ServiceBreakdown {
-  group_by: DishGroupBy;
-  period: Period | "custom";
-  date_from: string;
-  date_to: string;
-  channels: string[];
-  data: ServiceBreakdownRow[];
 }
 
 // ---------- Почасовые продажи ----------

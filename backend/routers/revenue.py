@@ -67,6 +67,69 @@ def _channel_revenue(rows: list[dict]) -> dict[str, dict[str, float]]:
     return out
 
 
+def _delivery_per_bucket(rows: list[dict]) -> dict[str, dict[str, float]]:
+    """{bucket → {"revenue": сумма доставки, "checks": число заказов доставки}}.
+
+    Заказ считается доставкой, если его «Статус» = Доставка ИЛИ есть позиция из
+    меню-категории «Доставка» (та же логика, что в `kpi-by-channel`): тогда ВСЯ
+    выручка заказа — доставка. bucket = 1-е group-поле (дата/час).
+    """
+    delivery_orders: set[str] = set()
+    for r in rows:
+        _b, ordernum, category, name = _split4(r.get("field0", {}).get("value", ""))
+        if category == ORDER_STATUS_CATEGORY:
+            if ORDER_STATUS_CHANNELS.get(name.strip().lower()) == CHANNEL_DELIVERY:
+                delivery_orders.add(ordernum)
+        elif category == DELIVERY_CATEGORY:
+            delivery_orders.add(ordernum)
+
+    out: dict[str, dict[str, float]] = {}
+    seen: dict[str, set[str]] = {}
+    for r in rows:
+        bucket, ordernum, category, name = _split4(r.get("field0", {}).get("value", ""))
+        if not name or category == ORDER_STATUS_CATEGORY or ordernum not in delivery_orders:
+            continue
+        rev = float(r.get("field1", {}).get("value", 0) or 0)
+        e = out.setdefault(bucket, {"revenue": 0.0, "checks": 0})
+        e["revenue"] += rev
+        s = seen.setdefault(bucket, set())
+        if ordernum not in s:
+            s.add(ordernum)
+            e["checks"] += 1
+    return out
+
+
+async def _delivery_buckets(date_from: date, date_to: date, bucket_field: str) -> dict[str, dict]:
+    """Выручка и чеки доставки по корзинам (дата/час) за период — через OLAP SALES."""
+    rows = await iiko_web.olap_sales(
+        group_fields=[
+            bucket_field,
+            OLAP_FIELD_ORDER_NUM,
+            OLAP_FIELD_DISH_CATEGORY,
+            OLAP_FIELD_DISH_NAME,
+        ],
+        data_fields=[OLAP_FIELD_SUM],
+        date_from=date_from.isoformat(),
+        date_to=date_to.isoformat(),
+    )
+    return _delivery_per_bucket(rows)
+
+
+def _exclude_delivery(days: list[dict], del_buckets: dict[str, dict]) -> None:
+    """Вычитает выручку и чеки доставки из дней (in-place). Корзина дня — `date`.
+
+    `food_cost_pct` и `cost_sum` не трогаем: с/с по каналам не разбивается, так что
+    это остаётся food cost всей точки (вычесть «с/с доставки» нечем).
+    """
+    for d in days:
+        dd = del_buckets.get(d["date"])
+        if not dd:
+            continue
+        d["total_sum"] = round(max(0.0, d["total_sum"] - dd["revenue"]), 2)
+        d["check_count"] = max(0, d["check_count"] - dd["checks"])
+        d["avg_check"] = round(d["total_sum"] / d["check_count"], 2) if d["check_count"] else 0
+
+
 router = APIRouter(prefix="/api/revenue", tags=["revenue"])
 
 
@@ -153,11 +216,16 @@ async def get_revenue(
     period: str = Query("week", enum=["day", "week", "month"]),
     date_from: str | None = None,
     date_to: str | None = None,
+    include_delivery: bool = True,
 ):
     df, dt = period_range(period, date_from, date_to)
     is_custom = bool(date_from and date_to)
     # произвольный диапазон → живой запрос (в БД может не быть истории); пресет → из БД
     days = await _days_live(df, dt) if is_custom else _days_from_db(df, dt)
+
+    # галка «без доставки»: вычитаем выручку/чеки доставки (OLAP) из REV_GROSS-дней
+    if not include_delivery:
+        _exclude_delivery(days, await _delivery_buckets(df, dt, OLAP_FIELD_OPEN_DATE))
 
     # погода по Москве за те же дни (не критично — при сбое просто не покажем)
     weather = await get_weather(df.isoformat(), dt.isoformat())
@@ -177,6 +245,11 @@ async def get_revenue(
     # тогда берём живым запросом, иначе дельта не показывалась бы
     if not prev_days:
         prev_days = await _days_live(prev_df, prev_dt)
+    # без доставки — вычитаем её и из прошлого периода, чтобы дельта сравнивала сопоставимое
+    if not include_delivery and prev_days:
+        _exclude_delivery(
+            prev_days, await _delivery_buckets(prev_df, prev_dt, OLAP_FIELD_OPEN_DATE)
+        )
     prev_rev = sum(r["total_sum"] for r in prev_days)
     prev_checks = sum(r["check_count"] for r in prev_days)
 
@@ -224,6 +297,7 @@ async def get_revenue_by_weekday(
     period: str = Query("week", enum=["day", "week", "month"]),
     date_from: str | None = None,
     date_to: str | None = None,
+    include_delivery: bool = True,
 ):
     """Свод выручки по дням недели за период: суммируем дни одного дня недели (Пн…Вс).
 
@@ -235,8 +309,13 @@ async def get_revenue_by_weekday(
     is_custom = bool(date_from and date_to)
     days = await _days_live(df, dt) if is_custom else _days_from_db(df, dt)
 
+    # food cost считаем от полной выручки дня (с/с по каналам не делится) — фиксируем до вычета
+    full_rev = {d["date"]: d["total_sum"] for d in days}
+    if not include_delivery:
+        _exclude_delivery(days, await _delivery_buckets(df, dt, OLAP_FIELD_OPEN_DATE))
+
     agg: dict[int, dict] = {
-        i: {"revenue": 0.0, "checks": 0, "cost": 0.0, "days": 0} for i in range(7)
+        i: {"revenue": 0.0, "checks": 0, "cost": 0.0, "days": 0, "full_rev": 0.0} for i in range(7)
     }
     for d in days:
         idx = date.fromisoformat(d["date"]).weekday()
@@ -244,6 +323,7 @@ async def get_revenue_by_weekday(
         a["revenue"] += d["total_sum"]
         a["checks"] += d["check_count"]
         a["cost"] += d["cost_sum"]
+        a["full_rev"] += full_rev[d["date"]]
         a["days"] += 1
 
     data = []
@@ -260,7 +340,9 @@ async def get_revenue_by_weekday(
                 "avg_day_revenue": round(rev / a["days"], 2),
                 "checks": a["checks"],
                 "avg_check": round(rev / a["checks"], 2) if a["checks"] else 0,
-                "food_cost_pct": round(a["cost"] / rev * 100, 1) if rev else 0,
+                "food_cost_pct": (
+                    round(a["cost"] / a["full_rev"] * 100, 1) if a["full_rev"] else 0
+                ),
             }
         )
 
@@ -293,6 +375,7 @@ async def get_hourly(
     period: str = Query("week", enum=["day", "week", "month"]),
     date_from: str | None = None,
     date_to: str | None = None,
+    include_delivery: bool = True,
 ):
     """Продажи по часам (интервалы 11-12, 12-13, …) — живой запрос в iiko."""
     df, dt = period_range(period, date_from, date_to)
@@ -312,6 +395,18 @@ async def get_hourly(
         }
         for h in hours
     ]
+
+    # галка «без доставки»: вычитаем выручку/чеки доставки по каждому часу (OLAP)
+    if not include_delivery:
+        del_h = await _delivery_buckets(df, dt, OLAP_FIELD_HOUR)
+        for row in data:
+            dd = del_h.get(str(row["hour"]))
+            if not dd:
+                continue
+            row["revenue"] = round(max(0.0, row["revenue"] - dd["revenue"]), 2)
+            row["checks"] = max(0, row["checks"] - dd["checks"])
+            row["avg_check"] = round(row["revenue"] / row["checks"], 2) if row["checks"] else 0
+
     return {"period": period, "date_from": df.isoformat(), "date_to": dt.isoformat(), "data": data}
 
 

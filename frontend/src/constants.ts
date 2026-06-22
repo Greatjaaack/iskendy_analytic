@@ -17,15 +17,6 @@ export const QUERY_RETRY = 2;
 /** Высота области графиков (px) — единая для всех графиков дашборда. */
 export const CHART_HEIGHT = 280;
 
-/** Тип отображения графика. Используется в «Выручка по дням» и «Выручка по часам». */
-export type ChartKind = "area" | "line" | "step" | "bar";
-export const CHART_TYPES: { key: ChartKind; label: string }[] = [
-  { key: "area", label: "Область" },
-  { key: "line", label: "Линия" },
-  { key: "step", label: "Ступени" },
-  { key: "bar", label: "Столбцы" },
-];
-
 // ─── Периоды дашборда ────────────────────────────────────────────────────────
 export const PERIODS: { key: Period; label: string }[] = [
   { key: "day", label: "Сегодня" },

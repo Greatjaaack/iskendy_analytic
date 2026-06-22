@@ -7,7 +7,6 @@ import { RevenueChart } from "../components/RevenueChart";
 import { WeekdaySummary } from "../components/WeekdaySummary";
 import { HourlyChart } from "../components/HourlyChart";
 import { HourlyBreakdown } from "../components/HourlyBreakdown";
-import { ServiceBreakdown } from "../components/ServiceBreakdown";
 import { CheckComposition } from "../components/CheckComposition";
 import { CheckFullness } from "../components/CheckFullness";
 import { MenuEngineering } from "../components/MenuEngineering";
@@ -27,12 +26,17 @@ export function Dashboard() {
   const [to, setTo] = useState(todayISO());
   const [syncing, setSyncing] = useState(false);
   const [tab, setTab] = useState<"pulse" | "ops" | "menu">("pulse");
+  // галка «с доставкой»: выкл → бэкенд вычитает выручку/чеки доставки из revenue-виджетов
+  const [withDelivery, setWithDelivery] = useState(true);
 
   const isCustom = "from" in sel;
+  // Один день («Сегодня» или диапазон из одной даты): «по дням» вырождается в один
+  // столбец, поэтому в «Пульсе» показываем внутридневную динамику — почасовой график.
+  const isSingleDay = isCustom ? sel.from === sel.to : sel.period === "day";
 
   const revenueQ = useQuery({
-    queryKey: ["revenue", rangeKey(sel)],
-    queryFn: () => fetchRevenue(sel),
+    queryKey: ["revenue", rangeKey(sel), withDelivery],
+    queryFn: () => fetchRevenue(sel, withDelivery),
     refetchInterval: REFETCH_INTERVAL_MS,
   });
 
@@ -75,6 +79,22 @@ export function Dashboard() {
               📅 Период
             </button>
           </div>
+          <label
+            title="Учитывать заказы доставки во всех виджетах дашборда (выручка, чеки, блюда, состав чека)"
+            style={{
+              display: "flex", alignItems: "center", gap: 6, cursor: "pointer",
+              padding: "6px 12px", borderRadius: 8, border: `1px solid ${COLORS.grid}`,
+              background: COLORS.card, color: "var(--text)", fontSize: 13, userSelect: "none",
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={withDelivery}
+              onChange={(e) => setWithDelivery(e.target.checked)}
+              style={{ cursor: "pointer" }}
+            />
+            🛵 С доставкой
+          </label>
           <button
             onClick={handleSync}
             disabled={syncing}
@@ -134,7 +154,11 @@ export function Dashboard() {
           {tab === "pulse" && (
             <div className="dash-grid">
               <div className="dash-full">
-                <RevenueChart data={revenueQ.data.data} prevData={revenueQ.data.prev_data} range={sel} />
+                {isSingleDay ? (
+                  <HourlyChart range={sel} withDelivery={withDelivery} />
+                ) : (
+                  <RevenueChart data={revenueQ.data.data} prevData={revenueQ.data.prev_data} />
+                )}
               </div>
               <div className="dash-full">
                 <ChecksDistribution range={sel} />
@@ -143,23 +167,23 @@ export function Dashboard() {
           )}
           {tab === "ops" && (
             <div className="dash-grid">
-              <WeekdaySummary range={sel} />
-              <HourlyChart range={sel} />
-              <CheckFullness range={sel} />
+              {/* свод по дням недели бессмыслен для одного дня (1 строка, бар на 100%) */}
+              {!isSingleDay && <WeekdaySummary range={sel} withDelivery={withDelivery} />}
+              <HourlyChart range={sel} withDelivery={withDelivery} />
+              <CheckFullness range={sel} withDelivery={withDelivery} />
               <div className="dash-full">
-                <HourlyBreakdown range={sel} />
+                <HourlyBreakdown range={sel} withDelivery={withDelivery} />
               </div>
             </div>
           )}
           {tab === "menu" && (
             <div className="dash-grid">
-              <CheckComposition range={sel} />
-              <ServiceBreakdown range={sel} />
+              <CheckComposition range={sel} withDelivery={withDelivery} />
               <div className="dash-full">
-                <MenuEngineering range={sel} />
+                <MenuEngineering range={sel} withDelivery={withDelivery} />
               </div>
               <div className="dash-full">
-                <DishTable range={sel} />
+                <DishTable range={sel} withDelivery={withDelivery} />
               </div>
             </div>
           )}

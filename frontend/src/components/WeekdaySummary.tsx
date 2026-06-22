@@ -6,20 +6,21 @@ import { fmtInt } from "../format";
 
 interface Props {
   range: RangeSel;
+  withDelivery?: boolean;
 }
 
 type SortKey = "days" | "revenue" | "avg_day_revenue" | "checks" | "avg_check";
 
 /** Свод выручки по дням недели (#7): суммирует дни одного дня недели за период.
  *  Видно, какие дни недели «вытягивают» выручку. Данные — `/api/revenue/by-weekday`. */
-export function WeekdaySummary({ range }: Props) {
+export function WeekdaySummary({ range, withDelivery = true }: Props) {
   // null = естественный порядок Пн…Вс (как пришло с бэкенда)
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
   const q = useQuery({
-    queryKey: ["revenue-by-weekday", rangeKey(range)],
-    queryFn: () => fetchRevenueByWeekday(range),
+    queryKey: ["revenue-by-weekday", rangeKey(range), withDelivery],
+    queryFn: () => fetchRevenueByWeekday(range, withDelivery),
     refetchInterval: REFETCH_INTERVAL_MS,
   });
 

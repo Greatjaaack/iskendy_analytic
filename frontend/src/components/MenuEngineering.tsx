@@ -10,6 +10,7 @@ import { fmtInt } from "../format";
 
 interface Props {
   range: RangeSel;
+  withDelivery?: boolean;
 }
 
 // Квадранты меню-инжиниринга: популярность × маржинальность.
@@ -27,13 +28,13 @@ const ABC_COLOR: Record<string, string> = { A: COLORS.good, B: COLORS.warn, C: C
 
 /** Меню-инжиниринг: матрица популярность×маржа (Звёзды/Лошадки/Загадки/Собаки) и
  *  ABC-анализ (Парето). Считается на лету из `/api/dishes` (group_by=dish). */
-export function MenuEngineering({ range }: Props) {
+export function MenuEngineering({ range, withDelivery = true }: Props) {
   const [view, setView] = useState<"matrix" | "abc">("matrix");
   const [abcBasis, setAbcBasis] = useState<"rev" | "margin">("rev");
 
   const q = useQuery({
-    queryKey: ["dishes", rangeKey(range), "dish"],
-    queryFn: () => fetchDishes(range, "dish"),
+    queryKey: ["dishes", rangeKey(range), "dish", withDelivery],
+    queryFn: () => fetchDishes(range, "dish", withDelivery),
     refetchInterval: REFETCH_INTERVAL_MS,
   });
   const all: DishRow[] = useMemo(() => q.data?.data ?? [], [q.data]);

@@ -9,6 +9,7 @@ import { fmtInt, fillHourGaps, hourLabel } from "../format";
 
 interface Props {
   range: RangeSel;
+  withDelivery?: boolean;
 }
 
 type SortKey = "name" | "quantity" | "revenue" | "share";
@@ -23,7 +24,7 @@ const PALETTE = [
 /** Продажи по часам: разбивка продаж по блюдам/категориям за каждый часовой интервал (#3).
  *  Столбчатая диаграмма по часам (выручка/кол-во, клик по столбцу — выбор часа) + таблица
  *  по выбранному часу. Данные — из OLAP-движка iiko (`/api/dishes/hourly-breakdown`). */
-export function HourlyBreakdown({ range }: Props) {
+export function HourlyBreakdown({ range, withDelivery = true }: Props) {
   const [group, setGroup] = useState<DishGroupBy>("category");
   const [hour, setHour] = useState<number | null>(null);
   const [metric, setMetric] = useState<Metric>("revenue");
@@ -32,15 +33,15 @@ export function HourlyBreakdown({ range }: Props) {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
   const q = useQuery({
-    queryKey: ["hourly-breakdown", rangeKey(range), group],
-    queryFn: () => fetchHourlyBreakdown(range, group),
+    queryKey: ["hourly-breakdown", rangeKey(range), group, withDelivery],
+    queryFn: () => fetchHourlyBreakdown(range, group, withDelivery),
     refetchInterval: REFETCH_INTERVAL_MS,
   });
   // для диаграммы всегда нужен разрез по КАТЕГОРИЯМ (стек читаем); когда таблица тоже
   // в режиме «Категории» — это тот же queryKey, и React Query не делает второй запрос.
   const catQ = useQuery({
-    queryKey: ["hourly-breakdown", rangeKey(range), "category"],
-    queryFn: () => fetchHourlyBreakdown(range, "category"),
+    queryKey: ["hourly-breakdown", rangeKey(range), "category", withDelivery],
+    queryFn: () => fetchHourlyBreakdown(range, "category", withDelivery),
     refetchInterval: REFETCH_INTERVAL_MS,
   });
 

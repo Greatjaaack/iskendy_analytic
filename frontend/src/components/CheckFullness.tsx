@@ -7,6 +7,7 @@ import { fillHourGaps, hourLabel } from "../format";
 
 interface Props {
   range: RangeSel;
+  withDelivery?: boolean;
 }
 
 // Цвет по числу позиций: от 1 (светлый) к 4+ (насыщенный).
@@ -19,12 +20,12 @@ const BUCKET_COLORS: Record<string, string> = {
 
 /** Распределение чеков по числу позиций (1/2/3/4+) по часам (#6).
  *  Режим «доля %» нормирует каждый час к 100% (видно сдвиг состава), «кол-во» — абсолют. */
-export function CheckFullness({ range }: Props) {
+export function CheckFullness({ range, withDelivery = true }: Props) {
   const [pct, setPct] = useState(false);
 
   const q = useQuery({
-    queryKey: ["check-fullness", rangeKey(range)],
-    queryFn: () => fetchCheckFullness(range),
+    queryKey: ["check-fullness", rangeKey(range), withDelivery],
+    queryFn: () => fetchCheckFullness(range, withDelivery),
     refetchInterval: REFETCH_INTERVAL_MS,
   });
 
@@ -67,33 +68,41 @@ export function CheckFullness({ range }: Props) {
         </div>
       </div>
 
-      <ResponsiveContainer width="100%" height={CHART_HEIGHT}>
-        <BarChart data={data} margin={{ left: 8 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="var(--grid)" />
-          <XAxis dataKey="label" tick={{ fill: "var(--muted)", fontSize: 12 }} />
-          <YAxis unit={pct ? "%" : ""} domain={pct ? [0, 100] : undefined} tick={{ fill: "var(--muted)", fontSize: 12 }} />
-          <Tooltip
-            contentStyle={{ background: "var(--bg)", border: "1px solid var(--grid)", borderRadius: 8 }}
-            labelStyle={{ color: "var(--text)" }}
-            formatter={(v, n) => [pct ? `${v}%` : `${v} чек.`, `${n} поз.`]}
-          />
-          <Legend wrapperStyle={{ fontSize: 12, color: "var(--muted)" }} formatter={(v) => `${v} поз.`} />
-          {buckets.map((b) => (
-            <Bar key={b} dataKey={b} stackId="full" fill={BUCKET_COLORS[b] ?? COLORS.muted} />
-          ))}
-        </BarChart>
-      </ResponsiveContainer>
+      {q.isLoading ? (
+        <div style={{ color: "var(--muted)", textAlign: "center", padding: 48 }}>Загрузка…</div>
+      ) : allChecks === 0 ? (
+        <div style={{ color: "var(--muted)", textAlign: "center", padding: 48 }}>Нет данных</div>
+      ) : (
+        <>
+          <ResponsiveContainer width="100%" height={CHART_HEIGHT}>
+            <BarChart data={data} margin={{ left: 8 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--grid)" />
+              <XAxis dataKey="label" tick={{ fill: "var(--muted)", fontSize: 12 }} />
+              <YAxis unit={pct ? "%" : ""} domain={pct ? [0, 100] : undefined} tick={{ fill: "var(--muted)", fontSize: 12 }} />
+              <Tooltip
+                contentStyle={{ background: "var(--bg)", border: "1px solid var(--grid)", borderRadius: 8 }}
+                labelStyle={{ color: "var(--text)" }}
+                formatter={(v, n) => [pct ? `${v}%` : `${v} чек.`, `${n} поз.`]}
+              />
+              <Legend wrapperStyle={{ fontSize: 12, color: "var(--muted)" }} formatter={(v) => `${v} поз.`} />
+              {buckets.map((b) => (
+                <Bar key={b} dataKey={b} stackId="full" fill={BUCKET_COLORS[b] ?? COLORS.muted} />
+              ))}
+            </BarChart>
+          </ResponsiveContainer>
 
-      {singleShare > 0 && (
-        <div style={{ color: "var(--text)", fontSize: 12, marginTop: 8, padding: "8px 12px", background: "var(--bg)", borderRadius: 8, borderLeft: `3px solid ${COLORS.accent}` }}>
-          💡 Чеки на 1 позицию — <b>{singleShare}%</b> от всех
-          {peak && <> · пик в <b>{peak.label}</b> ({Math.round(peak.sh * 100)}%)</>}. Часы с одиночными чеками — потенциал апсейла.
-        </div>
+          {singleShare > 0 && (
+            <div style={{ color: "var(--text)", fontSize: 12, marginTop: 8, padding: "8px 12px", background: "var(--bg)", borderRadius: 8, borderLeft: `3px solid ${COLORS.accent}` }}>
+              💡 Чеки на 1 позицию — <b>{singleShare}%</b> от всех
+              {peak && <> · пик в <b>{peak.label}</b> ({Math.round(peak.sh * 100)}%)</>}. Часы с одиночными чеками — потенциал апсейла.
+            </div>
+          )}
+
+          <div style={{ color: "var(--muted)", fontSize: 12, marginTop: 8 }}>
+            Всего: {buckets.map((b) => `${b} поз. — ${q.data?.total[b] ?? 0}`).join(" · ")}
+          </div>
+        </>
       )}
-
-      <div style={{ color: "var(--muted)", fontSize: 12, marginTop: 8 }}>
-        Всего: {buckets.map((b) => `${b} поз. — ${q.data?.total[b] ?? 0}`).join(" · ")}
-      </div>
     </div>
   );
 }

@@ -7,6 +7,7 @@ import { fmtInt } from "../format";
 
 interface Props {
   range: RangeSel;
+  withDelivery?: boolean;
 }
 
 const PALETTE = [
@@ -18,14 +19,14 @@ const PALETTE = [
  *  за период / по часам. Стек 100%. Данные — `/api/dishes/check-composition`.
  *  Клик по категории (столбик/легенда) — провал в товары этой категории (доля товара
  *  в категории за период, источник `/api/dishes`). */
-export function CheckComposition({ range }: Props) {
+export function CheckComposition({ range, withDelivery = true }: Props) {
   const [by, setBy] = useState<"qty" | "rev">("qty");
   const [mode, setMode] = useState<"total" | "hour">("total");
   const [drillCat, setDrillCat] = useState<string | null>(null);
 
   const q = useQuery({
-    queryKey: ["check-composition", rangeKey(range)],
-    queryFn: () => fetchCheckComposition(range),
+    queryKey: ["check-composition", rangeKey(range), withDelivery],
+    queryFn: () => fetchCheckComposition(range, withDelivery),
     refetchInterval: REFETCH_INTERVAL_MS,
   });
 
@@ -35,8 +36,8 @@ export function CheckComposition({ range }: Props) {
   // провал в категорию (#): товары внутри неё с долей «товар / итог категории» за период.
   // Переиспользуем `/api/dishes` (group_by=dish) — там есть category (group_name) и кол-во/выручка.
   const dishQ = useQuery({
-    queryKey: ["check-composition-drill", rangeKey(range)],
-    queryFn: () => fetchDishes(range, "dish"),
+    queryKey: ["check-composition-drill", rangeKey(range), withDelivery],
+    queryFn: () => fetchDishes(range, "dish", withDelivery),
     refetchInterval: REFETCH_INTERVAL_MS,
     enabled: drillCat !== null,
   });

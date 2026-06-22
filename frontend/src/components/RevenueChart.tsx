@@ -1,38 +1,30 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
 import {
-  AreaChart, Area, LineChart, Line, BarChart, Bar, Cell, ComposedChart,
+  BarChart, Bar, Cell, ComposedChart, Line,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ReferenceLine,
 } from "recharts";
-import { fetchRevenueByChannel, rangeKey, type PrevDay, type RangeSel, type RevenueDay } from "../api";
+import { type PrevDay, type RevenueDay } from "../api";
 import {
-  CHART_HEIGHT, CHART_TYPES, COLORS, REFETCH_INTERVAL_MS,
+  CHART_HEIGHT, COLORS,
   WEEKDAY_GROUPS, WEEKDAYS_ALL, WEEKDAYS_WEEKEND, WEEKDAYS_WORK,
-  weatherInfo, weekdayGroup, type ChartKind,
+  weatherInfo, weekdayGroup,
 } from "../constants";
 import { fmtInt } from "../format";
 
 interface Props {
   data: RevenueDay[];
   prevData: PrevDay[];
-  range: RangeSel;
 }
 
-type View = "sum" | "channel" | "weather";
+type View = "sum" | "weather";
 const VIEWS: { key: View; label: string }[] = [
   { key: "sum", label: "Сумма" },
-  { key: "channel", label: "По статусам" },
   { key: "weather", label: "Погода" },
 ];
 
-const chColor = (ch: string) =>
-  ch === "доставка" ? COLORS.primary : ch === "с собой" ? COLORS.warn : COLORS.good;
-
-export function RevenueChart({ data, prevData, range }: Props) {
-  const [type, setType] = useState<ChartKind>("area");
+export function RevenueChart({ data, prevData }: Props) {
   const [days, setDays] = useState<Set<string>>(new Set());
   const [view, setView] = useState<View>("sum");
-  const [hidden, setHidden] = useState<Set<string>>(new Set());
 
   const toggleDay = (d: string) =>
     setDays((prev) => {
@@ -41,20 +33,6 @@ export function RevenueChart({ data, prevData, range }: Props) {
       else next.add(d);
       return next;
     });
-  const toggleChannel = (c: string) =>
-    setHidden((prev) => {
-      const next = new Set(prev);
-      if (next.has(c)) next.delete(c);
-      else next.add(c);
-      return next;
-    });
-
-  const chQ = useQuery({
-    queryKey: ["revenue-by-channel", rangeKey(range)],
-    queryFn: () => fetchRevenueByChannel(range),
-    refetchInterval: REFETCH_INTERVAL_MS,
-    enabled: view === "channel",
-  });
 
   // фильтр по дням недели имеет смысл только когда дней больше одного; для одного дня
   // (период «Сегодня» / диапазон из одной даты) он скрыт и не должен ничего отсекать,
@@ -87,9 +65,6 @@ export function RevenueChart({ data, prevData, range }: Props) {
     );
   };
 
-  const channels = chQ.data?.channels ?? [];
-  const visible = channels.filter((c) => !hidden.has(c));
-
   const sumData = data.filter((d) => dayOk(d.day_of_week)).map((d) => ({
     label: `${d.day_of_week} ${d.date.slice(5)}`,
     dow: d.day_of_week,
@@ -101,11 +76,6 @@ export function RevenueChart({ data, prevData, range }: Props) {
   const avgRev = sumData.length
     ? Math.round(sumData.reduce((s, r) => s + r.Выручка, 0) / sumData.length)
     : 0;
-  const chData = (chQ.data?.data ?? []).filter((d) => dayOk(d.day_of_week)).map((d) => {
-    const row: Record<string, number | string> = { label: `${d.day_of_week} ${d.date.slice(5)}` };
-    channels.forEach((c) => (row[c] = Number(d[c] ?? 0)));
-    return row;
-  });
   // «Погода»: выручка и температура текущего и прошлого периода, выровнены по позиции дня
   const weatherData = data
     .map((d, i) => ({ d, p: prevData[i] }))
@@ -118,7 +88,8 @@ export function RevenueChart({ data, prevData, range }: Props) {
       "t°": d.weather?.temp_max ?? NaN,
       "t° (пр.)": p?.temp_max ?? NaN,
     }));
-  const chartData = view === "channel" ? chData : view === "weather" ? weatherData : sumData;
+  const chartData: Record<string, number | string>[] =
+    view === "weather" ? weatherData : sumData;
 
   const grid = <CartesianGrid strokeDasharray="3 3" stroke="var(--grid)" />;
   const xaxis = <XAxis dataKey="label" tick={renderTick} interval={0} height={46} />;
@@ -137,13 +108,6 @@ export function RevenueChart({ data, prevData, range }: Props) {
   // подсказка режима «Сумма»: выручка + ср. чек + чеки одного дня (последние два
   // больше не рисуются столбцами, поэтому собираем их из строки данных вручную)
   const sumTooltip = <Tooltip cursor={{ fill: "var(--grid)", opacity: 0.3 }} content={SumTooltip} />;
-  // точка на линии/области, окрашенная по группе дня недели (для типов Линия/Область/Ступени)
-  const groupDot = (p: { cx?: number; cy?: number; payload?: { dow?: string } }) => {
-    if (p.cx == null || p.cy == null) return <g />;
-    return (
-      <circle cx={p.cx} cy={p.cy} r={4} fill={weekdayGroup(p.payload?.dow ?? "").color} stroke="var(--card)" strokeWidth={1.5} />
-    );
-  };
   // опорная линия среднего рисуется только когда дней > 1 (для одного дня бессмысленна)
   const avgLine = sumData.length > 1 && (
     <ReferenceLine
@@ -155,17 +119,8 @@ export function RevenueChart({ data, prevData, range }: Props) {
     />
   );
 
-  const channelSeries = (kind: "area" | "line" | "bar") =>
-    visible.map((c) =>
-      kind === "bar" ? (
-        <Bar key={c} yAxisId="money" dataKey={c} stackId="ch" fill={chColor(c)} />
-      ) : kind === "area" ? (
-        <Area key={c} yAxisId="money" type="monotone" dataKey={c} stackId="ch" stroke={chColor(c)} fill={chColor(c)} fillOpacity={0.35} />
-      ) : (
-        <Line key={c} yAxisId="money" type={type === "step" ? "stepAfter" : "monotone"} dataKey={c} stroke={chColor(c)} strokeWidth={2} dot={false} />
-      ),
-    );
-
+  // Дни и часы — дискретные корзины, поэтому форма всегда столбчатая (линия/область
+  // рисовали бы ложную непрерывность и не несли раскраску по группам дней недели).
   const renderChart = () => {
     if (view === "weather") {
       return (
@@ -178,45 +133,18 @@ export function RevenueChart({ data, prevData, range }: Props) {
         </ComposedChart>
       );
     }
-    if (view === "channel") {
-      if (type === "bar") return <BarChart data={chartData}>{grid}{xaxis}{yMoney}{tooltip}{legend}{channelSeries("bar")}</BarChart>;
-      if (type === "area") return <AreaChart data={chartData}>{grid}{xaxis}{yMoney}{tooltip}{legend}{channelSeries("area")}</AreaChart>;
-      return <LineChart data={chartData}>{grid}{xaxis}{yMoney}{tooltip}{legend}{channelSeries("line")}</LineChart>;
-    }
     // Режим «Сумма»: один ряд «Выручка», окрашенный по группе дня недели
     // (Пн / Вт-Ср / Чт / выходные Пт-Вс). Ср. чек и Чеки — не отдельные столбцы,
     // а строки во всплывающей подсказке (sumTooltip), чтобы не дробить график.
-    if (type === "bar") {
-      return (
-        <BarChart data={chartData}>
-          {grid}{xaxis}{yMoney}{sumTooltip}{avgLine}
-          <Bar yAxisId="money" dataKey="Выручка" radius={[4, 4, 0, 0]}>
-            {sumData.map((r) => (
-              <Cell key={r.label} fill={weekdayGroup(r.dow).color} />
-            ))}
-          </Bar>
-        </BarChart>
-      );
-    }
-    if (type === "area") {
-      return (
-        <AreaChart data={chartData}>
-          <defs>
-            <linearGradient id="revGrad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%" stopColor={COLORS.primary} stopOpacity={0.4} />
-              <stop offset="95%" stopColor={COLORS.primary} stopOpacity={0} />
-            </linearGradient>
-          </defs>
-          {grid}{xaxis}{yMoney}{sumTooltip}{avgLine}
-          <Area yAxisId="money" type="monotone" dataKey="Выручка" stroke={COLORS.primary} strokeWidth={2} fill="url(#revGrad)" dot={groupDot} activeDot={{ r: 5 }} />
-        </AreaChart>
-      );
-    }
     return (
-      <LineChart data={chartData}>
+      <BarChart data={chartData}>
         {grid}{xaxis}{yMoney}{sumTooltip}{avgLine}
-        <Line yAxisId="money" type={type === "step" ? "stepAfter" : "monotone"} dataKey="Выручка" stroke={COLORS.primary} strokeWidth={2} dot={groupDot} activeDot={{ r: 5 }} />
-      </LineChart>
+        <Bar yAxisId="money" dataKey="Выручка" radius={[4, 4, 0, 0]}>
+          {sumData.map((r) => (
+            <Cell key={r.label} fill={weekdayGroup(r.dow).color} />
+          ))}
+        </Bar>
+      </BarChart>
     );
   };
 
@@ -230,38 +158,18 @@ export function RevenueChart({ data, prevData, range }: Props) {
               <button key={v.key} onClick={() => setView(v.key)} style={miniBtn(view === v.key)}>{v.label}</button>
             ))}
           </div>
-          {view !== "weather" && (
-            <div style={{ display: "flex", background: "var(--bg)", borderRadius: 8, padding: 3, gap: 2 }}>
-              {CHART_TYPES.map((t) => (
-                <button key={t.key} onClick={() => setType(t.key)} style={miniBtn(type === t.key)}>{t.label}</button>
-              ))}
-            </div>
-          )}
         </div>
       </div>
 
-      {(multiDay || (view === "channel" && channels.length > 0)) && (
+      {multiDay && (
         <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 16 }}>
-          {multiDay && (
-            <>
-              <span style={{ color: "var(--muted)", fontSize: 12, marginRight: 2 }}>Дни:</span>
-              {WEEKDAYS_ALL.map((d) => (
-                <button key={d} onClick={() => toggleDay(d)} style={chip(days.has(d))}>{d}</button>
-              ))}
-              <button onClick={() => setDays(new Set())} style={chip(days.size === 0)}>Все</button>
-              <button onClick={() => setDays(new Set(WEEKDAYS_WORK))} style={chip(false)}>Будни</button>
-              <button onClick={() => setDays(new Set(WEEKDAYS_WEEKEND))} style={chip(false)}>Выходные</button>
-            </>
-          )}
-          {view === "channel" && channels.length > 0 && (
-            <>
-              {multiDay && <span style={{ width: 1, height: 18, background: "var(--grid)", margin: "0 4px" }} />}
-              <span style={{ color: "var(--muted)", fontSize: 12 }}>Статус:</span>
-              {channels.map((c) => (
-                <button key={c} onClick={() => toggleChannel(c)} style={chanChip(!hidden.has(c), chColor(c))}>{c}</button>
-              ))}
-            </>
-          )}
+          <span style={{ color: "var(--muted)", fontSize: 12, marginRight: 2 }}>Дни:</span>
+          {WEEKDAYS_ALL.map((d) => (
+            <button key={d} onClick={() => toggleDay(d)} style={chip(days.has(d))}>{d}</button>
+          ))}
+          <button onClick={() => setDays(new Set())} style={chip(days.size === 0)}>Все</button>
+          <button onClick={() => setDays(new Set(WEEKDAYS_WORK))} style={chip(false)}>Будни</button>
+          <button onClick={() => setDays(new Set(WEEKDAYS_WEEKEND))} style={chip(false)}>Выходные</button>
         </div>
       )}
 
@@ -280,10 +188,7 @@ export function RevenueChart({ data, prevData, range }: Props) {
         {renderChart()}
       </ResponsiveContainer>
 
-      {view === "channel" && chQ.isLoading && (
-        <div style={{ color: "var(--muted)", textAlign: "center", padding: 24 }}>Загрузка разреза по статусам…</div>
-      )}
-      {chartData.length === 0 && !chQ.isLoading && (
+      {chartData.length === 0 && (
         <div style={{ color: "var(--muted)", textAlign: "center", padding: 24 }}>Нет данных для выбранного фильтра</div>
       )}
     </div>
@@ -333,11 +238,4 @@ const chip = (active: boolean): React.CSSProperties => ({
   border: `1px solid ${active ? COLORS.primary : "var(--grid)"}`,
   background: active ? COLORS.primary : "transparent",
   color: active ? "var(--text)" : "var(--muted)",
-});
-const chanChip = (active: boolean, color: string): React.CSSProperties => ({
-  padding: "4px 10px", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 600,
-  border: `1px solid ${color}`,
-  background: active ? color : "transparent",
-  color: active ? "var(--text)" : "var(--muted)",
-  opacity: active ? 1 : 0.6,
 });

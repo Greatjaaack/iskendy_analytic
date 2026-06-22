@@ -85,6 +85,51 @@ async def _modifier_filters(date_from_iso: str, date_to_iso: str) -> tuple[set[s
     return names, cats
 
 
+async def _delivery_breakdown(
+    date_from_iso: str, date_to_iso: str
+) -> tuple[set[str], dict[str, list], dict[str, list]]:
+    """Разбивка доставки за период через OLAP SALES (один запрос).
+
+    Возвращает: (заказы-доставки, {имя блюда: [qty, rev]}, {категория: [qty, rev]}).
+    Заказ — доставка, если его «Статус» = Доставка ИЛИ есть позиция меню-категории
+    «Доставка» (та же логика, что в `kpi-by-channel`): вся его выручка/позиции — доставка.
+    Используется галкой «без доставки» для вычитания из dishes/разрезов.
+    """
+    rows = await iiko_web.olap_sales(
+        group_fields=[OLAP_FIELD_ORDER_NUM, OLAP_FIELD_DISH_CATEGORY, OLAP_FIELD_DISH_NAME],
+        data_fields=[OLAP_FIELD_QTY, OLAP_FIELD_SUM],
+        date_from=date_from_iso,
+        date_to=date_to_iso,
+    )
+
+    parsed: list[tuple[str, str, str, float, float]] = []
+    delivery_orders: set[str] = set()
+    for r in rows:
+        parts = str(r.get("field0", {}).get("value", "")).split(", ")
+        if len(parts) < 3:
+            continue
+        order, category, name = parts[0], parts[1], ", ".join(parts[2:])
+        qty = float(r.get("field1", {}).get("value", 0) or 0)
+        rev = float(r.get("field2", {}).get("value", 0) or 0)
+        parsed.append((order, category, name, qty, rev))
+        if category == ORDER_STATUS_CATEGORY:
+            if ORDER_STATUS_CHANNELS.get(name.strip().lower()) == CHANNEL_DELIVERY:
+                delivery_orders.add(order)
+        elif category == DELIVERY_CATEGORY:
+            delivery_orders.add(order)
+
+    by_name: dict[str, list] = defaultdict(lambda: [0.0, 0.0])
+    by_cat: dict[str, list] = defaultdict(lambda: [0.0, 0.0])
+    for order, category, name, qty, rev in parsed:
+        if category == ORDER_STATUS_CATEGORY or order not in delivery_orders or not name:
+            continue
+        by_name[name][0] += qty
+        by_name[name][1] += rev
+        by_cat[category][0] += qty
+        by_cat[category][1] += rev
+    return delivery_orders, by_name, by_cat
+
+
 @router.get("")
 async def get_dishes(
     period: str = Query("week", enum=["day", "week", "month"]),
@@ -92,6 +137,7 @@ async def get_dishes(
     date_from: str | None = None,
     date_to: str | None = None,
     limit: int = 200,
+    include_delivery: bool = True,
 ):
     """Продажи блюд за период (живой запрос в iiko).
     group_by=dish — по блюдам, group_by=category — по категориям.
@@ -109,11 +155,25 @@ async def get_dishes(
     # has_cost: нашлась ли порционная с/с (ТТК-привязка). Без неё с/с = 0 — НЕ выдаём
     # cost_pct/margin_pct (иначе блюдо выглядело бы как 100% маржа и искажало бы рейтинги).
     unit_cost = _dish_unit_cost()
+    # галка «без доставки»: вычитаем qty/выручку доставочных заказов по каждому блюду
+    del_by_name: dict[str, list] = {}
+    if not include_delivery:
+        _, del_by_name, _ = await _delivery_breakdown(
+            date_from_d.isoformat(), date_to_d.isoformat()
+        )
     for r in rows:
+        if del_by_name:
+            d = del_by_name.get(r["dish_name"])
+            if d:
+                r["quantity"] = max(0.0, r["quantity"] - d[0])
+                r["revenue"] = max(0.0, r["revenue"] - d[1])
         r["channel"] = CHANNEL_DELIVERY if r.get("category") == DELIVERY_CATEGORY else ""
         c = unit_cost.get(normalize_name(r["dish_name"]))
         r["has_cost"] = c is not None
         r["cost_sum"] = c * r["quantity"] if c is not None else 0.0
+    # доставочные позиции, обнулившиеся после вычитания, в список не показываем
+    if not include_delivery:
+        rows = [r for r in rows if r["quantity"] > 0 or r["revenue"] > 0]
 
     if group_by == "category":
         agg: dict[str, dict] = {}
@@ -266,6 +326,7 @@ async def get_hourly_breakdown(
     period: str = Query("week", enum=["day", "week", "month"]),
     date_from: str | None = None,
     date_to: str | None = None,
+    include_delivery: bool = True,
 ):
     """Разбивка продаж по часам в разрезе блюд/категорий (#3, через OLAP iiko).
 
@@ -276,22 +337,39 @@ async def get_hourly_breakdown(
     dim = OLAP_FIELD_DISH_CATEGORY if group == "category" else OLAP_FIELD_DISH_NAME
 
     mod_names, mod_cats = await _modifier_filters(date_from_d.isoformat(), date_to_d.isoformat())
+    # галка «без доставки»: добавляем OrderNum в группировку и отсекаем заказы доставки
+    delivery_orders: set[str] = set()
+    if not include_delivery:
+        delivery_orders, _, _ = await _delivery_breakdown(
+            date_from_d.isoformat(), date_to_d.isoformat()
+        )
+        group_fields = [OLAP_FIELD_HOUR, OLAP_FIELD_ORDER_NUM, dim]
+    else:
+        group_fields = [OLAP_FIELD_HOUR, dim]
     rows = await iiko_web.olap_sales(
-        group_fields=[OLAP_FIELD_HOUR, dim],
+        group_fields=group_fields,
         data_fields=[OLAP_FIELD_SUM, OLAP_FIELD_QTY],
         date_from=date_from_d.isoformat(),
         date_to=date_to_d.isoformat(),
     )
 
-    # строка: field0="<час>, <имя>", field1=выручка, field2=кол-во
+    # строка: field0="<час>[, <OrderNum>], <имя>", field1=выручка, field2=кол-во
     hours: dict[int, dict] = {}
     for r in rows:
         key = str(r.get("field0", {}).get("value", ""))
-        parts = key.split(", ", 1)
-        if not parts[0].isdigit():
-            continue
-        hour = int(parts[0])
-        name = parts[1] if len(parts) > 1 else "—"
+        if include_delivery:
+            parts = key.split(", ", 1)
+            if not parts[0].isdigit():
+                continue
+            hour = int(parts[0])
+            name = parts[1] if len(parts) > 1 else "—"
+        else:
+            parts = key.split(", ", 2)
+            if len(parts) < 3 or not parts[0].isdigit():
+                continue
+            hour, order, name = int(parts[0]), parts[1], parts[2]
+            if order in delivery_orders:
+                continue
         # модификаторы — не товар: в режиме категорий name = категория, в режиме блюд = имя
         is_mod = name in mod_cats if group == "category" else normalize_name(name) in mod_names
         if name == ORDER_STATUS_CATEGORY or is_mod:
@@ -465,12 +543,17 @@ async def get_check_composition(
     period: str = Query("week", enum=["day", "week", "month"]),
     date_from: str | None = None,
     date_to: str | None = None,
+    include_delivery: bool = True,
 ):
     """Состав чека (#5): средняя доля категорий в чеке — по кол-ву и по выручке, за период
     и по часам. Доля считается на каждый чек (категория / итог чека), затем усредняется.
     """
     df, dt = period_range(period, date_from, date_to)
     _, mod_cats = await _modifier_filters(df.isoformat(), dt.isoformat())
+    # галка «без доставки»: исключаем заказы доставки целиком
+    delivery_orders: set[str] = set()
+    if not include_delivery:
+        delivery_orders, _, _ = await _delivery_breakdown(df.isoformat(), dt.isoformat())
     rows = await iiko_web.olap_sales(
         group_fields=[OLAP_FIELD_HOUR, OLAP_FIELD_ORDER_NUM, OLAP_FIELD_DISH_CATEGORY],
         data_fields=[OLAP_FIELD_QTY, OLAP_FIELD_SUM],
@@ -485,6 +568,7 @@ async def get_check_composition(
         if (
             not ordernum
             or not category
+            or ordernum in delivery_orders
             or category in NON_PRODUCT_CATEGORIES
             or category in mod_cats
         ):
@@ -543,6 +627,7 @@ async def get_check_fullness(
     period: str = Query("week", enum=["day", "week", "month"]),
     date_from: str | None = None,
     date_to: str | None = None,
+    include_delivery: bool = True,
 ):
     """Распределение чеков по числу позиций (1 / 2 / 3 / 4+), по часам (#6).
 
@@ -553,6 +638,10 @@ async def get_check_fullness(
     """
     df, dt = period_range(period, date_from, date_to)
     _, mod_cats = await _modifier_filters(df.isoformat(), dt.isoformat())
+    # галка «без доставки»: исключаем заказы доставки целиком
+    delivery_orders: set[str] = set()
+    if not include_delivery:
+        delivery_orders, _, _ = await _delivery_breakdown(df.isoformat(), dt.isoformat())
     rows = await iiko_web.olap_sales(
         group_fields=[
             OLAP_FIELD_HOUR,
@@ -570,7 +659,12 @@ async def get_check_fullness(
         if len(parts) < 4:
             continue
         hour, ordernum, category, name = parts[0], parts[1], parts[2], ", ".join(parts[3:])
-        if not name or category in NON_PRODUCT_CATEGORIES or category in mod_cats:
+        if (
+            not name
+            or ordernum in delivery_orders
+            or category in NON_PRODUCT_CATEGORIES
+            or category in mod_cats
+        ):
             continue
         positions[(hour, ordernum)] += float(r.get("field1", {}).get("value", 0) or 0)
 

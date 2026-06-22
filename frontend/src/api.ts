@@ -11,7 +11,6 @@ import type {
   DishMapping,
   DishResponse,
   HourlyBreakdown,
-  HourlyByChannel,
   HourlyResponse,
   IngredientBrief,
   IngredientCard,
@@ -19,7 +18,6 @@ import type {
   RangeSel,
   RevenueByChannel,
   RevenueResponse,
-  ServiceBreakdown,
   SupplierBrief,
   SupplierCard,
   SupplierContact,
@@ -47,11 +45,22 @@ export const rangeKey = (r: RangeSel): string =>
 
 // ---------- Выручка / часы ----------
 
-export const fetchRevenue = (range: RangeSel): Promise<RevenueResponse> =>
-  api.get<RevenueResponse>(`/api/revenue?${rangeQS(range)}`).then((r) => r.data);
+// флаг «без доставки» (include_delivery=false) — бэкенд вычитает выручку/чеки доставки
+const deliveryQS = (includeDelivery: boolean): string =>
+  includeDelivery ? "" : "&include_delivery=false";
 
-export const fetchHourly = (range: RangeSel): Promise<HourlyResponse> =>
-  api.get<HourlyResponse>(`/api/revenue/hourly?${rangeQS(range)}`).then((r) => r.data);
+export const fetchRevenue = (
+  range: RangeSel,
+  includeDelivery = true,
+): Promise<RevenueResponse> =>
+  api
+    .get<RevenueResponse>(`/api/revenue?${rangeQS(range)}${deliveryQS(includeDelivery)}`)
+    .then((r) => r.data);
+
+export const fetchHourly = (range: RangeSel, includeDelivery = true): Promise<HourlyResponse> =>
+  api
+    .get<HourlyResponse>(`/api/revenue/hourly?${rangeQS(range)}${deliveryQS(includeDelivery)}`)
+    .then((r) => r.data);
 
 export const fetchRevenueByChannel = (range: RangeSel): Promise<RevenueByChannel> =>
   api.get<RevenueByChannel>(`/api/revenue/by-channel?${rangeQS(range)}`).then((r) => r.data);
@@ -59,39 +68,61 @@ export const fetchRevenueByChannel = (range: RangeSel): Promise<RevenueByChannel
 export const fetchKpiByChannel = (range: RangeSel): Promise<KpiByChannel> =>
   api.get<KpiByChannel>(`/api/revenue/kpi-by-channel?${rangeQS(range)}`).then((r) => r.data);
 
-export const fetchRevenueByWeekday = (range: RangeSel): Promise<WeekdaySummary> =>
-  api.get<WeekdaySummary>(`/api/revenue/by-weekday?${rangeQS(range)}`).then((r) => r.data);
-
-export const fetchHourlyByChannel = (range: RangeSel): Promise<HourlyByChannel> =>
-  api.get<HourlyByChannel>(`/api/revenue/hourly-by-channel?${rangeQS(range)}`).then((r) => r.data);
+export const fetchRevenueByWeekday = (
+  range: RangeSel,
+  includeDelivery = true,
+): Promise<WeekdaySummary> =>
+  api
+    .get<WeekdaySummary>(`/api/revenue/by-weekday?${rangeQS(range)}${deliveryQS(includeDelivery)}`)
+    .then((r) => r.data);
 
 export const triggerSync = () => api.post("/api/sync");
 
 // ---------- Продажи блюд ----------
 
-export const fetchDishes = (range: RangeSel, groupBy: DishGroupBy = "dish"): Promise<DishResponse> =>
-  api.get<DishResponse>(`/api/dishes?${rangeQS(range)}&group_by=${groupBy}`).then((r) => r.data);
+export const fetchDishes = (
+  range: RangeSel,
+  groupBy: DishGroupBy = "dish",
+  includeDelivery = true,
+): Promise<DishResponse> =>
+  api
+    .get<DishResponse>(
+      `/api/dishes?${rangeQS(range)}&group_by=${groupBy}${deliveryQS(includeDelivery)}`,
+    )
+    .then((r) => r.data);
+
+export const fetchHourlyBreakdown = (
+  range: RangeSel,
+  group: DishGroupBy,
+  includeDelivery = true,
+): Promise<HourlyBreakdown> =>
+  api
+    .get<HourlyBreakdown>(
+      `/api/dishes/hourly-breakdown?group=${group}&${rangeQS(range)}${deliveryQS(includeDelivery)}`,
+    )
+    .then((r) => r.data);
+
+export const fetchCheckComposition = (
+  range: RangeSel,
+  includeDelivery = true,
+): Promise<CheckComposition> =>
+  api
+    .get<CheckComposition>(
+      `/api/dishes/check-composition?${rangeQS(range)}${deliveryQS(includeDelivery)}`,
+    )
+    .then((r) => r.data);
 
 export const fetchCheckDistribution = (range: RangeSel): Promise<CheckDistribution> =>
   api.get<CheckDistribution>(`/api/dishes/check-distribution?${rangeQS(range)}`).then((r) => r.data);
 
-export const fetchHourlyBreakdown = (range: RangeSel, group: DishGroupBy): Promise<HourlyBreakdown> =>
-  api
-    .get<HourlyBreakdown>(`/api/dishes/hourly-breakdown?group=${group}&${rangeQS(range)}`)
-    .then((r) => r.data);
-
-export const fetchCheckComposition = (range: RangeSel): Promise<CheckComposition> =>
-  api.get<CheckComposition>(`/api/dishes/check-composition?${rangeQS(range)}`).then((r) => r.data);
-
-export const fetchCheckFullness = (range: RangeSel): Promise<CheckFullness> =>
-  api.get<CheckFullness>(`/api/dishes/check-fullness?${rangeQS(range)}`).then((r) => r.data);
-
-export const fetchServiceBreakdown = (
+export const fetchCheckFullness = (
   range: RangeSel,
-  group: DishGroupBy,
-): Promise<ServiceBreakdown> =>
+  includeDelivery = true,
+): Promise<CheckFullness> =>
   api
-    .get<ServiceBreakdown>(`/api/dishes/service-breakdown?group=${group}&${rangeQS(range)}`)
+    .get<CheckFullness>(
+      `/api/dishes/check-fullness?${rangeQS(range)}${deliveryQS(includeDelivery)}`,
+    )
     .then((r) => r.data);
 
 // ---------- Поставщики ----------

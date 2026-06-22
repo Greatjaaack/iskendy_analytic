@@ -6,11 +6,12 @@ import { fmtInt } from "../format";
 
 interface Props {
   range: RangeSel;
+  withDelivery?: boolean;
 }
 
 type SortKey = keyof Pick<DishRow, "name" | "group_name" | "quantity" | "qty_share" | "revenue" | "revenue_share" | "cost_sum" | "cost_pct" | "margin_pct">;
 
-export function DishTable({ range }: Props) {
+export function DishTable({ range, withDelivery = true }: Props) {
   const [groupBy, setGroupBy] = useState<DishGroupBy>("dish");
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState(false);
@@ -19,8 +20,8 @@ export function DishTable({ range }: Props) {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
   const q = useQuery({
-    queryKey: ["dishes", rangeKey(range), groupBy],
-    queryFn: () => fetchDishes(range, groupBy),
+    queryKey: ["dishes", rangeKey(range), groupBy, withDelivery],
+    queryFn: () => fetchDishes(range, groupBy, withDelivery),
     refetchInterval: REFETCH_INTERVAL_MS,
   });
 
