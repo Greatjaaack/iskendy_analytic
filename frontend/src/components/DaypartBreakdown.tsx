@@ -76,6 +76,37 @@ export function DaypartBreakdown({ range, withDelivery = true }: Props) {
         </BarChart>
       </ResponsiveContainer>
 
+      {rows.length > 0 && (
+        <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 16, fontSize: 13 }}>
+          <thead>
+            <tr style={{ color: "var(--muted)", textAlign: "right" }}>
+              <th style={{ textAlign: "left", fontWeight: 500, padding: "6px 8px" }}>Дейпарт</th>
+              <th style={{ fontWeight: 500, padding: "6px 8px" }}>Выручка</th>
+              <th style={{ fontWeight: 500, padding: "6px 8px" }}>Доля</th>
+              <th style={{ fontWeight: 500, padding: "6px 8px" }}>Чеки</th>
+              <th style={{ fontWeight: 500, padding: "6px 8px" }}>Ср. чек</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((d) => (
+              <tr key={d.key} style={{ borderTop: "1px solid var(--grid)", color: "var(--text)", textAlign: "right" }}>
+                <td style={{ textAlign: "left", padding: "6px 8px" }}>
+                  <span style={{
+                    display: "inline-block", width: 8, height: 8, borderRadius: 2, marginRight: 8,
+                    background: DAYPART_COLORS[d.key] ?? COLORS.primary, verticalAlign: "middle",
+                  }} />
+                  {d.label} <span style={{ color: "var(--muted)" }}>{d.range}</span>
+                </td>
+                <td style={{ padding: "6px 8px" }}>{fmtInt(d.revenue)} ₽</td>
+                <td style={{ padding: "6px 8px", color: "var(--muted)" }}>{d.revenue_share}%</td>
+                <td style={{ padding: "6px 8px" }}>{fmtInt(d.checks)}</td>
+                <td style={{ padding: "6px 8px" }}>{fmtInt(d.avg_check)} ₽</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
       {!q.isLoading && rows.length === 0 && (
         <div style={{ color: "var(--muted)", textAlign: "center", padding: 24 }}>Нет данных</div>
       )}
