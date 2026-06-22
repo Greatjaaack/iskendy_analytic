@@ -101,20 +101,16 @@ export interface DishResponse {
   data: DishRow[];
 }
 
-// KPI в разрезе доставка / не доставка (для верхних карточек — комиссия доставки отдельно).
+// KPI в разрезе доставка / не доставка (для верхних карточек — брутто-суммы по каналам).
 export interface ChannelKpi {
   revenue: number;
   checks: number;
   avg_check: number;
-  net_revenue?: number; // только у доставки: за вычетом комиссии+рекламы
-  net_avg_check?: number;
 }
 export interface KpiByChannel {
   period: Period | "custom";
   date_from: string;
   date_to: string;
-  delivery_commission_pct: number;
-  delivery_ads_pct: number;
   delivery: ChannelKpi;
   other: ChannelKpi;
 }

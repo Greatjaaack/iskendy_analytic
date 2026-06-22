@@ -179,7 +179,7 @@ GET  /api/revenue/by-weekday              свод по дням недели
 GET  /api/revenue/hourly                  выручка/чеки по часам
 GET  /api/revenue/by-channel              выручка по дням × канал (OLAP)
 GET  /api/revenue/hourly-by-channel       выручка по часам × канал (OLAP)
-GET  /api/revenue/kpi-by-channel          KPI доставка/не доставка (+ нетто доставки)
+GET  /api/revenue/kpi-by-channel          KPI доставка/не доставка (брутто)
 GET  /api/dishes                          продажи блюд (с/с, маржа; group_by=dish|category)
 GET  /api/dishes/check-distribution       чеки по типу обслуживания
 GET  /api/dishes/hourly-breakdown         продажи по часам (блюда/категории)

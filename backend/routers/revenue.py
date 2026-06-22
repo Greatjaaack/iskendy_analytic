@@ -10,9 +10,7 @@ from constants import (
     CHANNEL_DINEIN,
     CHANNEL_TAKEAWAY,
     DAY_NAMES_RU,
-    DELIVERY_ADS_PCT,
     DELIVERY_CATEGORY,
-    DELIVERY_COMMISSION_PCT,
     METRIC_AVG_SPEND,
     METRIC_COST,
     METRIC_DISCOUNT,
@@ -401,9 +399,8 @@ async def get_kpi_by_channel(
 ):
     """KPI (выручка/чеки/средний чек) в разрезе ДОСТАВКА vs НЕ ДОСТАВКА (зал + с собой).
 
-    Нужно, чтобы доставку считать отдельно (в ней комиссия агрегатора). Канал заказа:
-    доставка, если у заказа «Статус» = Доставка ИЛИ есть позиция из меню-категории
-    «Доставка»; иначе — не доставка. Через OLAP SALES по `OrderNum`.
+    Канал заказа: доставка, если у заказа «Статус» = Доставка ИЛИ есть позиция из
+    меню-категории «Доставка»; иначе — не доставка. Через OLAP SALES по `OrderNum`.
     """
     df, dt = period_range(period, date_from, date_to)
     rows = await iiko_web.olap_sales(
@@ -439,17 +436,9 @@ async def get_kpi_by_channel(
         g["avg_check"] = round(g["revenue"] / g["checks"], 2) if g["checks"] else 0
         g["revenue"] = round(g["revenue"], 2)
 
-    # нетто-выручка доставки = за вычетом комиссии агрегатора и рекламы
-    keep = 1 - (DELIVERY_COMMISSION_PCT + DELIVERY_ADS_PCT) / 100
-    d = groups["delivery"]
-    d["net_revenue"] = round(d["revenue"] * keep, 2)
-    d["net_avg_check"] = round(d["avg_check"] * keep, 2)
-
     return {
         "period": "custom" if (date_from and date_to) else period,
         "date_from": df.isoformat(),
         "date_to": dt.isoformat(),
-        "delivery_commission_pct": DELIVERY_COMMISSION_PCT,
-        "delivery_ads_pct": DELIVERY_ADS_PCT,
         **groups,
     }
