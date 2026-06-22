@@ -1,11 +1,12 @@
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   BarChart, Bar, Cell, ComposedChart, Line,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ReferenceLine,
 } from "recharts";
-import { type PrevDay, type RevenueDay } from "../api";
+import { fetchRevenueByChannel, rangeKey, type PrevDay, type RangeSel, type RevenueDay } from "../api";
 import {
-  CHART_HEIGHT, COLORS,
+  CHART_HEIGHT, COLORS, REFETCH_INTERVAL_MS,
   WEEKDAY_GROUPS, WEEKDAYS_ALL, WEEKDAYS_WEEKEND, WEEKDAYS_WORK,
   weatherInfo, weekdayGroup,
 } from "../constants";
@@ -14,17 +15,23 @@ import { fmtInt } from "../format";
 interface Props {
   data: RevenueDay[];
   prevData: PrevDay[];
+  range: RangeSel;
 }
 
-type View = "sum" | "weather";
+type View = "sum" | "channel" | "weather";
 const VIEWS: { key: View; label: string }[] = [
   { key: "sum", label: "Сумма" },
+  { key: "channel", label: "По статусам" },
   { key: "weather", label: "Погода" },
 ];
 
-export function RevenueChart({ data, prevData }: Props) {
+const chColor = (ch: string) =>
+  ch === "доставка" ? COLORS.primary : ch === "с собой" ? COLORS.warn : COLORS.good;
+
+export function RevenueChart({ data, prevData, range }: Props) {
   const [days, setDays] = useState<Set<string>>(new Set());
   const [view, setView] = useState<View>("sum");
+  const [hidden, setHidden] = useState<Set<string>>(new Set());
 
   const toggleDay = (d: string) =>
     setDays((prev) => {
@@ -33,6 +40,20 @@ export function RevenueChart({ data, prevData }: Props) {
       else next.add(d);
       return next;
     });
+  const toggleChannel = (c: string) =>
+    setHidden((prev) => {
+      const next = new Set(prev);
+      if (next.has(c)) next.delete(c);
+      else next.add(c);
+      return next;
+    });
+
+  const chQ = useQuery({
+    queryKey: ["revenue-by-channel", rangeKey(range)],
+    queryFn: () => fetchRevenueByChannel(range),
+    refetchInterval: REFETCH_INTERVAL_MS,
+    enabled: view === "channel",
+  });
 
   // фильтр по дням недели имеет смысл только когда дней больше одного; для одного дня
   // (период «Сегодня» / диапазон из одной даты) он скрыт и не должен ничего отсекать,
@@ -65,6 +86,9 @@ export function RevenueChart({ data, prevData }: Props) {
     );
   };
 
+  const channels = chQ.data?.channels ?? [];
+  const visible = channels.filter((c) => !hidden.has(c));
+
   const sumData = data.filter((d) => dayOk(d.day_of_week)).map((d) => ({
     label: `${d.day_of_week} ${d.date.slice(5)}`,
     dow: d.day_of_week,
@@ -76,6 +100,11 @@ export function RevenueChart({ data, prevData }: Props) {
   const avgRev = sumData.length
     ? Math.round(sumData.reduce((s, r) => s + r.Выручка, 0) / sumData.length)
     : 0;
+  const chData = (chQ.data?.data ?? []).filter((d) => dayOk(d.day_of_week)).map((d) => {
+    const row: Record<string, number | string> = { label: `${d.day_of_week} ${d.date.slice(5)}` };
+    channels.forEach((c) => (row[c] = Number(d[c] ?? 0)));
+    return row;
+  });
   // «Погода»: выручка и температура текущего и прошлого периода, выровнены по позиции дня
   const weatherData = data
     .map((d, i) => ({ d, p: prevData[i] }))
@@ -88,8 +117,7 @@ export function RevenueChart({ data, prevData }: Props) {
       "t°": d.weather?.temp_max ?? NaN,
       "t° (пр.)": p?.temp_max ?? NaN,
     }));
-  const chartData: Record<string, number | string>[] =
-    view === "weather" ? weatherData : sumData;
+  const chartData = view === "channel" ? chData : view === "weather" ? weatherData : sumData;
 
   const grid = <CartesianGrid strokeDasharray="3 3" stroke="var(--grid)" />;
   const xaxis = <XAxis dataKey="label" tick={renderTick} interval={0} height={46} />;
@@ -133,6 +161,16 @@ export function RevenueChart({ data, prevData }: Props) {
         </ComposedChart>
       );
     }
+    if (view === "channel") {
+      return (
+        <BarChart data={chartData}>
+          {grid}{xaxis}{yMoney}{tooltip}{legend}
+          {visible.map((c) => (
+            <Bar key={c} yAxisId="money" dataKey={c} stackId="ch" fill={chColor(c)} />
+          ))}
+        </BarChart>
+      );
+    }
     // Режим «Сумма»: один ряд «Выручка», окрашенный по группе дня недели
     // (Пн / Вт-Ср / Чт / выходные Пт-Вс). Ср. чек и Чеки — не отдельные столбцы,
     // а строки во всплывающей подсказке (sumTooltip), чтобы не дробить график.
@@ -161,15 +199,28 @@ export function RevenueChart({ data, prevData }: Props) {
         </div>
       </div>
 
-      {multiDay && (
+      {(multiDay || (view === "channel" && channels.length > 0)) && (
         <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 16 }}>
-          <span style={{ color: "var(--muted)", fontSize: 12, marginRight: 2 }}>Дни:</span>
-          {WEEKDAYS_ALL.map((d) => (
-            <button key={d} onClick={() => toggleDay(d)} style={chip(days.has(d))}>{d}</button>
-          ))}
-          <button onClick={() => setDays(new Set())} style={chip(days.size === 0)}>Все</button>
-          <button onClick={() => setDays(new Set(WEEKDAYS_WORK))} style={chip(false)}>Будни</button>
-          <button onClick={() => setDays(new Set(WEEKDAYS_WEEKEND))} style={chip(false)}>Выходные</button>
+          {multiDay && (
+            <>
+              <span style={{ color: "var(--muted)", fontSize: 12, marginRight: 2 }}>Дни:</span>
+              {WEEKDAYS_ALL.map((d) => (
+                <button key={d} onClick={() => toggleDay(d)} style={chip(days.has(d))}>{d}</button>
+              ))}
+              <button onClick={() => setDays(new Set())} style={chip(days.size === 0)}>Все</button>
+              <button onClick={() => setDays(new Set(WEEKDAYS_WORK))} style={chip(false)}>Будни</button>
+              <button onClick={() => setDays(new Set(WEEKDAYS_WEEKEND))} style={chip(false)}>Выходные</button>
+            </>
+          )}
+          {view === "channel" && channels.length > 0 && (
+            <>
+              {multiDay && <span style={{ width: 1, height: 18, background: "var(--grid)", margin: "0 4px" }} />}
+              <span style={{ color: "var(--muted)", fontSize: 12 }}>Статус:</span>
+              {channels.map((c) => (
+                <button key={c} onClick={() => toggleChannel(c)} style={chanChip(!hidden.has(c), chColor(c))}>{c}</button>
+              ))}
+            </>
+          )}
         </div>
       )}
 
@@ -188,7 +239,10 @@ export function RevenueChart({ data, prevData }: Props) {
         {renderChart()}
       </ResponsiveContainer>
 
-      {chartData.length === 0 && (
+      {view === "channel" && chQ.isLoading && (
+        <div style={{ color: "var(--muted)", textAlign: "center", padding: 24 }}>Загрузка разреза по статусам…</div>
+      )}
+      {chartData.length === 0 && !chQ.isLoading && (
         <div style={{ color: "var(--muted)", textAlign: "center", padding: 24 }}>Нет данных для выбранного фильтра</div>
       )}
     </div>
@@ -238,4 +292,11 @@ const chip = (active: boolean): React.CSSProperties => ({
   border: `1px solid ${active ? COLORS.primary : "var(--grid)"}`,
   background: active ? COLORS.primary : "transparent",
   color: active ? "var(--text)" : "var(--muted)",
+});
+const chanChip = (active: boolean, color: string): React.CSSProperties => ({
+  padding: "4px 10px", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 600,
+  border: `1px solid ${color}`,
+  background: active ? color : "transparent",
+  color: active ? "var(--text)" : "var(--muted)",
+  opacity: active ? 1 : 0.6,
 });

@@ -6,6 +6,7 @@ import { KpiCards } from "../components/KpiCards";
 import { RevenueChart } from "../components/RevenueChart";
 import { WeekdaySummary } from "../components/WeekdaySummary";
 import { HourlyChart } from "../components/HourlyChart";
+import { DaypartBreakdown } from "../components/DaypartBreakdown";
 import { HourlyBreakdown } from "../components/HourlyBreakdown";
 import { CheckComposition } from "../components/CheckComposition";
 import { CheckFullness } from "../components/CheckFullness";
@@ -157,7 +158,7 @@ export function Dashboard() {
                 {isSingleDay ? (
                   <HourlyChart range={sel} withDelivery={withDelivery} />
                 ) : (
-                  <RevenueChart data={revenueQ.data.data} prevData={revenueQ.data.prev_data} />
+                  <RevenueChart data={revenueQ.data.data} prevData={revenueQ.data.prev_data} range={sel} />
                 )}
               </div>
               <div className="dash-full">
@@ -169,6 +170,7 @@ export function Dashboard() {
             <div className="dash-grid">
               {/* свод по дням недели бессмыслен для одного дня (1 строка, бар на 100%) */}
               {!isSingleDay && <WeekdaySummary range={sel} withDelivery={withDelivery} />}
+              <DaypartBreakdown range={sel} withDelivery={withDelivery} />
               <HourlyChart range={sel} withDelivery={withDelivery} />
               <CheckFullness range={sel} withDelivery={withDelivery} />
               <div className="dash-full">

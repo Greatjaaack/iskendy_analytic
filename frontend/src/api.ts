@@ -7,6 +7,7 @@ import type {
   CheckDistribution,
   CheckFullness,
   ContactInput,
+  DaypartSummary,
   DishGroupBy,
   DishMapping,
   DishResponse,
@@ -74,6 +75,14 @@ export const fetchRevenueByWeekday = (
 ): Promise<WeekdaySummary> =>
   api
     .get<WeekdaySummary>(`/api/revenue/by-weekday?${rangeQS(range)}${deliveryQS(includeDelivery)}`)
+    .then((r) => r.data);
+
+export const fetchByDaypart = (
+  range: RangeSel,
+  includeDelivery = true,
+): Promise<DaypartSummary> =>
+  api
+    .get<DaypartSummary>(`/api/revenue/by-daypart?${rangeQS(range)}${deliveryQS(includeDelivery)}`)
     .then((r) => r.data);
 
 export const triggerSync = () => api.post("/api/sync");

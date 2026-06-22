@@ -10,6 +10,7 @@ from constants import (
     CHANNEL_DINEIN,
     CHANNEL_TAKEAWAY,
     DAY_NAMES_RU,
+    DAYPARTS,
     DELIVERY_CATEGORY,
     METRIC_AVG_SPEND,
     METRIC_COST,
@@ -408,6 +409,59 @@ async def get_hourly(
             row["avg_check"] = round(row["revenue"] / row["checks"], 2) if row["checks"] else 0
 
     return {"period": period, "date_from": df.isoformat(), "date_to": dt.isoformat(), "data": data}
+
+
+@router.get("/by-daypart")
+async def get_by_daypart(
+    period: str = Query("week", enum=["day", "week", "month"]),
+    date_from: str | None = None,
+    date_to: str | None = None,
+    include_delivery: bool = True,
+):
+    """Выручка/чеки/средний чек по дейпартам (Завтрак/Ланч/Полдник/Ужин/Ночь).
+
+    Источник — почасовые данные (`DATA_SUMMARY_BY_HOURS`), свёрнутые в операционные
+    окна (границы — в `DAYPARTS`). При `include_delivery=false` вычитаем выручку/чеки
+    доставки по каждому часу (OLAP) до свёртки — как в `/hourly`.
+    """
+    df, dt = period_range(period, date_from, date_to)
+
+    raw = await iiko_web.revenue_by_hour(df.isoformat(), dt.isoformat())
+    rev = _parse_hour_matrix(raw.get(METRIC_REV_GROSS, {}))
+    trn = _parse_hour_matrix(raw.get(METRIC_TRN_ALL, {}))
+
+    if not include_delivery:
+        del_h = await _delivery_buckets(df, dt, OLAP_FIELD_HOUR)
+        for hk, dd in del_h.items():
+            if not hk.isdigit():
+                continue
+            h = int(hk)
+            rev[h] = max(0.0, rev.get(h, 0) - dd["revenue"])
+            trn[h] = max(0, trn.get(h, 0) - dd["checks"])
+
+    total_rev = sum(v for v in rev.values() if v)
+    data = []
+    for dp in DAYPARTS:
+        r = sum(rev.get(h, 0) or 0 for h in dp["hours"])
+        c = sum(trn.get(h, 0) or 0 for h in dp["hours"])
+        data.append(
+            {
+                "key": dp["key"],
+                "label": dp["label"],
+                "range": dp["range"],
+                "revenue": round(r, 2),
+                "checks": int(c),
+                "avg_check": round(r / c, 2) if c else 0,
+                "revenue_share": round(r / total_rev * 100, 1) if total_rev else 0,
+            }
+        )
+
+    return {
+        "period": "custom" if (date_from and date_to) else period,
+        "date_from": df.isoformat(),
+        "date_to": dt.isoformat(),
+        "data": data,
+    }
 
 
 @router.get("/by-channel")

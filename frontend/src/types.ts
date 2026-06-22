@@ -74,6 +74,24 @@ export interface WeekdaySummary {
   data: WeekdayRow[];
 }
 
+// Свод выручки по дейпартам (операционные окна дня: Завтрак/Ланч/Полдник/Ужин/Ночь).
+export interface DaypartRow {
+  key: string;
+  label: string; // Завтрак … Ночь
+  range: string; // «08–12»
+  revenue: number;
+  checks: number;
+  avg_check: number;
+  revenue_share: number; // % дейпарта в выручке периода
+}
+
+export interface DaypartSummary {
+  period: Period | "custom";
+  date_from: string;
+  date_to: string;
+  data: DaypartRow[];
+}
+
 // ---------- Продажи блюд ----------
 
 export type DishGroupBy = "dish" | "category";
