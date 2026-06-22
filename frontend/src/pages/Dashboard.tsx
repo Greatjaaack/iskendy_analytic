@@ -122,7 +122,7 @@ export function Dashboard() {
           {!isCustom && sel.period === "day" && revenueQ.data.data[0] && (
             <TodayBanner day={revenueQ.data.data[0]} />
           )}
-          <KpiCards summary={revenueQ.data.summary} range={sel} />
+          <KpiCards summary={revenueQ.data.summary} />
 
           {/* Разделы дашборда: Пульс / Операции / Меню (один экран не перегружен) */}
           <div style={{ display: "flex", gap: 4, background: COLORS.card, borderRadius: 8, padding: 4, width: "fit-content" }}>
@@ -132,26 +132,36 @@ export function Dashboard() {
           </div>
 
           {tab === "pulse" && (
-            <>
-              <RevenueChart data={revenueQ.data.data} prevData={revenueQ.data.prev_data} range={sel} />
-              <ChecksDistribution range={sel} />
-            </>
+            <div className="dash-grid">
+              <div className="dash-full">
+                <RevenueChart data={revenueQ.data.data} prevData={revenueQ.data.prev_data} range={sel} />
+              </div>
+              <div className="dash-full">
+                <ChecksDistribution range={sel} />
+              </div>
+            </div>
           )}
           {tab === "ops" && (
-            <>
+            <div className="dash-grid">
               <WeekdaySummary range={sel} />
               <HourlyChart range={sel} />
               <CheckFullness range={sel} />
-              <HourlyBreakdown range={sel} />
-            </>
+              <div className="dash-full">
+                <HourlyBreakdown range={sel} />
+              </div>
+            </div>
           )}
           {tab === "menu" && (
-            <>
+            <div className="dash-grid">
               <CheckComposition range={sel} />
               <ServiceBreakdown range={sel} />
-              <MenuEngineering range={sel} />
-              <DishTable range={sel} />
-            </>
+              <div className="dash-full">
+                <MenuEngineering range={sel} />
+              </div>
+              <div className="dash-full">
+                <DishTable range={sel} />
+              </div>
+            </div>
           )}
         </div>
       )}

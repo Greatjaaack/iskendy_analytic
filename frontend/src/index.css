@@ -32,6 +32,22 @@ html, body {
 
 #root {
   width: 100%;
-  max-width: 1400px;
-  margin: 0 auto;
+}
+
+/* ─── Адаптивная сетка дашборда ───────────────────────────────────────────────
+   Виджеты раскладываются в 2 колонки на широких экранах и в 1 — на узких.
+   .dash-full растягивает виджет на всю ширину ряда (графики-герои, таблицы). */
+.dash-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+.dash-full {
+  grid-column: 1 / -1;
+}
+@media (max-width: 1200px) {
+  .dash-grid {
+    grid-template-columns: 1fr;
+  }
 }

@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Outlet } from "react-router-dom";
 import { Sidebar } from "./components/Sidebar";
 import { Dashboard } from "./pages/Dashboard";
+import { Delivery } from "./pages/Delivery";
 import { Suppliers } from "./pages/Suppliers";
 import { SupplierCard } from "./pages/SupplierCard";
 import { NewSupplier } from "./pages/NewSupplier";
