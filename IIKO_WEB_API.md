@@ -41,7 +41,7 @@
 - `DATA_TOTAL` — одно число (итог за период)
 - `DATA_TOTAL_AVERAGE` — среднее
 - `DATA_SUMMARY_BY_DATE` — разбивка по дням ← **выручка по дням**
-- `DATA_DETAILS_BY_METRIC` — разбивка по блюдам (ключ = UUID блюда)
+- `DATA_DETAILS` — разбивка по блюдам (ключ = UUID блюда) + блок `decoration.product` ← **блюда** (значение в коде — `constants.DATA_DETAILS`)
 - `DATA_TOTAL_BY_HOURS` / `DATA_SUMMARY_BY_HOURS` — по часам
 - `DATA_SUMMARY_BY_PERIODS`, `DATA_SUMMARY_BY_STORE`, `DATA_DETAILS_BY_DATE` и др.
 
