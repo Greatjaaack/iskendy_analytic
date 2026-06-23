@@ -21,3 +21,11 @@ def save_bytes(data: bytes, original_name: str) -> tuple[str, str]:
     with open(path, "wb") as out_file:
         out_file.write(data)
     return path, original_name
+
+
+def delete_file(path: str) -> None:
+    """Удалить файл с диска, молча игнорируя отсутствие (идемпотентно)."""
+    try:
+        os.remove(path)
+    except OSError:
+        pass

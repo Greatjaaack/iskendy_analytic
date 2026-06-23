@@ -153,8 +153,8 @@ def get_ttk(ttk_id: int):
                     "gross": line.gross,
                     "net": line.net,
                     "unit": line.unit,
-                    "waste_pct": round(line.waste_pct, 2) if line.waste_pct is not None else None,
-                    "cost_rub": round(line.cost_rub, 2) if line.cost_rub is not None else None,
+                    "waste_pct": (round(line.waste_pct, 2) if line.waste_pct is not None else None),
+                    "cost_rub": (round(line.cost_rub, 2) if line.cost_rub is not None else None),
                 }
             )
         return {

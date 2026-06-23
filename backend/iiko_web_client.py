@@ -13,6 +13,7 @@ import logging
 
 import httpx
 
+from cache import cache_get, cache_set
 from config import settings
 from constants import (
     DATA_DETAILS,
@@ -156,6 +157,14 @@ class IikoWebClient:
         Raises:
             RuntimeError: если iiko вернул `error` в теле ответа.
         """
+        cache_key = (
+            f"get-data:{data_type}:{date_from}:{date_to}:{int(with_decoration)}:"
+            + ",".join(metric_codes)
+        )
+        cached = cache_get(cache_key)
+        if cached is not None:
+            return cached
+
         resp = await self._post(
             "/api/kpi/dashboard/get-data",
             {
@@ -168,9 +177,13 @@ class IikoWebClient:
         )
         if resp.get("error"):
             raise RuntimeError(f"iikoweb get-data error: {resp.get('errorMessage')}")
-        if with_decoration:
-            return resp.get("data", {}), resp.get("decoration", {})
-        return resp.get("data", {})
+        result = (
+            (resp.get("data", {}), resp.get("decoration", {}))
+            if with_decoration
+            else resp.get("data", {})
+        )
+        cache_set(cache_key, result)
+        return result
 
     async def revenue_by_day(self, date_from: str, date_to: str) -> dict:
         """Выручка/чеки/средний чек/скидки/возвраты/себестоимость по дням."""
@@ -252,6 +265,13 @@ class IikoWebClient:
         `{"field0": {"value": "<группа>"}, "field1": {"value": <число>}, ...}`,
         где field0 — склейка group_fields через ", ", далее идут data_fields по порядку.
         """
+        cache_key = (
+            f"olap:{date_from}:{date_to}:" + ",".join(group_fields) + "|" + ",".join(data_fields)
+        )
+        cached = cache_get(cache_key)
+        if cached is not None:
+            return cached
+
         # ВАЖНО: фильтр date_range по OpenDate.Typed трактует dateTo ВКЛЮЧИТЕЛЬНО как
         # целый день (живой API игнорирует includeRight=False). Поэтому dateTo передаём
         # как есть (= date_to), без +1: иначе в выборку попадал бы лишний день после
@@ -288,7 +308,9 @@ class IikoWebClient:
             raise RuntimeError(f"iikoweb olap: статус {status}")
 
         resp = await self._post(f"/api/olap/fetch/{h}/{OLAP_VIEW_SIMPLE}", req)
-        return resp.get("result", {}).get("rows", [])
+        rows = resp.get("result", {}).get("rows", [])
+        cache_set(cache_key, rows)
+        return rows
 
     # Каталог всех метрик (408 шт) — справочник кодов/названий
     async def metrics_catalog(self) -> list[dict]:

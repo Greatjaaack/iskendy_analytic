@@ -20,12 +20,13 @@ MOSCOW_LAT = 55.7558
 MOSCOW_LON = 37.6173
 ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
 
-# Кэш: ISO-дата → {"temp_max", "temp_min", "weather_code"}
+# Кэш: ISO-дата → {"temp_max", "weather_code"}.
+# Храним только дневную температуру (temp_max) — ночная (temp_min) не нужна.
 _cache: dict[str, dict] = {}
 
 
 async def get_weather(date_from: str, date_to: str) -> dict[str, dict]:
-    """Погода по дням за диапазон. Возвращает {ISO-дата: {temp_max, temp_min, weather_code}}.
+    """Погода по дням за диапазон. Возвращает {ISO-дата: {temp_max, weather_code}}.
 
     Уже закэшированные даты не запрашиваются повторно. При ошибке сети возвращает
     то, что есть в кэше (пустой dict в худшем случае) — вызов не падает.
@@ -60,7 +61,7 @@ async def _fetch_range(date_from: str, date_to: str) -> None:
         "longitude": MOSCOW_LON,
         "start_date": date_from,
         "end_date": date_to,
-        "daily": "temperature_2m_max,temperature_2m_min,weather_code",
+        "daily": "temperature_2m_max,weather_code",
         "timezone": "Europe/Moscow",
     }
     async with httpx.AsyncClient(timeout=15) as c:
@@ -70,11 +71,9 @@ async def _fetch_range(date_from: str, date_to: str) -> None:
 
     times = daily.get("time", [])
     tmax = daily.get("temperature_2m_max", [])
-    tmin = daily.get("temperature_2m_min", [])
     codes = daily.get("weather_code", [])
     for i, day in enumerate(times):
         _cache[day] = {
             "temp_max": tmax[i] if i < len(tmax) else None,
-            "temp_min": tmin[i] if i < len(tmin) else None,
             "weather_code": codes[i] if i < len(codes) else None,
         }

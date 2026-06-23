@@ -23,8 +23,7 @@ export interface RevenueSummary {
 }
 
 export interface DayWeather {
-  temp_max: number | null;
-  temp_min: number | null;
+  temp_max: number | null; // дневная температура (ночную не показываем)
   weather_code: number | null;
 }
 
@@ -196,6 +195,7 @@ export interface HourlyResponse {
 
 export interface HourItem {
   name: string;
+  category?: string; // присутствует в режиме group=dish (для drill-down «категория → блюда»)
   revenue: number;
   quantity: number;
 }
@@ -214,6 +214,28 @@ export interface HourlyBreakdown {
   date_from: string;
   date_to: string;
   data: HourBreakdownRow[];
+}
+
+// ---------- Матрица сочетаемости (market basket) ----------
+
+export interface BasketPair {
+  a: string; // сильная позиция пары (чаще встречается)
+  b: string;
+  count: number; // в скольких чеках встречались обе
+  support: number; // % чеков с обеими
+  confidence: number; // % чеков с B среди чеков с A
+}
+
+export interface Basket {
+  period: Period | "custom";
+  date_from: string;
+  date_to: string;
+  group_by: DishGroupBy;
+  orders: number;
+  labels: string[];
+  freq: number[]; // число чеков с каждой позицией (для диагонали матрицы)
+  matrix: number[][]; // matrix[i][j] = чеков с обеими i и j
+  pairs: BasketPair[];
 }
 
 // ---------- Распределение чеков по типу обслуживания ----------

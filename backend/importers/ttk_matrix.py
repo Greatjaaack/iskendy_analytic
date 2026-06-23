@@ -17,6 +17,7 @@
 import logging
 import os
 import re
+from collections import defaultdict
 from datetime import date, datetime
 
 import openpyxl
@@ -60,17 +61,55 @@ def _norm(s) -> str:
     return s
 
 
+# Канонизация имён поставщиков: разные написания одного контрагента → единое имя.
+# (canon, маркеры-токены): если в имени встречается любой из токенов-маркеров —
+# имя сводится к canon. WB/wildberries.ru — один поставщик; METRO/Мэтро/«METRO Chef …»
+# — тоже один. Список расширяемый по мере появления дублей в «Матрице поставщиков».
+SUPPLIER_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("wildberries.ru", ("wildberries", "вайлдберриз", "wb", "вб")),
+    ("METRO", ("metro", "метро", "мэтро")),
+    ("Ozon", ("ozon", "озон")),
+)
+
+
+def _canon_supplier(display: str) -> str:
+    """Свести разные написания контрагента к единому имени (WB=wildberries.ru, METRO=Мэтро).
+
+    Матчим по отдельным токенам (а не подстроке), чтобы короткие коды («wb», «вб») не
+    срабатывали внутри других слов. Регистр и «ё» нормализуем.
+    """
+    tokens = set(re.findall(r"[a-zа-я0-9]+", display.casefold().replace("ё", "е")))
+    for canon, markers in SUPPLIER_ALIASES:
+        if tokens & set(markers):
+            return canon
+    return display
+
+
 def _clean_supplier(name) -> str:
-    """Имя поставщика: URL → домен; число/пусто → «—»; длинное описание → обрезаем."""
+    """Имя поставщика: алиасы → канон; URL → домен; число/пусто → «—»; длинное → обрезаем."""
     s = str(name).strip() if name is not None else ""
     if not s or _num(s) is not None:  # пусто или чисто число — мусор из ячейки
         return "—"
     m = re.search(r"https?://([^/]+)", s)
     if m:
-        return m.group(1).replace("www.", "")
-    if len(s) > 40:
-        return s[:40].rstrip() + "…"
-    return s
+        s = m.group(1).replace("www.", "")
+    elif len(s) > 40:
+        s = s[:40].rstrip() + "…"
+    return _canon_supplier(s)
+
+
+def _supplier_key(name) -> str:
+    """Ключ сопоставления поставщиков для схлопа дублей.
+
+    Сначала канон-алиасы (WB↔wildberries.ru, METRO↔Мэтро — в т.ч. кросс-скрипт), затем
+    агрессивная нормализация: lower, ё→е, срез протокола/`www.`/доменной зоны (.ru/.com…),
+    только буквы/цифры. Так «Turkish food», «turkish-food», «turkish-food.ru» → один ключ.
+    """
+    s = _clean_supplier(name).casefold().replace("ё", "е")
+    s = re.sub(r"^https?://", "", s)
+    s = re.sub(r"^www\.", "", s)
+    s = re.sub(r"\.(ru|com|рф|net|org|su)$", "", s)
+    return re.sub(r"[^a-zа-я0-9]", "", s)
 
 
 def _num(v):
@@ -139,19 +178,42 @@ class _Importer:
         self.db = db
         self.suppliers: dict[str, Supplier] = {}
         self.ingredients: dict[str, Ingredient] = {}  # ключ = name_norm
-        self.counters = {"suppliers": 0, "ingredients": 0, "prices": 0, "ttk": 0, "lines": 0}
-        # поставщиков импорт не удаляет (у них бывают файлы) — кэшируем существующих
-        # по casefold-ключу (SQLite lower() не трогает кириллицу, поэтому матчим в Python)
+        self.counters = {
+            "suppliers": 0,
+            "ingredients": 0,
+            "prices": 0,
+            "ttk": 0,
+            "lines": 0,
+        }
+        # Поставщиков импорт не удаляет (у них бывают файлы/контакты), но СХЛОПЫВАЕТ дубли
+        # по канон-ключу `_supplier_key`: накопившиеся до канонизации варианты (WB и
+        # wildberries.ru, OZON и ozon.ru и т.п.) сливаем в один — контакты/файлы переносим
+        # на «главный» (у кого их больше), имя приводим к канону, лишние строки удаляем.
+        groups: dict[str, list[Supplier]] = defaultdict(list)
         for s in db.query(Supplier).all():
-            self.suppliers.setdefault(s.name.casefold(), s)
+            groups[_supplier_key(s.name)].append(s)
+        for key, group in groups.items():
+            group.sort(key=lambda s: len(s.contacts) + len(s.files), reverse=True)
+            primary = group[0]
+            for dup in group[1:]:
+                for c in list(dup.contacts):
+                    c.supplier_id = primary.id
+                for f in list(dup.files):
+                    f.supplier_id = primary.id
+                db.delete(dup)
+            db.flush()  # удаляем дубли ДО переименования (иначе UNIQUE на suppliers.name)
+            canon = _clean_supplier(primary.name)
+            if primary.name != canon:
+                primary.name = canon
+            self.suppliers[key] = primary
+        db.flush()
 
     # ---------- справочники ----------
 
     def supplier(self, name) -> Supplier:
-        display = _clean_supplier(name)
-        key = display.casefold()  # схлоп дублей по регистру (Ozon/OZON)
+        key = _supplier_key(name)
         if key not in self.suppliers:
-            sup = Supplier(name=display)
+            sup = Supplier(name=_clean_supplier(name))
             self.db.add(sup)
             self.db.flush()
             self.counters["suppliers"] += 1
@@ -295,7 +357,9 @@ class _Importer:
                     "gross": _num(ws.cell(r, cols["gross"]).value),
                     "net": _num(ws.cell(r, cols["net"]).value),
                     "unit": _clean_unit(ws.cell(r, cols["unit"]).value),
-                    "waste_pct": _num(ws.cell(r, cols["waste"]).value) if "waste" in cols else None,
+                    "waste_pct": (
+                        _num(ws.cell(r, cols["waste"]).value) if "waste" in cols else None
+                    ),
                     "cost_rub": _num(ws.cell(r, cols["cost"]).value),
                 }
             )

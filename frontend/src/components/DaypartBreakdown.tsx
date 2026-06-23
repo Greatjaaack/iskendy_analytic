@@ -51,10 +51,7 @@ export function DaypartBreakdown({ range, withDelivery = true }: Props) {
 
   return (
     <div style={{ background: "var(--card)", borderRadius: 12, padding: "20px 24px" }}>
-      <div style={{ color: "var(--text)", fontWeight: 600 }}>Выручка по дейпартам</div>
-      <div style={{ color: "var(--muted)", fontSize: 12, marginTop: 2, marginBottom: 16 }}>
-        Когда зарабатывает день — окна по времени
-      </div>
+      <div style={{ color: "var(--text)", fontWeight: 600, marginBottom: 16 }}>Выручка по дейпартам</div>
 
       <ResponsiveContainer width="100%" height={CHART_HEIGHT}>
         <BarChart data={rows} margin={{ top: 20, right: 8, left: 8, bottom: 0 }}>
@@ -97,10 +94,10 @@ export function DaypartBreakdown({ range, withDelivery = true }: Props) {
                   }} />
                   {d.label} <span style={{ color: "var(--muted)" }}>{d.range}</span>
                 </td>
-                <td style={{ padding: "6px 8px" }}>{fmtInt(d.revenue)} ₽</td>
+                <td style={{ padding: "6px 8px" }}>{fmtInt(d.revenue)}</td>
                 <td style={{ padding: "6px 8px", color: "var(--muted)" }}>{d.revenue_share}%</td>
                 <td style={{ padding: "6px 8px" }}>{fmtInt(d.checks)}</td>
-                <td style={{ padding: "6px 8px" }}>{fmtInt(d.avg_check)} ₽</td>
+                <td style={{ padding: "6px 8px" }}>{fmtInt(d.avg_check)}</td>
               </tr>
             ))}
           </tbody>

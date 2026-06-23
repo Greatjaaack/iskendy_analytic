@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { fetchRevenue, triggerSync, rangeKey } from "../api";
+import { fetchRevenue, triggerSync, fetchLastSync, rangeKey } from "../api";
 import type { Period, RangeSel, RevenueDay } from "../api";
 import { KpiCards } from "../components/KpiCards";
 import { RevenueChart } from "../components/RevenueChart";
@@ -11,12 +11,25 @@ import { HourlyBreakdown } from "../components/HourlyBreakdown";
 import { CheckComposition } from "../components/CheckComposition";
 import { CheckFullness } from "../components/CheckFullness";
 import { MenuEngineering } from "../components/MenuEngineering";
+import { MenuBasket } from "../components/MenuBasket";
 import { DishTable } from "../components/DishTable";
 import { ChecksDistribution } from "../components/ChecksDistribution";
-import { REFETCH_INTERVAL_MS, COLORS, PERIODS, weatherInfo } from "../constants";
+import {
+  REFETCH_INTERVAL_MS, COLORS, PERIODS, weatherInfo,
+  AUTOSYNC_OPTIONS, AUTOSYNC_DAYS,
+} from "../constants";
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const daysAgoISO = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
+
+/** ISO-метка синка (UTC) → «14:05 · 23.06» во времени ресторана (Москва): сперва время, затем дата. */
+const fmtSync = (iso: string): string => {
+  const d = new Date(iso);
+  const opts = { timeZone: "Europe/Moscow" } as const;
+  const time = d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit", ...opts });
+  const date = d.toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit", ...opts });
+  return `${time} · ${date}`;
+};
 
 /** Главная: KPI, выручка по дням, чеки по типу, почасовые продажи, продажи блюд.
  *  Период — пресет (день/неделя/месяц) или произвольный диапазон; всё реагирует на него. */
@@ -29,6 +42,10 @@ export function Dashboard() {
   const [tab, setTab] = useState<"pulse" | "ops" | "menu">("pulse");
   // галка «с доставкой»: выкл → бэкенд вычитает выручку/чеки доставки из revenue-виджетов
   const [withDelivery, setWithDelivery] = useState(false);
+  // интервал автосинхронизации (мс), выбор пользователя — хранится в localStorage
+  const [autoSyncMs, setAutoSyncMs] = useState<number>(
+    () => Number(localStorage.getItem("autosync-ms")) || 0,
+  );
 
   const isCustom = "from" in sel;
   // Один день («Сегодня» или диапазон из одной даты): «по дням» вырождается в один
@@ -41,12 +58,29 @@ export function Dashboard() {
     refetchInterval: REFETCH_INTERVAL_MS,
   });
 
-  const handleSync = async () => {
+  const lastSyncQ = useQuery({
+    queryKey: ["last-sync"],
+    queryFn: fetchLastSync,
+    refetchInterval: REFETCH_INTERVAL_MS,
+  });
+
+  // days не задан → полный синк (кнопка); days=AUTOSYNC_DAYS → лёгкий синк (автотаймер)
+  const runSync = async (days?: number) => {
     setSyncing(true);
-    await triggerSync();
-    await revenueQ.refetch();
+    await triggerSync(days);
+    await Promise.all([revenueQ.refetch(), lastSyncQ.refetch()]);
     setSyncing(false);
   };
+  const handleSync = () => runSync();
+
+  // автосинхронизация: при выбранном интервале лёгкий синк + рефетч по таймеру
+  useEffect(() => {
+    localStorage.setItem("autosync-ms", String(autoSyncMs));
+    if (!autoSyncMs) return;
+    const id = setInterval(() => runSync(AUTOSYNC_DAYS), autoSyncMs);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoSyncMs]);
 
   const pickPreset = (p: Period) => {
     setSel({ period: p });
@@ -94,19 +128,41 @@ export function Dashboard() {
               onChange={(e) => setWithDelivery(e.target.checked)}
               style={{ cursor: "pointer" }}
             />
-            🛵 С доставкой
+            С доставкой
           </label>
-          <button
-            onClick={handleSync}
-            disabled={syncing}
+          <select
+            value={autoSyncMs}
+            onChange={(e) => setAutoSyncMs(Number(e.target.value))}
+            title="Автоматически синхронизировать данные с выбранным интервалом"
             style={{
-              padding: "6px 16px", borderRadius: 8, border: `1px solid ${COLORS.grid}`,
-              background: "transparent", color: syncing ? COLORS.muted : "var(--text)",
-              fontSize: 13, cursor: syncing ? "not-allowed" : "pointer",
+              padding: "6px 10px", borderRadius: 8, border: `1px solid ${COLORS.grid}`,
+              background: COLORS.card, color: "var(--text)", fontSize: 13, cursor: "pointer",
             }}
           >
-            {syncing ? "Обновление..." : "↻ Синхронизировать"}
-          </button>
+            {AUTOSYNC_OPTIONS.map((o) => (
+              <option key={o.ms} value={o.ms}>
+                {o.ms === 0 ? "Автосинк: выкл" : `Автосинк: ${o.label}`}
+              </option>
+            ))}
+          </select>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
+            <button
+              onClick={handleSync}
+              disabled={syncing}
+              style={{
+                padding: "6px 16px", borderRadius: 8, border: `1px solid ${COLORS.grid}`,
+                background: "transparent", color: syncing ? COLORS.muted : "var(--text)",
+                fontSize: 13, cursor: syncing ? "not-allowed" : "pointer",
+              }}
+            >
+              {syncing ? "Обновление..." : "↻ Синхронизировать"}
+            </button>
+            <span style={{ color: COLORS.muted, fontSize: 11 }} title="Время последней успешной синхронизации (МСК)">
+              {lastSyncQ.data?.last_sync
+                ? `Обновлено: ${fmtSync(lastSyncQ.data.last_sync)}`
+                : "Ещё не синхронизировано"}
+            </span>
+          </div>
         </div>
       </div>
 
@@ -162,7 +218,7 @@ export function Dashboard() {
                 )}
               </div>
               <div className="dash-full">
-                <ChecksDistribution range={sel} />
+                <ChecksDistribution range={sel} withDelivery={withDelivery} />
               </div>
             </div>
           )}
@@ -170,7 +226,9 @@ export function Dashboard() {
             <div className="dash-grid">
               {/* свод по дням недели бессмыслен для одного дня (1 строка, бар на 100%) */}
               {!isSingleDay && <WeekdaySummary range={sel} withDelivery={withDelivery} />}
-              <DaypartBreakdown range={sel} withDelivery={withDelivery} />
+              <div className="dash-full">
+                <DaypartBreakdown range={sel} withDelivery={withDelivery} />
+              </div>
               <HourlyChart range={sel} withDelivery={withDelivery} />
               <CheckFullness range={sel} withDelivery={withDelivery} />
               <div className="dash-full">
@@ -181,6 +239,7 @@ export function Dashboard() {
           {tab === "menu" && (
             <div className="dash-grid">
               <CheckComposition range={sel} withDelivery={withDelivery} />
+              <MenuBasket range={sel} withDelivery={withDelivery} />
               <div className="dash-full">
                 <MenuEngineering range={sel} withDelivery={withDelivery} />
               </div>

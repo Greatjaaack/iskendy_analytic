@@ -25,5 +25,10 @@ class Settings(BaseSettings):
     # синков. Не зависит от TZ контейнера (там обычно UTC). Точка московская (см. погоду).
     timezone: str = "Europe/Moscow"
 
+    # TTL in-memory кэша живых чтений из iikoweb (get-data/OLAP), сек. 0 — кэш выключен.
+    # Короткий TTL схлопывает повторные одинаковые запросы дашборда, не задерживая
+    # обновление дольше этого окна. Сбрасывается при ручном синке.
+    cache_ttl_seconds: int = 60
+
 
 settings = Settings()

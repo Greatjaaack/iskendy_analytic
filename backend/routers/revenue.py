@@ -11,7 +11,6 @@ from constants import (
     CHANNEL_TAKEAWAY,
     DAY_NAMES_RU,
     DAYPARTS,
-    DELIVERY_CATEGORY,
     METRIC_AVG_SPEND,
     METRIC_COST,
     METRIC_DISCOUNT,
@@ -29,7 +28,7 @@ from constants import (
 )
 from iiko_web_client import iiko_web
 from models import RevenueDaily, SessionLocal
-from utils import period_range, prev_period_range, today
+from utils import is_delivery, period_range, prev_period_range, today
 from weather import get_weather
 
 CHANNELS = (CHANNEL_DINEIN, CHANNEL_TAKEAWAY, CHANNEL_DELIVERY)
@@ -61,7 +60,7 @@ def _channel_revenue(rows: list[dict]) -> dict[str, dict[str, float]]:
         rev = float(r.get("field1", {}).get("value", 0) or 0)
         ch = (
             CHANNEL_DELIVERY
-            if category == DELIVERY_CATEGORY
+            if is_delivery(category, name)
             else order_channel.get(ordernum, CHANNEL_DINEIN)
         )
         out.setdefault(bucket, {c: 0.0 for c in CHANNELS})[ch] += rev
@@ -71,7 +70,7 @@ def _channel_revenue(rows: list[dict]) -> dict[str, dict[str, float]]:
 def _delivery_per_bucket(rows: list[dict]) -> dict[str, dict[str, float]]:
     """{bucket → {"revenue": выручка доставки, "checks": число заказов доставки}}.
 
-    Доставка = строго меню-категория «Доставка» (в ней продаются реальные блюда):
+    Доставка = меню-категория «Доставка» ИЛИ имя с маркером `_д` (см. utils.is_delivery):
     выручка — сумма по таким позициям, чек — заказ, в котором есть хотя бы одна.
     bucket = 1-е group-поле (дата/час).
     """
@@ -79,7 +78,7 @@ def _delivery_per_bucket(rows: list[dict]) -> dict[str, dict[str, float]]:
     seen: dict[str, set[str]] = {}
     for r in rows:
         bucket, ordernum, category, name = _split4(r.get("field0", {}).get("value", ""))
-        if not name or category != DELIVERY_CATEGORY:
+        if not name or not is_delivery(category, name):
             continue
         rev = float(r.get("field1", {}).get("value", 0) or 0)
         e = out.setdefault(bucket, {"revenue": 0.0, "checks": 0})
@@ -401,7 +400,7 @@ async def get_hourly(
             "label": f"{h:02d}-{h + 1:02d}",
             "revenue": round(rev.get(h, 0) or 0, 2),
             "checks": int(trn.get(h, 0) or 0),
-            "avg_check": round((rev.get(h, 0) or 0) / trn.get(h, 0), 2) if trn.get(h) else 0,
+            "avg_check": (round((rev.get(h, 0) or 0) / trn.get(h, 0), 2) if trn.get(h) else 0),
         }
         for h in hours
     ]
@@ -417,7 +416,12 @@ async def get_hourly(
             row["checks"] = max(0, row["checks"] - dd["checks"])
             row["avg_check"] = round(row["revenue"] / row["checks"], 2) if row["checks"] else 0
 
-    return {"period": period, "date_from": df.isoformat(), "date_to": dt.isoformat(), "data": data}
+    return {
+        "period": period,
+        "date_from": df.isoformat(),
+        "date_to": dt.isoformat(),
+        "data": data,
+    }
 
 
 @router.get("/by-daypart")
@@ -478,9 +482,15 @@ async def get_revenue_by_channel(
     period: str = Query("week", enum=["day", "week", "month"]),
     date_from: str | None = None,
     date_to: str | None = None,
+    include_delivery: bool = True,
 ):
-    """Выручка по дням в разрезе каналов (зал/с собой/доставка) — через OLAP SALES."""
+    """Выручка по дням в разрезе каналов (зал/с собой/доставка) — через OLAP SALES.
+
+    При `include_delivery=false` канал «доставка» исключается из разреза (для галки
+    «без доставки» в виджете «Чеки и выручка по типу обслуживания»).
+    """
     df, dt = period_range(period, date_from, date_to)
+    channels = [c for c in CHANNELS if include_delivery or c != CHANNEL_DELIVERY]
     rows = await iiko_web.olap_sales(
         group_fields=[
             OLAP_FIELD_OPEN_DATE,
@@ -500,14 +510,18 @@ async def get_revenue_by_channel(
         except ValueError:
             continue
         b = buckets[ds]
-        row = {"date": ds, "day_of_week": _ru_dow(d), "total": round(sum(b.values()), 2)}
-        row.update({c: round(b[c], 2) for c in CHANNELS})
+        row = {
+            "date": ds,
+            "day_of_week": _ru_dow(d),
+            "total": round(sum(b[c] for c in channels), 2),
+        }
+        row.update({c: round(b[c], 2) for c in channels})
         data.append(row)
     return {
         "period": "custom" if (date_from and date_to) else period,
         "date_from": df.isoformat(),
         "date_to": dt.isoformat(),
-        "channels": list(CHANNELS),
+        "channels": channels,
         "data": data,
     }
 
@@ -536,7 +550,11 @@ async def get_hourly_by_channel(
     for hk in sorted((h for h in buckets if h.isdigit()), key=int):
         h = int(hk)
         b = buckets[hk]
-        row = {"hour": h, "label": f"{h:02d}-{h + 1:02d}", "total": round(sum(b.values()), 2)}
+        row = {
+            "hour": h,
+            "label": f"{h:02d}-{h + 1:02d}",
+            "total": round(sum(b.values()), 2),
+        }
         row.update({c: round(b[c], 2) for c in CHANNELS})
         data.append(row)
     return {
@@ -561,7 +579,11 @@ async def get_kpi_by_channel(
     """
     df, dt = period_range(period, date_from, date_to)
     rows = await iiko_web.olap_sales(
-        group_fields=[OLAP_FIELD_ORDER_NUM, OLAP_FIELD_DISH_CATEGORY, OLAP_FIELD_DISH_NAME],
+        group_fields=[
+            OLAP_FIELD_ORDER_NUM,
+            OLAP_FIELD_DISH_CATEGORY,
+            OLAP_FIELD_DISH_NAME,
+        ],
         data_fields=[OLAP_FIELD_SUM],
         date_from=df.isoformat(),
         date_to=dt.isoformat(),
@@ -578,13 +600,16 @@ async def get_kpi_by_channel(
             if ORDER_STATUS_CHANNELS.get(name.strip().lower()) == CHANNEL_DELIVERY:
                 order_delivery[order_num] = True
             continue
-        if category == DELIVERY_CATEGORY:
+        if is_delivery(category, name):
             order_delivery[order_num] = True
         rev = float(r.get("field1", {}).get("value", 0) or 0)
         order_rev[order_num] = order_rev.get(order_num, 0.0) + rev
         order_delivery.setdefault(order_num, False)
 
-    groups = {"delivery": {"revenue": 0.0, "checks": 0}, "other": {"revenue": 0.0, "checks": 0}}
+    groups = {
+        "delivery": {"revenue": 0.0, "checks": 0},
+        "other": {"revenue": 0.0, "checks": 0},
+    }
     for order_num, rev in order_rev.items():
         g = "delivery" if order_delivery.get(order_num) else "other"
         groups[g]["revenue"] += rev

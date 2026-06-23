@@ -28,6 +28,14 @@ const VIEWS: { key: View; label: string }[] = [
 const chColor = (ch: string) =>
   ch === "доставка" ? COLORS.primary : ch === "с собой" ? COLORS.warn : COLORS.good;
 
+// «2026-06-22» → «22.06» (день.месяц — привычный для чтения порядок: видно, какое это число).
+const dm = (iso: string) => {
+  const [, mm, dd] = iso.split("-");
+  return `${dd}.${mm}`;
+};
+// Подпись дня на оси X: «Пн 22.06» (день недели + число).
+const dayLabel = (d: { day_of_week: string; date: string }) => `${d.day_of_week} ${dm(d.date)}`;
+
 export function RevenueChart({ data, prevData, range }: Props) {
   const [days, setDays] = useState<Set<string>>(new Set());
   const [view, setView] = useState<View>("sum");
@@ -61,27 +69,40 @@ export function RevenueChart({ data, prevData, range }: Props) {
   const multiDay = data.length > 1;
   const dayOk = (dow: string) => !multiDay || days.size === 0 || days.has(dow);
 
-  // погода под датой на оси X + дельта температуры к тому же дню прошлого периода
-  const weatherByLabel: Record<string, string> = {};
+  // погода под датой на оси X (структурно: иконка / температура / дельта к тому же дню
+  // прошлого периода) — чтобы на оси было ясно, что есть что
+  interface Wx { icon: string; temp: number | null; delta: number | null }
+  const weatherByLabel: Record<string, Wx> = {};
   data.forEach((d, i) => {
     const info = d.weather ? weatherInfo(d.weather.weather_code) : null;
     if (!info) return;
     const t = d.weather?.temp_max;
-    let s = `${info.icon}${t != null ? ` ${Math.round(t)}°` : ""}`;
     const pt = prevData[i]?.temp_max;
-    if (t != null && pt != null) {
-      const dl = Math.round(t - pt);
-      s += ` ${dl >= 0 ? "+" : ""}${dl}°`;
-    }
-    weatherByLabel[`${d.day_of_week} ${d.date.slice(5)}`] = s;
+    weatherByLabel[dayLabel(d)] = {
+      icon: info.icon,
+      temp: t != null ? Math.round(t) : null,
+      delta: t != null && pt != null ? Math.round(t - pt) : null,
+    };
   });
+  // дельта теплее → тёплый цвет (warn), холоднее → холодный (accent), без изменения — приглушённо
+  const deltaColor = (dl: number) => (dl > 0 ? COLORS.warn : dl < 0 ? COLORS.accent : "var(--muted)");
   const renderTick = (props: { x?: number | string; y?: number | string; payload?: { value?: string | number } }) => {
     const label = String(props.payload?.value ?? "");
     const w = weatherByLabel[label];
     return (
       <g transform={`translate(${Number(props.x ?? 0)},${Number(props.y ?? 0)})`}>
         <text x={0} y={0} dy={12} textAnchor="middle" fill="var(--muted)" fontSize={12}>{label}</text>
-        {w && <text x={0} y={0} dy={28} textAnchor="middle" fill="var(--muted)" fontSize={12}>{w}</text>}
+        {w && (
+          <text x={0} y={0} dy={28} textAnchor="middle" fontSize={12}>
+            <tspan fill="var(--muted)">{w.icon}</tspan>
+            {w.temp != null && <tspan dx={5} fill="var(--text)" fontWeight={600}>{w.temp}°</tspan>}
+            {w.delta != null && (
+              <tspan dx={5} fill={deltaColor(w.delta)}>
+                ({w.delta >= 0 ? "+" : ""}{w.delta}°)
+              </tspan>
+            )}
+          </text>
+        )}
       </g>
     );
   };
@@ -90,7 +111,7 @@ export function RevenueChart({ data, prevData, range }: Props) {
   const visible = channels.filter((c) => !hidden.has(c));
 
   const sumData = data.filter((d) => dayOk(d.day_of_week)).map((d) => ({
-    label: `${d.day_of_week} ${d.date.slice(5)}`,
+    label: dayLabel(d),
     dow: d.day_of_week,
     Выручка: d.total_sum,
     "Ср. чек": d.avg_check,
@@ -101,7 +122,7 @@ export function RevenueChart({ data, prevData, range }: Props) {
     ? Math.round(sumData.reduce((s, r) => s + r.Выручка, 0) / sumData.length)
     : 0;
   const chData = (chQ.data?.data ?? []).filter((d) => dayOk(d.day_of_week)).map((d) => {
-    const row: Record<string, number | string> = { label: `${d.day_of_week} ${d.date.slice(5)}` };
+    const row: Record<string, number | string> = { label: dayLabel(d) };
     channels.forEach((c) => (row[c] = Number(d[c] ?? 0)));
     return row;
   });
@@ -110,7 +131,7 @@ export function RevenueChart({ data, prevData, range }: Props) {
     .map((d, i) => ({ d, p: prevData[i] }))
     .filter(({ d }) => dayOk(d.day_of_week))
     .map(({ d, p }) => ({
-      label: `${d.day_of_week} ${d.date.slice(5)}`,
+      label: dayLabel(d),
       Выручка: d.total_sum,
       // NaN → recharts рисует разрыв (нет данных за прошлый день); тип остаётся number
       "Выручка (пр.)": p?.total_sum ?? NaN,

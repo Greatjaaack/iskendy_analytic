@@ -3,6 +3,7 @@
 import axios from "axios";
 
 import type {
+  Basket,
   CheckComposition,
   CheckDistribution,
   CheckFullness,
@@ -63,8 +64,13 @@ export const fetchHourly = (range: RangeSel, includeDelivery = true): Promise<Ho
     .get<HourlyResponse>(`/api/revenue/hourly?${rangeQS(range)}${deliveryQS(includeDelivery)}`)
     .then((r) => r.data);
 
-export const fetchRevenueByChannel = (range: RangeSel): Promise<RevenueByChannel> =>
-  api.get<RevenueByChannel>(`/api/revenue/by-channel?${rangeQS(range)}`).then((r) => r.data);
+export const fetchRevenueByChannel = (
+  range: RangeSel,
+  includeDelivery = true,
+): Promise<RevenueByChannel> =>
+  api
+    .get<RevenueByChannel>(`/api/revenue/by-channel?${rangeQS(range)}${deliveryQS(includeDelivery)}`)
+    .then((r) => r.data);
 
 export const fetchKpiByChannel = (range: RangeSel): Promise<KpiByChannel> =>
   api.get<KpiByChannel>(`/api/revenue/kpi-by-channel?${rangeQS(range)}`).then((r) => r.data);
@@ -85,7 +91,14 @@ export const fetchByDaypart = (
     .get<DaypartSummary>(`/api/revenue/by-daypart?${rangeQS(range)}${deliveryQS(includeDelivery)}`)
     .then((r) => r.data);
 
-export const triggerSync = () => api.post("/api/sync");
+/** Запустить синхронизацию. `days>0` — лёгкий синк за последние N дней (автосинхронизация),
+ *  без аргумента — полный синк (кнопка «Синхронизировать»). */
+export const triggerSync = (days?: number) =>
+  api.post(`/api/sync${days ? `?days=${days}` : ""}`);
+
+/** Время последней успешной синхронизации (ISO в UTC) либо null, если синков ещё не было. */
+export const fetchLastSync = (): Promise<{ last_sync: string | null; sync_type?: string }> =>
+  api.get<{ last_sync: string | null; sync_type?: string }>("/api/sync/last").then((r) => r.data);
 
 // ---------- Продажи блюд ----------
 
@@ -111,6 +124,17 @@ export const fetchHourlyBreakdown = (
     )
     .then((r) => r.data);
 
+export const fetchBasket = (
+  range: RangeSel,
+  group: DishGroupBy = "category",
+  includeDelivery = true,
+): Promise<Basket> =>
+  api
+    .get<Basket>(
+      `/api/dishes/basket?group=${group}&${rangeQS(range)}${deliveryQS(includeDelivery)}`,
+    )
+    .then((r) => r.data);
+
 export const fetchCheckComposition = (
   range: RangeSel,
   includeDelivery = true,
@@ -121,8 +145,15 @@ export const fetchCheckComposition = (
     )
     .then((r) => r.data);
 
-export const fetchCheckDistribution = (range: RangeSel): Promise<CheckDistribution> =>
-  api.get<CheckDistribution>(`/api/dishes/check-distribution?${rangeQS(range)}`).then((r) => r.data);
+export const fetchCheckDistribution = (
+  range: RangeSel,
+  includeDelivery = true,
+): Promise<CheckDistribution> =>
+  api
+    .get<CheckDistribution>(
+      `/api/dishes/check-distribution?${rangeQS(range)}${deliveryQS(includeDelivery)}`,
+    )
+    .then((r) => r.data);
 
 export const fetchCheckFullness = (
   range: RangeSel,
@@ -147,6 +178,9 @@ export const createSupplier = (data: SupplierInput): Promise<SupplierBrief> =>
 
 export const updateSupplier = (id: number, data: SupplierInput): Promise<SupplierBrief> =>
   api.put<SupplierBrief>(`/api/suppliers/${id}`, data).then((r) => r.data);
+
+export const deleteSupplier = (id: number) =>
+  api.delete(`/api/suppliers/${id}`).then((r) => r.data);
 
 export const addSupplierContact = (
   supplierId: number,

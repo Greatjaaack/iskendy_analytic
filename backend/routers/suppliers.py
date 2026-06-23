@@ -10,14 +10,7 @@ from pydantic import BaseModel, field_validator
 from sqlalchemy import func, select
 
 import storage
-from models import (
-    Ingredient,
-    SessionLocal,
-    Supplier,
-    SupplierContact,
-    SupplierFile,
-    SupplierPrice,
-)
+from models import Ingredient, SessionLocal, Supplier, SupplierContact, SupplierFile, SupplierPrice
 from utils import normalize_email, normalize_phone
 
 XLSX_MEDIA = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -238,6 +231,21 @@ def update_supplier(supplier_id: int, data: SupplierIn):
 
 class ProductPatch(BaseModel):
     brand: str = ""
+
+
+@router.delete("/{supplier_id}")
+def delete_supplier(supplier_id: int):
+    """Удалить поставщика со всеми контактами, ценами и файлами (каскад + файлы с диска)."""
+    with SessionLocal() as db:
+        s = db.get(Supplier, supplier_id)
+        if not s:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "поставщик не найден")
+        # физические файлы удаляем до ORM-каскада (после commit пути уже не достать)
+        for f in s.files:
+            storage.delete_file(f.path)
+        db.delete(s)  # cascade="all, delete-orphan" уберёт контакты/цены/файлы из БД
+        db.commit()
+        return {"ok": True, "id": supplier_id}
 
 
 @router.put("/{supplier_id}/products/{price_id}")

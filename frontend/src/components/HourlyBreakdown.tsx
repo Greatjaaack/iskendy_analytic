@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { Fragment, useCallback, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Bar, BarChart, Cell, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis,
@@ -31,11 +31,20 @@ export function HourlyBreakdown({ range, withDelivery = true }: Props) {
   const [chartMode, setChartMode] = useState<"abs" | "share">("abs");
   const [sortKey, setSortKey] = useState<SortKey>("revenue");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  // раскрытые категории (drill-down «категория → блюда» в таблице часа, #11)
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const q = useQuery({
     queryKey: ["hourly-breakdown", rangeKey(range), group, withDelivery],
     queryFn: () => fetchHourlyBreakdown(range, group, withDelivery),
     refetchInterval: REFETCH_INTERVAL_MS,
+  });
+  // блюда по часам (для разворота категории) — грузим, только когда что-то раскрыто
+  const dishQ = useQuery({
+    queryKey: ["hourly-breakdown", rangeKey(range), "dish", withDelivery],
+    queryFn: () => fetchHourlyBreakdown(range, "dish", withDelivery),
+    refetchInterval: REFETCH_INTERVAL_MS,
+    enabled: group === "category" && expanded.size > 0,
   });
   // для диаграммы всегда нужен разрез по КАТЕГОРИЯМ (стек читаем); когда таблица тоже
   // в режиме «Категории» — это тот же queryKey, и React Query не делает второй запрос.
@@ -112,6 +121,25 @@ export function HourlyBreakdown({ range, withDelivery = true }: Props) {
   const maxVal = items.length
     ? Math.max(...items.map((it) => (metric === "revenue" ? it.revenue : it.quantity)))
     : 0;
+
+  // блюда выбранного часа, сгруппированные по категории (для разворота строки-категории)
+  const dishesByCat = useMemo(() => {
+    const map: Record<string, { name: string; revenue: number; quantity: number }[]> = {};
+    const hourRow = (dishQ.data?.data ?? []).find((h) => h.hour === current?.hour);
+    (hourRow?.items ?? []).forEach((it) => {
+      const cat = it.category || "—";
+      (map[cat] ??= []).push(it);
+    });
+    return map;
+  }, [dishQ.data, current]);
+
+  const toggleCat = (name: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
 
   return (
     <div style={{ background: COLORS.card, borderRadius: 12, padding: "20px 24px" }}>
@@ -211,7 +239,7 @@ export function HourlyBreakdown({ range, withDelivery = true }: Props) {
                 {group === "category" ? "Категория" : "Блюдо"} · {current.label}{arrow("name")}
               </th>
               <th style={{ ...thSort, textAlign: "right" }} onClick={() => onSort("quantity")}>Кол-во{arrow("quantity")}</th>
-              <th style={{ ...thSort, textAlign: "right" }} onClick={() => onSort("revenue")}>Выручка, ₽{arrow("revenue")}</th>
+              <th style={{ ...thSort, textAlign: "right" }} onClick={() => onSort("revenue")}>Выручка{arrow("revenue")}</th>
               <th style={{ ...thSort, textAlign: "right" }} onClick={() => onSort("share")}>
                 Доля {metric === "revenue" ? "(₽)" : "(шт)"}{arrow("share")}
               </th>
@@ -222,22 +250,58 @@ export function HourlyBreakdown({ range, withDelivery = true }: Props) {
               const v = metric === "revenue" ? it.revenue : it.quantity;
               const share = hourTotal ? v / hourTotal : 0;
               const rel = maxVal ? v / maxVal : 0; // длина бара: относительно лидера часа
+              // разворот доступен только в режиме «Категории» (проваливаемся в блюда, #11)
+              const canDrill = group === "category";
+              const isOpen = expanded.has(it.name);
+              const dishes = isOpen ? dishesByCat[it.name] ?? [] : [];
+              const dishTotal = dishes.reduce((s, d) => s + (metric === "revenue" ? d.revenue : d.quantity), 0);
               return (
-                <tr key={it.name} style={{ borderTop: "1px solid var(--grid)" }}>
-                  <td style={td}>{it.name}</td>
-                  <td style={{ ...td, textAlign: "right" }}>{it.quantity}</td>
-                  <td style={{ ...td, textAlign: "right" }}>{fmtInt(it.revenue)}</td>
-                  <td style={td}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "flex-end" }}>
-                      <div style={{ flex: 1, maxWidth: 90, height: 6, background: "var(--grid)", borderRadius: 3, overflow: "hidden" }}>
-                        <div style={{ width: `${rel * 100}%`, height: "100%", background: COLORS.indigoText, borderRadius: 3 }} />
+                <Fragment key={it.name}>
+                  <tr
+                    style={{ borderTop: "1px solid var(--grid)", cursor: canDrill ? "pointer" : "default" }}
+                    onClick={canDrill ? () => toggleCat(it.name) : undefined}
+                  >
+                    <td style={td}>
+                      {canDrill && (
+                        <span style={{ color: "var(--muted)", marginRight: 6, fontSize: 10 }}>{isOpen ? "▼" : "▶"}</span>
+                      )}
+                      {it.name}
+                    </td>
+                    <td style={{ ...td, textAlign: "right" }}>{it.quantity}</td>
+                    <td style={{ ...td, textAlign: "right" }}>{fmtInt(it.revenue)}</td>
+                    <td style={td}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "flex-end" }}>
+                        <div style={{ flex: 1, maxWidth: 90, height: 6, background: "var(--grid)", borderRadius: 3, overflow: "hidden" }}>
+                          <div style={{ width: `${rel * 100}%`, height: "100%", background: COLORS.indigoText, borderRadius: 3 }} />
+                        </div>
+                        <span style={{ color: COLORS.indigoText, minWidth: 34, textAlign: "right" }}>
+                          {Math.round(share * 100)}%
+                        </span>
                       </div>
-                      <span style={{ color: COLORS.indigoText, minWidth: 34, textAlign: "right" }}>
-                        {Math.round(share * 100)}%
-                      </span>
-                    </div>
-                  </td>
-                </tr>
+                    </td>
+                  </tr>
+                  {isOpen && dishQ.isLoading && (
+                    <tr><td colSpan={4} style={{ ...td, color: "var(--muted)", fontSize: 12 }}>Загрузка блюд…</td></tr>
+                  )}
+                  {isOpen && !dishQ.isLoading && dishes.length === 0 && (
+                    <tr><td colSpan={4} style={{ ...td, color: "var(--muted)", fontSize: 12 }}>Нет блюд в категории за этот час</td></tr>
+                  )}
+                  {isOpen &&
+                    [...dishes]
+                      .sort((a, b) => (metric === "revenue" ? b.revenue - a.revenue : b.quantity - a.quantity))
+                      .map((d) => {
+                        const dv = metric === "revenue" ? d.revenue : d.quantity;
+                        const dShare = dishTotal ? dv / dishTotal : 0;
+                        return (
+                          <tr key={`${it.name}/${d.name}`} style={{ background: "var(--bg)" }}>
+                            <td style={{ ...td, paddingLeft: 28, color: "var(--muted)", fontSize: 12 }}>{d.name}</td>
+                            <td style={{ ...td, textAlign: "right", fontSize: 12, color: "var(--muted)" }}>{d.quantity}</td>
+                            <td style={{ ...td, textAlign: "right", fontSize: 12, color: "var(--muted)" }}>{fmtInt(d.revenue)}</td>
+                            <td style={{ ...td, textAlign: "right", fontSize: 12, color: "var(--muted)" }}>{Math.round(dShare * 100)}% в кат.</td>
+                          </tr>
+                        );
+                      })}
+                </Fragment>
               );
             })}
           </tbody>

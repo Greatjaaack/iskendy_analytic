@@ -18,6 +18,10 @@ venv/
 backend/data/
 data/
 
+# Тех-карты / прайс (приватные данные владельца — не храним в репозитории)
+backend/seed/*.xlsx
+backend/seed/*.xls
+
 # Node / frontend
 node_modules/
 dist/

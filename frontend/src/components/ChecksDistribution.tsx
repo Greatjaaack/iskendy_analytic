@@ -5,6 +5,7 @@ import { fmtInt } from "../format";
 
 interface Props {
   range: RangeSel;
+  withDelivery?: boolean;
 }
 
 // Цвета по типу обслуживания (стабильные, читаемы в обеих темах).
@@ -18,29 +19,33 @@ const colorFor = (t: string) => TYPE_COLORS[t] ?? COLORS.accent;
 /** Распределение чеков по типу обслуживания (#1): доставка / в зале / с собой.
  *  Данные — уникальные заказы по каналу (OLAP): сумма по типам = числу чеков.
  *  Рядом — доля выручки того же канала: видно перекос (напр. доставка = 30% чеков, но 50% выручки). */
-export function ChecksDistribution({ range }: Props) {
+export function ChecksDistribution({ range, withDelivery = true }: Props) {
   const q = useQuery({
-    queryKey: ["check-distribution", rangeKey(range)],
-    queryFn: () => fetchCheckDistribution(range),
+    queryKey: ["check-distribution", rangeKey(range), withDelivery],
+    queryFn: () => fetchCheckDistribution(range, withDelivery),
     refetchInterval: REFETCH_INTERVAL_MS,
   });
   const revQ = useQuery({
-    queryKey: ["revenue-by-channel", rangeKey(range)],
-    queryFn: () => fetchRevenueByChannel(range),
+    queryKey: ["revenue-by-channel", rangeKey(range), withDelivery],
+    queryFn: () => fetchRevenueByChannel(range, withDelivery),
     refetchInterval: REFETCH_INTERVAL_MS,
   });
 
-  const rows = q.data?.data ?? [];
+  const isDelivery = (t: string) => t.toLowerCase() === "доставка";
+  // при выключенной галке «С доставкой» строку доставки не показываем вовсе
+  const rows = (q.data?.data ?? []).filter((r) => withDelivery || !isDelivery(r.type));
 
   // выручка по каналу за период: суммируем по дням. Названия каналов в by-channel — строчные
   // («доставка»/«с собой»/«в зале»), в check-distribution — с заглавной → матчим по lower-case.
   const revByChannel: Record<string, number> = {};
-  (revQ.data?.channels ?? []).forEach((c) => {
-    revByChannel[c.toLowerCase()] = (revQ.data?.data ?? []).reduce(
-      (s, d) => s + Number(d[c] ?? 0),
-      0,
-    );
-  });
+  (revQ.data?.channels ?? [])
+    .filter((c) => withDelivery || !isDelivery(c))
+    .forEach((c) => {
+      revByChannel[c.toLowerCase()] = (revQ.data?.data ?? []).reduce(
+        (s, d) => s + Number(d[c] ?? 0),
+        0,
+      );
+    });
   const totalRev = Object.values(revByChannel).reduce((s, v) => s + v, 0);
 
   return (
@@ -62,14 +67,14 @@ export function ChecksDistribution({ range }: Props) {
               <div style={{ color: "var(--text)", fontSize: 13, fontWeight: 600, marginBottom: 6 }}>{r.type}</div>
               {/* чеки */}
               <Metric
-                icon="🧾"
+                name="Чеки"
                 label={`${r.count} чек.`}
                 share={r.share}
                 color={color}
               />
               {/* выручка того же канала */}
               <Metric
-                icon="₽"
+                name="Выручка"
                 label={`${fmtInt(rev)} ₽`}
                 share={revShare}
                 color={color}
@@ -86,12 +91,12 @@ export function ChecksDistribution({ range }: Props) {
   );
 }
 
-/** Одна метрика канала: иконка + значение слева, доля-полоска, % справа. */
-function Metric({ icon, label, share, color }: { icon: string; label: string; share: number; color: string }) {
+/** Одна метрика канала: название + значение слева, доля-полоска, % справа. */
+function Metric({ name, label, share, color }: { name: string; label: string; share: number; color: string }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
       <div style={{ flex: "0 0 130px", display: "flex", justifyContent: "space-between", fontSize: 12, color: "var(--muted)" }}>
-        <span>{icon}</span>
+        <span>{name}</span>
         <span style={{ color: "var(--text)" }}>{label}</span>
       </div>
       <div style={{ flex: 1, height: 8, background: "var(--bg)", borderRadius: 4, overflow: "hidden" }}>

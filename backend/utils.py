@@ -5,6 +5,28 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from config import settings
+from constants import CATEGORY_DISPLAY, DELIVERY_CATEGORY, DELIVERY_NAME_MARKER
+
+
+def display_category(name: str | None) -> str:
+    """Отображаемое имя меню-категории (переименование на дашборде, см. CATEGORY_DISPLAY).
+
+    Применяется на выходе разрезов и к подписям, и к ключам (чтобы drill-down и матч
+    категорий между виджетами не ломались). Неизвестные имена возвращаются как есть.
+    """
+    return CATEGORY_DISPLAY.get(name or "", name or "")
+
+
+def is_delivery(category: str | None, name: str | None) -> bool:
+    """Позиция продана в доставку: меню-категория «Доставка» ИЛИ имя содержит `_д`.
+
+    Единое бизнес-правило детекта доставки — используется во всех revenue/dishes-разрезах
+    и при отсеве по галке «без доставки». Постфикс/префикс `_д` ищем как токен в любом месте
+    имени (регистронезависимо), категорию — точным совпадением.
+    """
+    if category == DELIVERY_CATEGORY:
+        return True
+    return DELIVERY_NAME_MARKER in str(name or "").lower()
 
 
 def today() -> date:
@@ -73,7 +95,9 @@ def period_range(period: str, date_from: str | None, date_to: str | None) -> tup
     if period == "day":
         return now, now
     if period == "week":
-        return now - timedelta(days=6), now
+        # «неделя» = с понедельника текущей недели по сегодня (а не последние 7 дней).
+        # weekday(): Пн=0 … Вс=6 — отступаем до ближайшего понедельника.
+        return now - timedelta(days=now.weekday()), now
     # «месяц» = с 1-го числа текущего месяца по сегодня (а не последние 30 дней)
     return now.replace(day=1), now
 
@@ -91,6 +115,10 @@ def prev_period_range(period: str, df: date, dt: date, is_custom: bool) -> tuple
         prev_df = prev_last.replace(day=1)
         prev_dt = prev_df.replace(day=min(dt.day, prev_last.day))
         return prev_df, prev_dt
+    if period == "week" and not is_custom:
+        # «неделя» (Пн…сегодня) сравнивается с тем же отрезком прошлой недели (сдвиг 7 дней),
+        # чтобы сопоставлять одинаковые дни недели, а не скользящее окно.
+        return df - timedelta(days=7), dt - timedelta(days=7)
     span = (dt - df).days
     prev_dt = df - timedelta(days=1)
     prev_df = prev_dt - timedelta(days=span)

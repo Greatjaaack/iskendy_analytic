@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { fetchSuppliers, runImport, suppliersExportUrl } from "../api";
+import { deleteSupplier, fetchSuppliers, runImport, suppliersExportUrl } from "../api";
 import { COLORS } from "../constants";
 
 /** Список поставщиков (таблица) + кнопки импорта из файла и создания нового. */
@@ -22,6 +22,16 @@ export function Suppliers() {
       setMsg("Ошибка импорта");
     }
     setImporting(false);
+  };
+
+  const handleDelete = async (id: number, name: string) => {
+    if (!window.confirm(`Удалить поставщика «${name}»? Контакты, цены и файлы будут удалены безвозвратно.`)) return;
+    try {
+      await deleteSupplier(id);
+      qc.invalidateQueries({ queryKey: ["suppliers"] });
+    } catch {
+      setMsg("Не удалось удалить поставщика");
+    }
   };
 
   return (
@@ -54,6 +64,7 @@ export function Suppliers() {
                 <th style={th}>Телефон</th>
                 <th style={th}>Мин. поставка</th>
                 <th style={{ ...th, textAlign: "right" }}>Товаров</th>
+                <th style={{ ...th, width: 40 }}></th>
               </tr>
             </thead>
             <tbody>
@@ -73,6 +84,15 @@ export function Suppliers() {
                   </td>
                   <td style={{ ...td, color: "var(--text)" }}>{s.min_delivery || "—"}</td>
                   <td style={{ ...td, textAlign: "right", color: COLORS.indigoText }}>{s.products}</td>
+                  <td style={{ ...td, textAlign: "right" }}>
+                    <button
+                      onClick={() => handleDelete(s.id, s.name)}
+                      title="Удалить поставщика"
+                      style={{ background: "transparent", border: "none", cursor: "pointer", color: COLORS.muted, fontSize: 14 }}
+                    >
+                      🗑
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>

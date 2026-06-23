@@ -30,7 +30,7 @@ export function CheckComposition({ range, withDelivery = true }: Props) {
     refetchInterval: REFETCH_INTERVAL_MS,
   });
 
-  const cats = q.data?.categories ?? [];
+  const cats = useMemo(() => q.data?.categories ?? [], [q.data]);
   const color = (c: string) => PALETTE[(cats.indexOf(c) + PALETTE.length) % PALETTE.length];
 
   // провал в категорию (#): товары внутри неё с долей «товар / итог категории» за период.
@@ -62,13 +62,25 @@ export function CheckComposition({ range, withDelivery = true }: Props) {
 
   // «За период»: рейтинг категорий по доле (горизонтальные бары, сортировка убыв.) —
   // читаемее одиночного 100%-стека, где мелкие категории сливаются в полоски.
-  const totalRows = useMemo(() => {
+  // Мелкий хвост (доля < 1%) сворачиваем в «Прочее» — иначе он плодит полоски-слайверы
+  // и доли вида «0.0%» (что и читалось как баг). «Прочее» — не кликабельно (drillable=false).
+  const TAIL_THRESHOLD = 1; // %
+  const totalRows = useMemo<{ name: string; share: number; drillable: boolean }[]>(() => {
     if (!q.data) return [];
     const b = q.data.total.by;
-    return cats
+    const all = cats
       .map((c) => ({ name: c, share: b[c] ? b[c][by] : 0 }))
       .filter((r) => r.share > 0)
       .sort((a, b) => b.share - a.share);
+    const major = all.filter((r) => r.share >= TAIL_THRESHOLD).map((r) => ({ ...r, drillable: true }));
+    const tail = all.filter((r) => r.share < TAIL_THRESHOLD);
+    if (tail.length > 1) {
+      const sum = Math.round(tail.reduce((s, r) => s + r.share, 0) * 10) / 10;
+      major.push({ name: `Прочее (${tail.length})`, share: sum, drillable: false });
+    } else {
+      major.push(...tail.map((r) => ({ ...r, drillable: true })));
+    }
+    return major;
   }, [q.data, cats, by]);
 
   return (
@@ -93,8 +105,8 @@ export function CheckComposition({ range, withDelivery = true }: Props) {
           {totalRows.map((r) => (
             <div
               key={r.name}
-              onClick={() => setDrillCat(r.name)}
-              style={{ display: "flex", alignItems: "center", gap: 10, padding: "4px 0", cursor: "pointer" }}
+              onClick={() => r.drillable && setDrillCat(r.name)}
+              style={{ display: "flex", alignItems: "center", gap: 10, padding: "4px 0", cursor: r.drillable ? "pointer" : "default" }}
             >
               <div style={{ flex: "0 0 38%", color: "var(--text)", fontSize: 13, display: "flex", alignItems: "center", gap: 6, overflow: "hidden" }}>
                 <span style={{ color: color(r.name), flex: "0 0 auto" }}>●</span>
@@ -118,7 +130,7 @@ export function CheckComposition({ range, withDelivery = true }: Props) {
             <Tooltip
               contentStyle={{ background: "var(--bg)", border: "1px solid var(--grid)", borderRadius: 8 }}
               labelStyle={{ color: "var(--text)" }}
-              formatter={(v, n) => [`${v}%`, n]}
+              formatter={(v, n) => [`${Number(v).toFixed(1)}%`, n]}
             />
             <Legend
               wrapperStyle={{ fontSize: 12, color: "var(--muted)", cursor: "pointer" }}
@@ -132,8 +144,10 @@ export function CheckComposition({ range, withDelivery = true }: Props) {
       )}
 
       <div style={{ color: "var(--muted)", fontSize: 12, marginTop: 8 }}>
-        Чеков в периоде: {q.data?.total.checks ?? 0}. Доля = средняя по чекам (
-        {by === "qty" ? "по количеству позиций" : "по сумме"}). Клик по категории — разбивка по товарам.
+        Товарных чеков: {q.data?.total.checks ?? 0}
+        <span title="Считаются чеки с товарными позициями (OLAP). Может слегка отличаться от общего числа чеков в KPI — туда входят возвраты и служебные транзакции.">
+          {" "}ⓘ
+        </span>. Доля = средняя по чекам ({by === "qty" ? "по количеству позиций" : "по сумме"}). Клик по категории — разбивка по товарам.
       </div>
 
       {drillCat && (

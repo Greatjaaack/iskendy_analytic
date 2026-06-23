@@ -25,15 +25,20 @@ export function DishTable({ range, withDelivery = true }: Props) {
     refetchInterval: REFETCH_INTERVAL_MS,
   });
 
-  const cols: { key: SortKey; label: string; num?: boolean }[] = [
+  // sortable=false — колонки фактического с/с (пока не считаем, показываем «—»; позже
+  // подключим расчёт по накладным/расходу). «Кост %» = с/с ÷ цена реализации (=cost_pct).
+  const cols: { key: string; label: string; num?: boolean; sortable?: boolean }[] = [
     { key: "name", label: groupBy === "category" ? "Категория" : "Блюдо" },
-    ...(groupBy === "dish" ? [{ key: "group_name" as SortKey, label: "Группа" }] : []),
+    ...(groupBy === "dish" ? [{ key: "group_name", label: "Группа" }] : []),
     { key: "quantity", label: "Кол-во", num: true },
     { key: "qty_share", label: "Доля кол-ва", num: true },
-    { key: "revenue", label: "Выручка, ₽", num: true },
+    { key: "revenue", label: "Выручка", num: true },
     { key: "revenue_share", label: "Доля продаж", num: true },
-    { key: "cost_sum", label: "С/С, ₽", num: true },
-    { key: "cost_pct", label: "С/С %", num: true },
+    { key: "cost_sum", label: "План с/с", num: true },
+    { key: "cost_pct", label: "План кост %", num: true },
+    { key: "cost_sum_fact", label: "Факт с/с", num: true, sortable: false },
+    { key: "cost_pct_fact", label: "Факт кост %", num: true, sortable: false },
+    { key: "cost_delta", label: "Δ кост", num: true, sortable: false },
     { key: "margin_pct", label: "Маржа %", num: true },
   ];
 
@@ -143,15 +148,18 @@ export function DishTable({ range, withDelivery = true }: Props) {
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
           <thead>
             <tr style={{ color: COLORS.muted, textAlign: "left" }}>
-              {cols.map((c) => (
-                <th
-                  key={c.key}
-                  onClick={() => onSort(c.key)}
-                  style={{ padding: "8px 12px", textAlign: c.num ? "right" : "left", cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}
-                >
-                  {c.label}{sortKey === c.key ? (sortDir === "asc" ? " ↑" : " ↓") : ""}
-                </th>
-              ))}
+              {cols.map((c) => {
+                const sortable = c.sortable !== false;
+                return (
+                  <th
+                    key={c.key}
+                    onClick={sortable ? () => onSort(c.key as SortKey) : undefined}
+                    style={{ padding: "8px 12px", textAlign: c.num ? "right" : "left", cursor: sortable ? "pointer" : "default", userSelect: "none", whiteSpace: "nowrap" }}
+                  >
+                    {c.label}{sortable && sortKey === c.key ? (sortDir === "asc" ? " ↑" : " ↓") : ""}
+                  </th>
+                );
+              })}
             </tr>
           </thead>
           <tbody>
@@ -167,6 +175,10 @@ export function DishTable({ range, withDelivery = true }: Props) {
                   {d.has_cost ? fmtInt(d.cost_sum) : "—"}
                 </td>
                 <td style={{ ...tdR, color: COLORS.muted }}>{d.cost_pct == null ? "—" : `${d.cost_pct}%`}</td>
+                {/* факт с/с / факт кост % / Δ — пока не считаем (заглушки) */}
+                <td style={{ ...tdR, color: COLORS.muted }} title="Фактический с/с — появится после учёта накладных">—</td>
+                <td style={{ ...tdR, color: COLORS.muted }} title="Фактический кост — появится после учёта накладных">—</td>
+                <td style={{ ...tdR, color: COLORS.muted }} title="Дельта план↔факт — появится после учёта накладных">—</td>
                 {d.margin_pct == null ? (
                   <td style={{ ...tdR, color: COLORS.muted }} title="Нет с/с — нужна привязка ТТК">—</td>
                 ) : (
