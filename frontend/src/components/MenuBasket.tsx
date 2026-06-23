@@ -1,6 +1,5 @@
-import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { fetchBasket, rangeKey, type RangeSel, type DishGroupBy } from "../api";
+import { fetchBasket, rangeKey, type RangeSel } from "../api";
 import { REFETCH_INTERVAL_MS, COLORS } from "../constants";
 import { fmtInt } from "../format";
 
@@ -9,15 +8,13 @@ interface Props {
   withDelivery?: boolean;
 }
 
-/** Матрица сочетаемости (market basket, #14): что чаще берут вместе в одном чеке.
- *  Тепловая матрица топ-позиций (ячейка = доля чеков, где встречаются обе) + рейтинг
- *  пар. Источник — `/api/dishes/basket` (OLAP по OrderNum). Тумблер категории/блюда. */
+/** Матрица сочетаемости (market basket, #14): какие блюда чаще берут вместе в одном чеке.
+ *  Тепловая матрица топ-блюд (ячейка = доля чеков, где встречаются оба) + рейтинг
+ *  пар. Источник — `/api/dishes/basket` (OLAP по OrderNum), всегда по блюдам. */
 export function MenuBasket({ range, withDelivery = true }: Props) {
-  const [group, setGroup] = useState<DishGroupBy>("category");
-
   const q = useQuery({
-    queryKey: ["basket", rangeKey(range), group, withDelivery],
-    queryFn: () => fetchBasket(range, group, withDelivery),
+    queryKey: ["basket", rangeKey(range), "dish", withDelivery],
+    queryFn: () => fetchBasket(range, "dish", withDelivery),
     refetchInterval: REFETCH_INTERVAL_MS,
   });
 
@@ -38,15 +35,8 @@ export function MenuBasket({ range, withDelivery = true }: Props) {
         <div>
           <div style={{ color: "var(--text)", fontWeight: 600 }}>Сочетаемость в чеке</div>
           <div style={{ color: "var(--muted)", fontSize: 12, marginTop: 2 }}>
-            Что чаще берут вместе · чеков: {fmtInt(orders)}
+            Какие блюда чаще берут вместе · чеков: {fmtInt(orders)}
           </div>
-        </div>
-        <div style={{ display: "flex", background: "var(--bg)", borderRadius: 8, padding: 3, gap: 2 }}>
-          {(["category", "dish"] as DishGroupBy[]).map((g) => (
-            <button key={g} onClick={() => setGroup(g)} style={mini(group === g)}>
-              {g === "category" ? "Категории" : "Блюда"}
-            </button>
-          ))}
         </div>
       </div>
 
@@ -139,10 +129,3 @@ export function MenuBasket({ range, withDelivery = true }: Props) {
     </div>
   );
 }
-
-const mini = (active: boolean): React.CSSProperties => ({
-  padding: "5px 12px", borderRadius: 6, border: "none", cursor: "pointer",
-  fontSize: 12, fontWeight: 600,
-  background: active ? COLORS.primary : "transparent",
-  color: active ? "var(--text)" : "var(--muted)",
-});
