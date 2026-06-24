@@ -193,8 +193,13 @@ export function MenuBasket({ range, withDelivery = true }: Props) {
                         style={{
                           writingMode: "vertical-rl", transform: "rotate(180deg)", margin: "0 auto",
                           whiteSpace: "nowrap", maxHeight: 118, overflow: "hidden",
-                          background: isFocus ? COLORS.primary : "transparent",
-                          borderRadius: isFocus ? 6 : 0, padding: isFocus ? "6px 3px" : 0,
+                          background: isFocus
+                            ? COLORS.primary
+                            : focusMode && isLinked
+                              ? `rgba(${PRIMARY_RGB}, 0.2)`
+                              : "transparent",
+                          borderRadius: isFocus || (focusMode && isLinked) ? 6 : 0,
+                          padding: isFocus || (focusMode && isLinked) ? "6px 3px" : 0,
                         }}
                       >
                         {short(colLabel, 18)}
@@ -225,7 +230,20 @@ export function MenuBasket({ range, withDelivery = true }: Props) {
                       }}
                       title={`${rowLabel} · в ${freq[oi] ?? 0} чеках — подсветить связи`}
                     >
-                      {short(rowLabel)}
+                      <span
+                        style={{
+                          background: rowFocus
+                            ? COLORS.primary
+                            : focusMode && rowLinked
+                              ? `rgba(${PRIMARY_RGB}, 0.2)`
+                              : "transparent",
+                          color: rowFocus ? "#fff" : undefined,
+                          borderRadius: rowFocus || (focusMode && rowLinked) ? 6 : 0,
+                          padding: rowFocus || (focusMode && rowLinked) ? "3px 8px" : 0,
+                        }}
+                      >
+                        {short(rowLabel)}
+                      </span>
                     </td>
                     {axis.map((oj) => {
                       const colLabel = labels[oj];
