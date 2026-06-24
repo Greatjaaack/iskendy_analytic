@@ -27,6 +27,9 @@ node_modules/
 dist/
 *.log
 
+# Вспомогательные скрипты (скриншоты/отладка)
+backend/_shot.py
+
 # IDE / OS
 .idea/
 .vscode/
