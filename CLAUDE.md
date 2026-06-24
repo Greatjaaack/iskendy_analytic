@@ -26,7 +26,7 @@ Frontend (из `frontend/`):
 `cd backend && black . && isort . && flake8 .`. Конфиг приложения — pydantic `Settings`
 в `backend/config.py` (`from config import settings`), не `os.getenv` по коду.
 
-Перед запуском backend нужен `.env` (см. `.env.example`): обязателен `IIKO_WEB_PASSWORD`.
+Перед запуском backend нужен `.env` (см. `.env.example`): обязателен `IIKO_WEB_PASSWORD`, а также `AUTH_PASSWORD` (вход в дашборд; пустой пароль = вход невозможен).
 
 ## Архитектура
 
@@ -34,6 +34,9 @@ Frontend (из `frontend/`):
 
 ### Авторизация в iikoweb (ключевой нюанс)
 `backend/iiko_web_client.py` — внутренний API защищён cookie-сессией (TTL ~20 мин), отдельного login-endpoint нет. `_login()` поднимает **headless Chromium через Playwright**, вводит логин/пароль как человек на странице `/navigator/index.html#/auth/login`, забирает cookies и дальше шлёт быстрые JSON-запросы через `httpx` с этими куками. `_ensure_session()` проверяет сессию через `/api/auth` и перелогинивается при истечении; `_post()` при 401/403 сбрасывает куки и повторяет один раз. Пароль — только в `.env`.
+
+### Авторизация дашборда (логин/пароль)
+Весь дашборд закрыт за экраном входа. **Бэкенд** (`backend/auth.py`): один общий логин/пароль из `.env` (`AUTH_USERNAME`/`AUTH_PASSWORD`; пустой пароль = вход выключен, сверка в константное время через `hmac.compare_digest`). Сессия — **JWT (HS256), подписан вручную на `hmac`** (без внешних зависимостей), TTL `JWT_TTL_HOURS` (дефолт 12 ч); секрет подписи — `JWT_SECRET`, при пустом выводится из пароля (`iskendy:<auth_password>`). Роутер `backend/routers/auth.py`: `POST /api/auth/login` (логин/пароль → `{token, username}`), `GET /api/auth/me` (проверка токена). Зависимость **`require_auth`** (Bearer-JWT, иначе 401) навешена в `main.py` на **все роутеры и `/api/sync*`**; публичны только `/api/health` и `/api/auth/login`. **Фронт**: токен в localStorage (`src/token.ts`), axios-перехватчики (`src/api.ts`) добавляют `Authorization: Bearer` и при 401 чистят токен + редиректят на `/login`; guard `RequireAuth` (`src/auth.tsx`) оборачивает защищённые роуты в `App.tsx`; экран входа — `src/pages/Login.tsx`; кнопка «Выйти» — в `Sidebar`. Это **локальная авторизация дашборда**, не путать с cookie-сессией iikoweb выше.
 
 ### Единый эндпоинт данных
 Почти все метрики идут через один вызов `POST /api/kpi/dashboard/get-data` (`get_metrics()`), параметризованный `metricCodes` + `dataType` (`DATA_SUMMARY_BY_DATE` для выручки по дням, `DATA_DETAILS` для блюд, `DATA_TOTAL` для итогов). Названия и категории блюд приходят **в том же ответе** в блоке `decoration.product` (с `with_decoration=True`) — отдельного справочника блюд не нужно. Коды метрик — выручка через `REV_GROSS` (бухгалтерские `ACC_CAT_*`/НДС в этой точке возвращают 0, не использовать).

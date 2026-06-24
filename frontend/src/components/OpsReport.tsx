@@ -18,10 +18,6 @@ const planPctColor = (v: number | null): string => {
   return COLORS.bad;
 };
 
-// компактная сумма для ячейки дня: 7610 → «7.6к», 450 → «450»
-const compact = (v: number): string =>
-  v >= 1000 ? `${Math.round(v / 100) / 10}к` : v ? String(Math.round(v)) : "—";
-
 // цвет food cost %: зелёный — норма, жёлтый — пограничный, красный — высокий
 const costColor = (v: number | null): string => {
   if (v == null) return "var(--muted)";
@@ -41,7 +37,7 @@ const METRICS: { key: MetricKey; label: string }[] = [
 
 function cellText(c: OpsCell | undefined, m: MetricKey): string {
   if (!c) return "—";
-  if (m === "revenue") return compact(c.revenue);
+  if (m === "revenue") return c.revenue ? fmtInt(c.revenue) : "—";
   if (m === "avg_check") return c.avg_check ? fmtInt(c.avg_check) : "—";
   if (m === "guests") return c.guests ? String(c.guests) : "—";
   return c.food_cost_pct == null ? "—" : `${c.food_cost_pct}%`;
@@ -167,7 +163,7 @@ export function OpsReport({ range, withDelivery = true }: Props) {
                 <td colSpan={2} style={{ ...TD, ...stick(0, COL_DAYPART + COL_METRIC), textAlign: "left", color: "var(--text)", fontWeight: 700 }}>Итого выручка</td>
                 {days.map((day) => {
                   const c = d!.totals.cells[day.date];
-                  return <td key={day.date} style={{ ...TD, color: c ? "var(--text)" : "var(--grid)", fontWeight: 600 }}>{c ? compact(c.revenue) : "—"}</td>;
+                  return <td key={day.date} style={{ ...TD, color: c ? "var(--text)" : "var(--grid)", fontWeight: 600 }}>{c ? fmtInt(c.revenue) : "—"}</td>;
                 })}
                 <td style={{ ...TD, color: "var(--text)", fontWeight: 700, borderLeft: "2px solid var(--grid)" }}>{fmtInt(d!.totals.total.revenue)}</td>
                 {hasPlan && <td style={{ ...TD, color: "var(--muted)" }}>{fmtInt(d!.totals.plan.revenue)}</td>}

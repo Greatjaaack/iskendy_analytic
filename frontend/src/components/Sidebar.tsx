@@ -1,4 +1,5 @@
 import { NavLink } from "react-router-dom";
+import { logout } from "../auth";
 import { useTheme } from "../theme";
 import { COLORS } from "../constants";
 
@@ -78,6 +79,17 @@ export function Sidebar() {
         }}
       >
         {mode === "dark" ? "☀️ Светлая тема" : "🌙 Тёмная тема"}
+      </button>
+
+      <button
+        onClick={logout}
+        style={{
+          marginTop: 8, width: "100%", padding: "9px 12px", borderRadius: 8,
+          border: "1px solid var(--grid)", background: "transparent",
+          color: "var(--muted)", fontSize: 13, cursor: "pointer", textAlign: "left",
+        }}
+      >
+        🚪 Выйти
       </button>
     </div>
   );

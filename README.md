@@ -23,6 +23,10 @@
 - **Импорт** из Excel «ТТК и матрица продуктов» — наполняет поставщиков, ингредиенты,
   цены и ТТК одним действием (привязки блюд и торговые марки переживают реимпорт).
 - **Светлая/тёмная тема**.
+- **Авторизация**: весь дашборд закрыт за экраном входа (логин/пароль). Один общий аккаунт
+  из `.env` (`AUTH_USERNAME`/`AUTH_PASSWORD`), сессия — JWT в браузере (срок `JWT_TTL_HOURS`,
+  по умолчанию 12 ч), выход — кнопкой «Выйти» в меню. **Обязательно задайте `AUTH_PASSWORD`**
+  (пустой пароль = вход невозможен).
 - _В разработке_: накладные (косты), остатки из iiko, автозаказ. См. `PLAN.md`.
 
 > Бóльшая часть метрик тянется из iiko **вживую** на каждый запрос (выручка/часы по
@@ -146,7 +150,7 @@
 
 ### Docker (рекомендуется)
 ```bash
-cp .env.example .env      # заполнить IIKO_WEB_PASSWORD
+cp .env.example .env      # заполнить IIKO_WEB_PASSWORD и AUTH_PASSWORD
 docker compose up -d --build
 # frontend: http://localhost:5173   backend: http://localhost:8000
 docker compose logs -f backend     # логи
@@ -161,7 +165,10 @@ docker compose down                # стоп  (down -v — со сбросом 
 `.env` (см. `.env.example`): `IIKO_WEB_URL`, `IIKO_WEB_LOGIN`, `IIKO_WEB_PASSWORD`,
 `IIKO_STORE_ID`, `DATABASE_URL`, `TIMEZONE` (часовой пояс ресторана, по умолчанию
 `Europe/Moscow` — задаёт границы «сегодня/неделя/месяц» и расписание синков),
-`CACHE_TTL_SECONDS` (TTL in-memory кэша живых чтений, дефолт 60 c; 0 — выключить).
+`CACHE_TTL_SECONDS` (TTL in-memory кэша живых чтений, дефолт 60 c; 0 — выключить),
+**`AUTH_USERNAME`/`AUTH_PASSWORD`** (вход в дашборд — обязателен непустой пароль),
+`JWT_SECRET` (секрет подписи токена; при пустом выводится из пароля), `JWT_TTL_HOURS`
+(срок сессии, дефолт 12 ч).
 
 ---
 

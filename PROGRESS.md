@@ -342,6 +342,25 @@ METRO+Мэтро+«METRO Chef…»→`METRO`, OZON+озон+ozon.ru→`Ozon`, tu
 
 **Проверено:** `tsc -b` чистый; frontend-контейнер пересобран и перезапущен (backend не трогался).
 
+### Авторизация дашборда — логин/пароль (24 июня 2026)
+Весь дашборд закрыт за экраном входа (по запросу владельца). Решение: один общий логин/пароль
+из `.env`, сессия — JWT в localStorage.
+- **Бэкенд** `backend/auth.py`: JWT (HS256) подписывается вручную на `hmac` — **без новых зависимостей**.
+  `verify_credentials` сверяет `AUTH_USERNAME`/`AUTH_PASSWORD` в константное время (пустой пароль = вход
+  выключен). Секрет подписи `JWT_SECRET` (при пустом — производный от пароля), TTL `JWT_TTL_HOURS` (12 ч).
+  Зависимость `require_auth` (Bearer-JWT → 401) навешена в `main.py` на **все роутеры + `/api/sync*`**;
+  публичны только `/api/health` и `/api/auth/login`. Роутер `routers/auth.py`: `POST /api/auth/login`,
+  `GET /api/auth/me`.
+- **Фронт**: `src/token.ts` (хранение токена), axios-перехватчики в `src/api.ts` (Bearer + редирект на
+  `/login` при 401), guard `RequireAuth` + `login`/`logout` в `src/auth.tsx`, экран `src/pages/Login.tsx`,
+  маршрут `/login` и обёртка защищённых роутов в `App.tsx`, кнопка «Выйти» в `Sidebar`.
+- **Конфиг**: `AUTH_USERNAME`/`AUTH_PASSWORD`/`JWT_SECRET`/`JWT_TTL_HOURS` в `config.py` + `.env.example`/`.env`.
+
+**Проверено (docker, e2e):** health 200 (публичный), `/api/revenue` без токена → 401, неверный логин → 401,
+верный логин → токен, `/api/revenue` с токеном → 200, `/api/auth/me` → `{username: admin}`; фронт `/` и
+`/login` (SPA-fallback) отдаются 200. `tsc -b` и `flake8` чистые. **Дефолтный пароль `change_me` в `.env` —
+сменить!**
+
 ## Осталось (дорожная карта)
 
 - **Привязки для комбо и «Напиток»/«Кола»** (данные): отложены по решению владельца.

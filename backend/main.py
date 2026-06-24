@@ -7,14 +7,15 @@
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 
 import storage
+from auth import require_auth
 from cache import cache_clear
 from models import SessionLocal, SyncLog, init_db
-from routers import dishes, imports, nomenclature, plan, revenue, suppliers
+from routers import auth, dishes, imports, nomenclature, plan, revenue, suppliers
 from scheduler import full_sync, setup_scheduler, sync_dishes, sync_revenue
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -38,12 +39,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(revenue.router)
-app.include_router(dishes.router)
-app.include_router(suppliers.router)
-app.include_router(nomenclature.router)
-app.include_router(imports.router)
-app.include_router(plan.router)
+# Авторизация: роутер логина — публичный; все остальные закрыты зависимостью require_auth.
+app.include_router(auth.router)
+
+protected = [Depends(require_auth)]
+app.include_router(revenue.router, dependencies=protected)
+app.include_router(dishes.router, dependencies=protected)
+app.include_router(suppliers.router, dependencies=protected)
+app.include_router(nomenclature.router, dependencies=protected)
+app.include_router(imports.router, dependencies=protected)
+app.include_router(plan.router, dependencies=protected)
 
 
 @app.get("/api/health")
@@ -51,7 +56,7 @@ def health():
     return {"status": "ok"}
 
 
-@app.get("/api/sync/last")
+@app.get("/api/sync/last", dependencies=protected)
 def last_sync():
     """Время последней успешной синхронизации (created_at в БД — naive UTC)."""
     with SessionLocal() as db:
@@ -69,7 +74,7 @@ def last_sync():
         }
 
 
-@app.post("/api/sync")
+@app.post("/api/sync", dependencies=protected)
 async def trigger_sync(days: int = 0):
     """Ручная/авто-синхронизация продаж из iiko в SQLite.
 

@@ -2,6 +2,8 @@
 // чтобы компоненты могли импортировать и функцию, и тип из одного места "../api").
 import axios from "axios";
 
+import { clearToken, getToken } from "./token";
+
 import type {
   Basket,
   CheckComposition,
@@ -39,6 +41,27 @@ export type * from "./types";
 const BASE = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 
 export const api = axios.create({ baseURL: BASE });
+
+// На каждый запрос подставляем Bearer-токен сессии (если есть).
+api.interceptors.request.use((config) => {
+  const token = getToken();
+  if (token) config.headers.Authorization = `Bearer ${token}`;
+  return config;
+});
+
+// Истёкший/невалидный токен → 401: чистим сессию и уводим на /login
+// (кроме самого запроса логина, чтобы не перебивать сообщение об ошибке формы).
+api.interceptors.response.use(
+  (resp) => resp,
+  (error) => {
+    const url: string = error.config?.url ?? "";
+    if (error.response?.status === 401 && !url.includes("/api/auth/login")) {
+      clearToken();
+      if (window.location.pathname !== "/login") window.location.href = "/login";
+    }
+    return Promise.reject(error);
+  },
+);
 
 /** Query-строка для API из выбора диапазона (пресет или произвольные даты). */
 export const rangeQS = (r: RangeSel): string =>
