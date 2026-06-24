@@ -181,7 +181,7 @@ export function MenuBasket({ range, withDelivery = true }: Props) {
                       onClick={() => focusOn(oj)}
                       style={{
                         padding: "4px 2px",
-                        color: isFocus ? "#fff" : focusMode && isLinked ? COLORS.indigoText : "var(--muted)",
+                        color: isFocus ? "#fff" : focusMode && isLinked ? "var(--text)" : "var(--muted)",
                         fontWeight: isFocus || (focusMode && isLinked) ? 700 : 500, cursor: "pointer",
                         opacity: dim ? 0.16 : 1, filter: dim ? "grayscale(1)" : "none",
                         transition: "opacity .15s",
@@ -221,7 +221,7 @@ export function MenuBasket({ range, withDelivery = true }: Props) {
                       onClick={() => focusOn(oi)}
                       style={{
                         padding: "2px 12px 2px 0",
-                        color: rowFocus ? COLORS.indigoText : focusMode && rowLinked ? COLORS.indigoText : "var(--text)",
+                        color: "var(--text)",
                         fontWeight: rowFocus ? 700 : focusMode && rowLinked ? 600 : 400, cursor: "pointer",
                         opacity: rowDim ? 0.16 : 1, filter: rowDim ? "grayscale(1)" : "none",
                         transition: "opacity .15s",
@@ -260,6 +260,10 @@ export function MenuBasket({ range, withDelivery = true }: Props) {
                         );
                       }
                       const pct = cellPct(oi, oj);
+                      // ниже порога видимости (0.5%) ячейка пустая — нет числа, нет заливки,
+                      // нет подсветки. Важно для «доли чеков»: там значения мелкие, и иначе
+                      // подсветка floor-ом заливала бы пустые ячейки (без числа).
+                      const shown = pct >= 0.5;
                       const intensity = Math.min(1, maxPct ? pct / maxPct : 0);
                       const co = matrix[oi]?.[oj] ?? 0;
                       const tip =
@@ -268,25 +272,25 @@ export function MenuBasket({ range, withDelivery = true }: Props) {
                           : `«${rowLabel}» + «${colLabel}»: ${co} чек. (${pct.toFixed(1)}% всех чеков)`;
                       // фон через rgba (прозрачность только у фона, не у текста);
                       // текст всегда непрозрачный: тёмный/светлый по теме на бледном фоне, белый на насыщенном
-                      // в режиме подсветки связанные ячейки крестовины поднимаем по насыщенности
+                      // в режиме подсветки видимые ячейки крестовины поднимаем по насыщенности
                       // (floor 0.45) и обводим акцентом — чтобы «что берут с блюдом» читалось явно
-                      const lit = focusMode && !off && pct > 0; // подсвеченная связь
-                      const alpha = pct > 0 ? (lit ? Math.max(0.45, 0.12 + intensity * 0.88) : 0.12 + intensity * 0.88) : 0;
+                      const lit = focusMode && !off && shown; // подсвеченная связь (только видимая)
+                      const alpha = !shown ? 0 : lit ? Math.max(0.45, 0.12 + intensity * 0.88) : 0.12 + intensity * 0.88;
                       return (
                         <td
                           key={oj}
                           title={tip}
                           style={{
                             width: CELL_W, height: CELL_H, textAlign: "center", borderRadius: 6,
-                            background: pct > 0 ? `rgba(${PRIMARY_RGB}, ${alpha})` : "var(--bg)",
+                            background: shown ? `rgba(${PRIMARY_RGB}, ${alpha})` : "var(--bg)",
                             color: alpha > 0.5 ? "#fff" : "var(--text)",
-                            fontSize: 14, fontWeight: pct > 0 ? 700 : 400,
+                            fontSize: 14, fontWeight: shown ? 700 : 400,
                             boxShadow: lit ? `inset 0 0 0 2px ${COLORS.primary}` : "none",
                             opacity: off ? 0.12 : 1, filter: off ? "grayscale(1)" : "none",
                             transition: "opacity .15s",
                           }}
                         >
-                          {pct >= 0.5 ? `${Math.round(pct)}%` : ""}
+                          {shown ? `${Math.round(pct)}%` : ""}
                         </td>
                       );
                     })}
