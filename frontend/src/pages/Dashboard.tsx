@@ -215,7 +215,7 @@ export function Dashboard() {
                 {isSingleDay ? (
                   <HourlyChart range={sel} withDelivery={withDelivery} />
                 ) : (
-                  <RevenueChart data={revenueQ.data.data} prevData={revenueQ.data.prev_data} range={sel} />
+                  <RevenueChart data={revenueQ.data.data} prevData={revenueQ.data.prev_data} range={sel} withDelivery={withDelivery} />
                 )}
               </div>
               <div className="dash-full">

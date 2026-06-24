@@ -47,10 +47,10 @@ function cellText(c: OpsCell | undefined, m: MetricKey): string {
   return c.food_cost_pct == null ? "—" : `${c.food_cost_pct}%`;
 }
 
-const COL_DAYPART = 82; // ширина липкой колонки «Дейпарт»
-const COL_METRIC = 74; // ширина липкой колонки «Метрика»
-const TH: React.CSSProperties = { padding: "6px 8px", fontWeight: 500, fontSize: 11, whiteSpace: "nowrap" };
-const TD: React.CSSProperties = { padding: "5px 8px", fontSize: 12, textAlign: "right", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", minWidth: 40 };
+const COL_DAYPART = 96; // ширина липкой колонки «Дейпарт»
+const COL_METRIC = 84; // ширина липкой колонки «Метрика»
+const TH: React.CSSProperties = { padding: "8px 10px", fontWeight: 500, fontSize: 12, whiteSpace: "nowrap" };
+const TD: React.CSSProperties = { padding: "8px 10px", fontSize: 13, textAlign: "right", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", minWidth: 44 };
 // липкие левые колонки (дейпарт + метрика) — не уезжают при горизонтальной прокрутке.
 // zIndex: дейпарт (рамка-угол) выше метрики, обе выше ячеек дней.
 const stick = (left: number, width: number, z = 2): React.CSSProperties => ({
@@ -115,7 +115,7 @@ export function OpsReport({ range, withDelivery = true }: Props) {
 
       {ready && (
         <div style={{ overflowX: "auto" }}>
-          <table style={{ borderCollapse: "collapse", fontVariantNumeric: "tabular-nums" }}>
+          <table style={{ borderCollapse: "collapse", fontVariantNumeric: "tabular-nums", minWidth: "100%" }}>
             <thead>
               <tr style={{ color: "var(--muted)" }}>
                 <th style={{ ...TH, ...stick(0, COL_DAYPART), textAlign: "left" }}>Дейпарт</th>
@@ -188,7 +188,7 @@ export function OpsReport({ range, withDelivery = true }: Props) {
       {ready && d!.category_groups.length > 0 && (
         <div style={{ marginTop: 22 }}>
           <div style={{ color: "var(--text)", fontWeight: 600, marginBottom: 10 }}>Food cost % по дейпартам и категориям</div>
-          <table style={{ borderCollapse: "collapse", fontVariantNumeric: "tabular-nums" }}>
+          <table style={{ borderCollapse: "collapse", fontVariantNumeric: "tabular-nums", width: "100%" }}>
             <thead>
               <tr style={{ color: "var(--muted)" }}>
                 <th style={{ ...TH, textAlign: "left", minWidth: 110 }}>Дейпарт</th>

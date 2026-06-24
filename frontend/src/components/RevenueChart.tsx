@@ -16,6 +16,7 @@ interface Props {
   data: RevenueDay[];
   prevData: PrevDay[];
   range: RangeSel;
+  withDelivery?: boolean;
 }
 
 type View = "sum" | "channel" | "weather";
@@ -36,7 +37,7 @@ const dm = (iso: string) => {
 // Подпись дня на оси X: «Пн 22.06» (день недели + число).
 const dayLabel = (d: { day_of_week: string; date: string }) => `${d.day_of_week} ${dm(d.date)}`;
 
-export function RevenueChart({ data, prevData, range }: Props) {
+export function RevenueChart({ data, prevData, range, withDelivery = true }: Props) {
   const [days, setDays] = useState<Set<string>>(new Set());
   const [view, setView] = useState<View>("sum");
   const [hidden, setHidden] = useState<Set<string>>(new Set());
@@ -57,8 +58,8 @@ export function RevenueChart({ data, prevData, range }: Props) {
     });
 
   const chQ = useQuery({
-    queryKey: ["revenue-by-channel", rangeKey(range)],
-    queryFn: () => fetchRevenueByChannel(range),
+    queryKey: ["revenue-by-channel", rangeKey(range), withDelivery],
+    queryFn: () => fetchRevenueByChannel(range, withDelivery),
     refetchInterval: REFETCH_INTERVAL_MS,
     enabled: view === "channel",
   });
@@ -107,7 +108,8 @@ export function RevenueChart({ data, prevData, range }: Props) {
     );
   };
 
-  const channels = chQ.data?.channels ?? [];
+  // при выкл «С доставкой» канал доставки убираем из разреза целиком (как в ChecksDistribution)
+  const channels = (chQ.data?.channels ?? []).filter((c) => withDelivery || c !== "доставка");
   const visible = channels.filter((c) => !hidden.has(c));
 
   const sumData = data.filter((d) => dayOk(d.day_of_week)).map((d) => ({
