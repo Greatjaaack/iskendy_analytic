@@ -35,8 +35,8 @@ export function DishTable({ range, withDelivery = true }: Props) {
     { key: "revenue", label: "Выручка", num: true },
     { key: "revenue_share", label: "Доля продаж", num: true },
     { key: "cost_sum", label: "План с/с", num: true },
-    { key: "cost_pct", label: "План кост %", num: true },
     { key: "cost_sum_fact", label: "Факт с/с", num: true, sortable: false },
+    { key: "cost_pct", label: "План кост %", num: true },
     { key: "cost_pct_fact", label: "Факт кост %", num: true, sortable: false },
     { key: "cost_delta", label: "Δ кост", num: true, sortable: false },
     { key: "margin_pct", label: "Маржа %", num: true },
@@ -174,9 +174,10 @@ export function DishTable({ range, withDelivery = true }: Props) {
                 <td style={{ ...tdR, color: d.has_cost ? "var(--text)" : COLORS.muted }}>
                   {d.has_cost ? fmtInt(d.cost_sum) : "—"}
                 </td>
-                <td style={{ ...tdR, color: COLORS.muted }}>{d.cost_pct == null ? "—" : `${d.cost_pct}%`}</td>
-                {/* факт с/с / факт кост % / Δ — пока не считаем (заглушки) */}
+                {/* факт с/с — пока не считаем (заглушка) */}
                 <td style={{ ...tdR, color: COLORS.muted }} title="Фактический с/с — появится после учёта накладных">—</td>
+                <td style={{ ...tdR, color: COLORS.muted }}>{d.cost_pct == null ? "—" : `${d.cost_pct}%`}</td>
+                {/* факт кост % / Δ — пока не считаем (заглушки) */}
                 <td style={{ ...tdR, color: COLORS.muted }} title="Фактический кост — появится после учёта накладных">—</td>
                 <td style={{ ...tdR, color: COLORS.muted }} title="Дельта план↔факт — появится после учёта накладных">—</td>
                 {d.margin_pct == null ? (

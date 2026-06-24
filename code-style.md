@@ -15,8 +15,9 @@
 - **Пробелы вокруг операторов** (`x = 1`, `a + b`), без пробела перед `,`/`:`, один после.
 - **В конце файла — одна пустая строка**, без хвостовых пробелов.
 
-Инструменты (через pre-commit): `black` (line-length 100), `isort` (profile black),
-`mypy`, `flake8` (max-line-length 100, ignore `E203`/`W503`). Споры о формате решает тула.
+Инструменты (запуск вручную перед коммитом: `cd backend && black . && isort . && flake8 .`):
+`black` (line-length 100), `isort` (profile black), `mypy`, `flake8`
+(max-line-length 100, ignore `E203`/`W503`). Споры о формате решает тула.
 
 ## 2. Именование
 

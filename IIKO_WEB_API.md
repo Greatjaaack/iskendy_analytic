@@ -86,8 +86,8 @@
 ## OLAP-движок (гибкие отчёты, асинхронный)
 
 1. `POST /api/olap/init` — запуск, возвращает `{"data": "<hash>"}`
-2. `GET /api/olap/fetch-status/<hash>` — поллинг (`IN_PROGRESS` → `READY`/`ERROR`)
-3. результат по готовности
+2. `GET /api/olap/fetch-status/<hash>` — поллинг (`IN_PROGRESS` → `SUCCESS`/`ERROR`)
+3. `POST /api/olap/fetch/<hash>/simple` — результат по готовности (`result.rows`)
 
 Тело init (пример «Доходы и расходы», olapType `TRANSACTIONS`):
 ```json
@@ -105,8 +105,12 @@
 ```
 olapType: `TRANSACTIONS` (проводки/доходы-расходы), `SALES` (продажи). Точные имена полей SALES — добрать из готового пресета (валидные ловятся из ошибки fetch-status).
 
+В коде (`iiko_web_client.olap_sales`) фильтр SALES идёт по полю даты **`OpenDate.Typed`** (`filterType:"date_range"`, `includeLeft:true`, `includeRight:true`).
+⚠️ **`dateTo` по `OpenDate.Typed` трактуется ВКЛЮЧИТЕЛЬНО как целый день** — живой API игнорирует `includeRight:false`. Поэтому `dateTo` передаётся **как есть** (= конец диапазона), **без +1**: иначе в выборку попадал бы лишний день после диапазона (для одного дня это удваивало все метрики).
+
 ### Проверенные поля OLAP SALES (Искенди, июнь 2026)
 Группировки: `OrderNum` (номер заказа), `DishName`, `DishCategory`, `HourOpen`,
+`OpenDate.Typed` (дата заказа, ISO `YYYY-MM-DD` — используется и как поле фильтра, и как группировка дней),
 `OpenTime`/`CloseTime` (ISO-таймстамп), `SessionNum`, `Cashier`, `Department`.
 Данные: `DishAmountInt` (кол-во), `DishSumInt` (сумма без скидки).
 Невалидные (OLAP → ERROR): `UniqOrderId`, `OrderId`, `Order.Num`, `Modifier`,
@@ -118,6 +122,10 @@ olapType: `TRANSACTIONS` (проводки/доходы-расходы), `SALES`
 группировка `[OrderNum, DishCategory, DishName]`, у каждого заказа берём «Статус» и
 относим к нему все его блюда (см. `/api/dishes/service-breakdown`). field0 склеивает
 группы через «, ».
+Дополнительно доставка определяется по самой позиции (`utils.is_delivery`): **меню-категория
+«Доставка» ИЛИ имя позиции с маркером `_д`** (напр. «Дюрюм_д») — это форсит канал «доставка»
+независимо от «Статуса». Категория-маркер `DELIVERY_CATEGORY` и маркер имени `DELIVERY_NAME_MARKER`
+— в `constants.py`.
 
 ## Готовые OLAP-шаблоны (presets)
 Доходы и расходы, Отчёт по официантам, по скидкам, по типам оплаты, почасовой, по ингредиентам.
