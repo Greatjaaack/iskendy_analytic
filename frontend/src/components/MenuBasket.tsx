@@ -63,10 +63,11 @@ export function MenuBasket({ range, withDelivery = true }: Props) {
   nz.sort((a, b) => a - b);
   const maxPct = nz.length ? nz[Math.floor(nz.length * 0.9)] || nz[nz.length - 1] : 0;
 
-  const short = (s: string, n = 20) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
+  const short = (s: string, n = 22) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
 
-  const CELL_W = 54;
-  const CELL_H = 38;
+  const CELL_W = 72;
+  const CELL_H = 52;
+  const focusMode = focus >= 0;
 
   // Порядок осей (одна перестановка на обе оси — диагональ остаётся выровненной).
   // Зависит только от тумблера и НЕ двигается при клике. Элементы — исходные индексы.
@@ -164,28 +165,39 @@ export function MenuBasket({ range, withDelivery = true }: Props) {
       {/* тепловая матрица: строки — «основное» блюдо, столбцы — «добавка» */}
       {labels.length > 0 && (
         <div style={{ overflowX: "auto" }}>
-          <table style={{ borderCollapse: "separate", borderSpacing: 3, fontSize: 13 }}>
+          <table style={{ borderCollapse: "separate", borderSpacing: 4, fontSize: 14 }}>
             <thead>
               <tr>
                 <th style={{ padding: 4 }} />
                 {axis.map((oj) => {
                   const colLabel = labels[oj];
                   const isFocus = oj === focus;
+                  const isLinked = linked(oj);
+                  const dim = focusMode && !isLinked; // не связано с выбранным — гасим
                   return (
                     <th
                       key={oj}
                       title={`${colLabel} — подсветить связи`}
                       onClick={() => focusOn(oj)}
                       style={{
-                        padding: "4px 2px", color: isFocus ? COLORS.indigoText : "var(--muted)",
-                        fontWeight: isFocus ? 700 : 500, cursor: "pointer",
-                        opacity: linked(oj) ? 1 : 0.28, transition: "opacity .15s",
-                        width: CELL_W, textAlign: "center", fontSize: 11, verticalAlign: "bottom",
-                        height: 96,
+                        padding: "4px 2px",
+                        color: isFocus ? "#fff" : focusMode && isLinked ? COLORS.indigoText : "var(--muted)",
+                        fontWeight: isFocus || (focusMode && isLinked) ? 700 : 500, cursor: "pointer",
+                        opacity: dim ? 0.16 : 1, filter: dim ? "grayscale(1)" : "none",
+                        transition: "opacity .15s",
+                        width: CELL_W, textAlign: "center", fontSize: 12, verticalAlign: "bottom",
+                        height: 128,
                       }}
                     >
-                      <div style={{ writingMode: "vertical-rl", transform: "rotate(180deg)", margin: "0 auto", whiteSpace: "nowrap", maxHeight: 90, overflow: "hidden" }}>
-                        {short(colLabel, 16)}
+                      <div
+                        style={{
+                          writingMode: "vertical-rl", transform: "rotate(180deg)", margin: "0 auto",
+                          whiteSpace: "nowrap", maxHeight: 118, overflow: "hidden",
+                          background: isFocus ? COLORS.primary : "transparent",
+                          borderRadius: isFocus ? 6 : 0, padding: isFocus ? "6px 3px" : 0,
+                        }}
+                      >
+                        {short(colLabel, 18)}
                       </div>
                     </th>
                   );
@@ -196,15 +208,20 @@ export function MenuBasket({ range, withDelivery = true }: Props) {
               {axis.map((oi) => {
                 const rowLabel = labels[oi];
                 const rowFocus = oi === focus;
+                const rowLinked = linked(oi);
+                const rowDim = focusMode && !rowLinked;
                 return (
                   <tr key={oi}>
                     <td
                       onClick={() => focusOn(oi)}
                       style={{
-                        padding: "2px 10px 2px 0", color: rowFocus ? COLORS.indigoText : "var(--text)",
-                        fontWeight: rowFocus ? 700 : 400, cursor: "pointer",
-                        opacity: linked(oi) ? 1 : 0.28, transition: "opacity .15s",
-                        whiteSpace: "nowrap", textAlign: "right", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis",
+                        padding: "2px 12px 2px 0",
+                        color: rowFocus ? COLORS.indigoText : focusMode && rowLinked ? COLORS.indigoText : "var(--text)",
+                        fontWeight: rowFocus ? 700 : focusMode && rowLinked ? 600 : 400, cursor: "pointer",
+                        opacity: rowDim ? 0.16 : 1, filter: rowDim ? "grayscale(1)" : "none",
+                        transition: "opacity .15s",
+                        whiteSpace: "nowrap", textAlign: "right", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis",
+                        fontSize: 14,
                       }}
                       title={`${rowLabel} · в ${freq[oi] ?? 0} чеках — подсветить связи`}
                     >
@@ -217,7 +234,7 @@ export function MenuBasket({ range, withDelivery = true }: Props) {
                         return (
                           <td
                             key={oj}
-                            style={{ width: CELL_W, height: CELL_H, textAlign: "center", background: "var(--bg)", color: "var(--muted)", borderRadius: 6, fontSize: 11, opacity: off ? 0.18 : 1, transition: "opacity .15s" }}
+                            style={{ width: CELL_W, height: CELL_H, textAlign: "center", background: "var(--bg)", color: "var(--muted)", borderRadius: 6, fontSize: 12, opacity: off ? 0.12 : 1, transition: "opacity .15s" }}
                             title={`${rowLabel}: в ${freq[oi] ?? 0} чеках`}
                           >
                             {fmtInt(freq[oi] ?? 0)}
@@ -233,7 +250,10 @@ export function MenuBasket({ range, withDelivery = true }: Props) {
                           : `«${rowLabel}» + «${colLabel}»: ${co} чек. (${pct.toFixed(1)}% всех чеков)`;
                       // фон через rgba (прозрачность только у фона, не у текста);
                       // текст всегда непрозрачный: тёмный/светлый по теме на бледном фоне, белый на насыщенном
-                      const alpha = pct > 0 ? 0.12 + intensity * 0.88 : 0;
+                      // в режиме подсветки связанные ячейки крестовины поднимаем по насыщенности
+                      // (floor 0.45) и обводим акцентом — чтобы «что берут с блюдом» читалось явно
+                      const lit = focusMode && !off && pct > 0; // подсвеченная связь
+                      const alpha = pct > 0 ? (lit ? Math.max(0.45, 0.12 + intensity * 0.88) : 0.12 + intensity * 0.88) : 0;
                       return (
                         <td
                           key={oj}
@@ -241,9 +261,11 @@ export function MenuBasket({ range, withDelivery = true }: Props) {
                           style={{
                             width: CELL_W, height: CELL_H, textAlign: "center", borderRadius: 6,
                             background: pct > 0 ? `rgba(${PRIMARY_RGB}, ${alpha})` : "var(--bg)",
-                            color: intensity > 0.55 ? "#fff" : "var(--text)",
-                            fontSize: 12, fontWeight: pct > 0 ? 600 : 400,
-                            opacity: off ? 0.18 : 1, transition: "opacity .15s",
+                            color: alpha > 0.5 ? "#fff" : "var(--text)",
+                            fontSize: 14, fontWeight: pct > 0 ? 700 : 400,
+                            boxShadow: lit ? `inset 0 0 0 2px ${COLORS.primary}` : "none",
+                            opacity: off ? 0.12 : 1, filter: off ? "grayscale(1)" : "none",
+                            transition: "opacity .15s",
                           }}
                         >
                           {pct >= 0.5 ? `${Math.round(pct)}%` : ""}

@@ -83,12 +83,24 @@ async def _modifier_filters(date_from_iso: str, date_to_iso: str) -> tuple[set[s
     """
     rows = await iiko_web.dishes_detail(date_from_iso, date_to_iso)
     names: set[str] = set()
-    cats: set[str] = set()
+    cat_has_mod: set[str] = set()
+    cat_has_dish: set[str] = set()
     for r in rows:
+        cat = r.get("category")
         if r.get("product_type") == PRODUCT_TYPE_MODIFIER:
             names.add(normalize_name(r["dish_name"]))
-            if r.get("category"):
-                cats.add(r["category"])
+            if cat:
+                cat_has_mod.add(cat)
+        elif cat:
+            cat_has_dish.add(cat)
+    # Категорию целиком отсекаем, ТОЛЬКО если в ней нет ни одного блюда (чистая
+    # модификаторная категория — «модификаторы»/«Статус»). СМЕШАННЫЕ категории
+    # (Напитки/Доставка: блюда + модификаторы-добавки вроде бесплатного «Айран_»)
+    # не трогаем — иначе из OLAP-разрезов пропадала вся категория (напр. «Напитки»
+    # исчезала из состава чека). Отдельные модификаторы-строки внутри смешанной
+    # категории по имени не вычистить: платные «Кола»/«Айран» в OLAP слиты с
+    # одноимёнными блюдами, отсев по имени убил бы реальные продажи.
+    cats = cat_has_mod - cat_has_dish
     return names, cats
 
 
