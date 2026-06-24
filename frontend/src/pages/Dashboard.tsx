@@ -35,7 +35,7 @@ const fmtSync = (iso: string): string => {
 /** Главная: KPI, выручка по дням, чеки по типу, почасовые продажи, продажи блюд.
  *  Период — пресет (день/неделя/месяц) или произвольный диапазон; всё реагирует на него. */
 export function Dashboard() {
-  const [sel, setSel] = useState<RangeSel>({ period: "week" });
+  const [sel, setSel] = useState<RangeSel>({ period: "day" });
   const [showCustom, setShowCustom] = useState(false);
   const [from, setFrom] = useState(daysAgoISO(6));
   const [to, setTo] = useState(todayISO());
