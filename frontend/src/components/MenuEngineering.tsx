@@ -46,10 +46,12 @@ export function MenuEngineering({ range, withDelivery = true }: Props) {
     const totalCM = costed.reduce((s, d) => s + (d.revenue - d.cost_sum), 0);
     const avgCM = totalQty ? totalCM / totalQty : 0; // средняя маржа на единицу, ₽
     const popThr = costed.length ? (totalQty / costed.length) * 0.7 : 0; // правило 70%
-    // подписываем на графике только топ-6 по выручке — иначе подписи сливаются
+    // подписываем на графике только топ-6 по выручке — иначе подписи сливаются;
+    // имя укорачиваем, чтобы длинные («Халва с шоко») не наезжали и не переносились
     const topNames = new Set(
       [...costed].sort((a, b) => b.revenue - a.revenue).slice(0, 6).map((d) => d.name),
     );
+    const shortName = (s: string) => (s.length > 10 ? s.slice(0, 9) + "…" : s);
     const points: Point[] = costed.map((d) => {
       const cm = (d.revenue - d.cost_sum) / d.quantity;
       const popular = d.quantity >= popThr;
@@ -57,7 +59,7 @@ export function MenuEngineering({ range, withDelivery = true }: Props) {
       const quad: Quad = popular ? (highCM ? "star" : "plow") : highCM ? "puzzle" : "dog";
       return {
         x: d.quantity, y: Math.round(cm), name: d.name, mpct: d.margin_pct ?? 0, rev: d.revenue, quad,
-        label: topNames.has(d.name) ? d.name : "",
+        label: topNames.has(d.name) ? shortName(d.name) : "",
       };
     });
     return { points, avgCM: Math.round(avgCM), popThr: Math.round(popThr), excluded: all.length - costed.length };
@@ -111,17 +113,25 @@ export function MenuEngineering({ range, withDelivery = true }: Props) {
       {view === "matrix" ? (
         <>
           <ResponsiveContainer width="100%" height={CHART_HEIGHT}>
-            <ScatterChart margin={{ top: 10, right: 16, bottom: 16, left: 8 }}>
+            <ScatterChart margin={{ top: 10, right: 24, bottom: 28, left: 16 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="var(--grid)" />
-              <XAxis type="number" dataKey="x" name="Продано" unit=" шт" tick={{ fill: "var(--muted)", fontSize: 12 }} />
-              <YAxis type="number" dataKey="y" name="Маржа/шт" unit=" ₽" tick={{ fill: "var(--muted)", fontSize: 12 }} />
+              <XAxis
+                type="number" dataKey="x" name="Продано" unit=" шт"
+                tick={{ fill: "var(--muted)", fontSize: 12 }}
+                label={{ value: "Продано за период, шт", position: "insideBottom", offset: -16, fill: "var(--muted)", fontSize: 12 }}
+              />
+              <YAxis
+                type="number" dataKey="y" name="Маржа/шт" unit=" ₽"
+                tick={{ fill: "var(--muted)", fontSize: 12 }}
+                label={{ value: "Маржа на штуку, ₽", angle: -90, position: "insideLeft", style: { textAnchor: "middle" }, fill: "var(--muted)", fontSize: 12 }}
+              />
               {/* бледная заливка квадрантов — зона блюда читается мгновенно, без сверки с осями */}
               <ReferenceArea x1={matrix.popThr} y1={matrix.avgCM} fill={QUAD.star.color} fillOpacity={0.07} />
               <ReferenceArea x1={matrix.popThr} y2={matrix.avgCM} fill={QUAD.plow.color} fillOpacity={0.07} />
               <ReferenceArea x2={matrix.popThr} y1={matrix.avgCM} fill={QUAD.puzzle.color} fillOpacity={0.07} />
               <ReferenceArea x2={matrix.popThr} y2={matrix.avgCM} fill={QUAD.dog.color} fillOpacity={0.07} />
-              <ReferenceLine x={matrix.popThr} stroke="var(--muted)" strokeDasharray="4 4" label={{ value: "популярность", fill: "var(--muted)", fontSize: 11, position: "top" }} />
-              <ReferenceLine y={matrix.avgCM} stroke="var(--muted)" strokeDasharray="4 4" label={{ value: "ср. маржа", fill: "var(--muted)", fontSize: 11, position: "right" }} />
+              <ReferenceLine x={matrix.popThr} stroke="var(--muted)" strokeDasharray="4 4" label={{ value: "порог популярности", fill: "var(--muted)", fontSize: 11, position: "insideTopRight" }} />
+              <ReferenceLine y={matrix.avgCM} stroke="var(--muted)" strokeDasharray="4 4" label={{ value: "ср. маржа", fill: "var(--muted)", fontSize: 11, position: "insideTopLeft" }} />
               <Tooltip
                 cursor={{ strokeDasharray: "3 3" }}
                 content={(p: { active?: boolean; payload?: ReadonlyArray<{ payload?: Point }> }) => {
@@ -138,7 +148,13 @@ export function MenuEngineering({ range, withDelivery = true }: Props) {
               />
               {(Object.keys(QUAD) as Quad[]).map((k) => (
                 <Scatter key={k} name={QUAD[k].label} data={matrix.points.filter((p) => p.quad === k)} fill={QUAD[k].color}>
-                  <LabelList dataKey="label" position="top" style={{ fill: "var(--muted)", fontSize: 10 }} />
+                  {/* подписи нижних квадрантов — под точкой, верхних — над: разносит
+                      налезающие подписи блюд, скучкованных у порогов */}
+                  <LabelList
+                    dataKey="label"
+                    position={k === "dog" || k === "plow" ? "bottom" : "top"}
+                    style={{ fill: "var(--text)", fontSize: 10 }}
+                  />
                 </Scatter>
               ))}
             </ScatterChart>

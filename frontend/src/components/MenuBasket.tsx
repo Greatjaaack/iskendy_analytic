@@ -180,29 +180,33 @@ export function MenuBasket({ range, withDelivery = true }: Props) {
                       title={`${colLabel} — подсветить связи`}
                       onClick={() => focusOn(oj)}
                       style={{
-                        padding: "4px 2px",
-                        color: isFocus ? "#fff" : focusMode && isLinked ? "var(--text)" : "var(--muted)",
-                        fontWeight: isFocus || (focusMode && isLinked) ? 700 : 500, cursor: "pointer",
+                        padding: 0, cursor: "pointer",
                         opacity: dim ? 0.16 : 1, filter: dim ? "grayscale(1)" : "none",
                         transition: "opacity .15s",
-                        width: CELL_W, textAlign: "center", fontSize: 12, verticalAlign: "bottom",
-                        height: 128,
+                        width: CELL_W, verticalAlign: "bottom", height: 130,
                       }}
                     >
-                      <div
-                        style={{
-                          writingMode: "vertical-rl", transform: "rotate(180deg)", margin: "0 auto",
-                          whiteSpace: "nowrap", maxHeight: 118, overflow: "hidden",
-                          background: isFocus
-                            ? COLORS.primary
-                            : focusMode && isLinked
-                              ? `rgba(${PRIMARY_RGB}, 0.2)`
-                              : "transparent",
-                          borderRadius: isFocus || (focusMode && isLinked) ? 6 : 0,
-                          padding: isFocus || (focusMode && isLinked) ? "6px 3px" : 0,
-                        }}
-                      >
-                        {short(colLabel, 18)}
+                      {/* подпись под углом 45°: якорь левого-нижнего угла в центре
+                          столбца, текст уходит вверх-вправо (overflow видим) */}
+                      <div style={{ position: "relative", width: "100%", height: "100%" }}>
+                        <span
+                          style={{
+                            position: "absolute", left: "50%", bottom: 4,
+                            transform: "rotate(-45deg)", transformOrigin: "left bottom",
+                            whiteSpace: "nowrap", fontSize: 12, lineHeight: 1,
+                            color: isFocus ? "#fff" : focusMode && isLinked ? "var(--text)" : "var(--muted)",
+                            fontWeight: isFocus || (focusMode && isLinked) ? 700 : 500,
+                            background: isFocus
+                              ? COLORS.primary
+                              : focusMode && isLinked
+                                ? `rgba(${PRIMARY_RGB}, 0.2)`
+                                : "transparent",
+                            borderRadius: isFocus || (focusMode && isLinked) ? 6 : 0,
+                            padding: isFocus || (focusMode && isLinked) ? "3px 7px" : "3px 2px",
+                          }}
+                        >
+                          {short(colLabel, 18)}
+                        </span>
                       </div>
                     </th>
                   );
