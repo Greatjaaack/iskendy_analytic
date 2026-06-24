@@ -10,9 +10,10 @@ interface Props {
 }
 
 type Metric = "conf" | "support";
-// порядок осей: по популярности (freq, дефолт от бэкенда) / алфавит / по связи с
-// выбранным блюдом (pivot — клик по подписи строки/столбца)
-type Sort = { mode: "freq" | "name"; pivot: number };
+// порядок осей фиксирован тумблером (по популярности / алфавит) и НЕ двигается при
+// клике. Клик по подписи строки/столбца — подсветка: выбранное блюдо и все, что с
+// ним берут в чеках, остаются яркими, остальное затемняется (focus — индекс блюда).
+type Order = "freq" | "name";
 
 // RGB основного акцента (COLORS.primary = #6366f1) — для rgba-фона ячеек
 const PRIMARY_RGB = "99, 102, 241";
@@ -25,7 +26,8 @@ const PRIMARY_RGB = "99, 102, 241";
  *  Источник — `/api/dishes/basket` (OLAP по OrderNum), всегда по блюдам. */
 export function MenuBasket({ range, withDelivery = true }: Props) {
   const [metric, setMetric] = useState<Metric>("conf");
-  const [sort, setSort] = useState<Sort>({ mode: "freq", pivot: -1 });
+  const [order, setOrder] = useState<Order>("freq");
+  const [focus, setFocus] = useState(-1); // подсвеченное блюдо (клик по подписи), -1 = нет
 
   const q = useQuery({
     queryKey: ["basket", rangeKey(range), "dish", withDelivery],
@@ -37,7 +39,6 @@ export function MenuBasket({ range, withDelivery = true }: Props) {
   const matrix = q.data?.matrix ?? [];
   const freq = q.data?.freq ?? [];
   const orders = q.data?.orders ?? 0;
-  const pairs = q.data?.pairs ?? [];
 
   // значение ячейки (i — строка, j — столбец) в выбранной метрике, %.
   const cellPct = (i: number, j: number): number => {
@@ -68,22 +69,21 @@ export function MenuBasket({ range, withDelivery = true }: Props) {
   const CELL_H = 38;
 
   // Порядок осей (одна перестановка на обе оси — диагональ остаётся выровненной).
-  // pivot >= 0: сортировка по силе связи с выбранным блюдом (само блюдо первым),
-  // иначе по выбранному режиму. Элементы массива — исходные индексы в matrix/freq.
-  const order = labels.map((_, i) => i);
-  if (sort.pivot >= 0) {
-    order.sort((a, b) => {
-      if (a === sort.pivot) return -1;
-      if (b === sort.pivot) return 1;
-      return (matrix[sort.pivot]?.[b] ?? 0) - (matrix[sort.pivot]?.[a] ?? 0);
-    });
-  } else if (sort.mode === "name") {
-    order.sort((a, b) => labels[a].localeCompare(labels[b], "ru"));
+  // Зависит только от тумблера и НЕ двигается при клике. Элементы — исходные индексы.
+  const axis = labels.map((_, i) => i);
+  if (order === "name") {
+    axis.sort((a, b) => labels[a].localeCompare(labels[b], "ru"));
   } // freq — бэкенд уже отдал по убыванию частоты, исходный порядок сохраняем
 
-  // клик по подписи блюда: сортировать по связи с ним; повторный клик — сброс
-  const pivotOn = (i: number) =>
-    setSort((s) => ({ mode: s.mode, pivot: s.pivot === i ? -1 : i }));
+  // клик по подписи блюда: подсветить его и связанные; повторный клик — сброс
+  const focusOn = (i: number) => setFocus((f) => (f === i ? -1 : i));
+
+  // связано ли блюдо k с подсвеченным (focus): само блюдо или есть со-встречаемость
+  // в любую сторону. Без подсветки (focus < 0) — связаны все.
+  const linked = (k: number) =>
+    focus < 0 || k === focus || (matrix[focus]?.[k] ?? 0) > 0 || (matrix[k]?.[focus] ?? 0) > 0;
+  // ячейка (i,j) активна, если подсветки нет либо она в крестовине выбранного блюда
+  const cellOn = (i: number, j: number) => focus < 0 || i === focus || j === focus;
 
   return (
     <div style={{ background: COLORS.card, borderRadius: 12, padding: "20px 24px" }}>
@@ -103,12 +103,12 @@ export function MenuBasket({ range, withDelivery = true }: Props) {
             {([
               ["freq", "По популярности"],
               ["name", "А–Я"],
-            ] as [Sort["mode"], string][]).map(([key, label]) => {
-              const active = sort.pivot < 0 && sort.mode === key;
+            ] as [Order, string][]).map(([key, label]) => {
+              const active = order === key;
               return (
                 <button
                   key={key}
-                  onClick={() => setSort({ mode: key, pivot: -1 })}
+                  onClick={() => setOrder(key)}
                   style={{
                     border: "none", borderRadius: 6, padding: "5px 12px", fontSize: 12, cursor: "pointer",
                     background: active ? COLORS.primary : "transparent",
@@ -144,11 +144,11 @@ export function MenuBasket({ range, withDelivery = true }: Props) {
         </div>
       </div>
 
-      {sort.pivot >= 0 && (
+      {focus >= 0 && (
         <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
-          Сортировка по связи с «<span style={{ color: COLORS.indigoText, fontWeight: 600 }}>{labels[sort.pivot]}</span>» ·{" "}
+          Подсветка связей «<span style={{ color: COLORS.indigoText, fontWeight: 600 }}>{labels[focus]}</span>» — что с ним берут в чеке ·{" "}
           <button
-            onClick={() => setSort((s) => ({ mode: s.mode, pivot: -1 }))}
+            onClick={() => setFocus(-1)}
             style={{ border: "none", background: "transparent", color: COLORS.primary, cursor: "pointer", fontSize: 12, padding: 0 }}
           >
             сбросить
@@ -168,17 +168,18 @@ export function MenuBasket({ range, withDelivery = true }: Props) {
             <thead>
               <tr>
                 <th style={{ padding: 4 }} />
-                {order.map((oj) => {
+                {axis.map((oj) => {
                   const colLabel = labels[oj];
-                  const isPivot = oj === sort.pivot;
+                  const isFocus = oj === focus;
                   return (
                     <th
                       key={oj}
-                      title={`${colLabel} — сортировать по связи с ним`}
-                      onClick={() => pivotOn(oj)}
+                      title={`${colLabel} — подсветить связи`}
+                      onClick={() => focusOn(oj)}
                       style={{
-                        padding: "4px 2px", color: isPivot ? COLORS.indigoText : "var(--muted)",
-                        fontWeight: isPivot ? 700 : 500, cursor: "pointer",
+                        padding: "4px 2px", color: isFocus ? COLORS.indigoText : "var(--muted)",
+                        fontWeight: isFocus ? 700 : 500, cursor: "pointer",
+                        opacity: linked(oj) ? 1 : 0.28, transition: "opacity .15s",
                         width: CELL_W, textAlign: "center", fontSize: 11, verticalAlign: "bottom",
                         height: 96,
                       }}
@@ -192,29 +193,31 @@ export function MenuBasket({ range, withDelivery = true }: Props) {
               </tr>
             </thead>
             <tbody>
-              {order.map((oi) => {
+              {axis.map((oi) => {
                 const rowLabel = labels[oi];
-                const rowPivot = oi === sort.pivot;
+                const rowFocus = oi === focus;
                 return (
                   <tr key={oi}>
                     <td
-                      onClick={() => pivotOn(oi)}
+                      onClick={() => focusOn(oi)}
                       style={{
-                        padding: "2px 10px 2px 0", color: rowPivot ? COLORS.indigoText : "var(--text)",
-                        fontWeight: rowPivot ? 700 : 400, cursor: "pointer",
+                        padding: "2px 10px 2px 0", color: rowFocus ? COLORS.indigoText : "var(--text)",
+                        fontWeight: rowFocus ? 700 : 400, cursor: "pointer",
+                        opacity: linked(oi) ? 1 : 0.28, transition: "opacity .15s",
                         whiteSpace: "nowrap", textAlign: "right", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis",
                       }}
-                      title={`${rowLabel} · в ${freq[oi] ?? 0} чеках — сортировать по связи с ним`}
+                      title={`${rowLabel} · в ${freq[oi] ?? 0} чеках — подсветить связи`}
                     >
                       {short(rowLabel)}
                     </td>
-                    {order.map((oj) => {
+                    {axis.map((oj) => {
                       const colLabel = labels[oj];
+                      const off = !cellOn(oi, oj); // вне крестовины подсвеченного блюда
                       if (oi === oj) {
                         return (
                           <td
                             key={oj}
-                            style={{ width: CELL_W, height: CELL_H, textAlign: "center", background: "var(--bg)", color: "var(--muted)", borderRadius: 6, fontSize: 11 }}
+                            style={{ width: CELL_W, height: CELL_H, textAlign: "center", background: "var(--bg)", color: "var(--muted)", borderRadius: 6, fontSize: 11, opacity: off ? 0.18 : 1, transition: "opacity .15s" }}
                             title={`${rowLabel}: в ${freq[oi] ?? 0} чеках`}
                           >
                             {fmtInt(freq[oi] ?? 0)}
@@ -240,6 +243,7 @@ export function MenuBasket({ range, withDelivery = true }: Props) {
                             background: pct > 0 ? `rgba(${PRIMARY_RGB}, ${alpha})` : "var(--bg)",
                             color: intensity > 0.55 ? "#fff" : "var(--text)",
                             fontSize: 12, fontWeight: pct > 0 ? 600 : 400,
+                            opacity: off ? 0.18 : 1, transition: "opacity .15s",
                           }}
                         >
                           {pct >= 0.5 ? `${Math.round(pct)}%` : ""}
@@ -260,37 +264,6 @@ export function MenuBasket({ range, withDelivery = true }: Props) {
             ))}
             <span>чаще · диагональ (серым) = в скольких чеках есть само блюдо</span>
           </div>
-        </div>
-      )}
-
-      {/* рейтинг пар — самый читаемый разрез «что с чем» */}
-      {pairs.length > 0 && (
-        <div style={{ marginTop: 20 }}>
-          <div style={{ color: "var(--text)", fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Топ пар «что с чем»</div>
-          <div style={{ color: "var(--muted)", fontSize: 11, marginBottom: 8 }}>
-            «доля чеков» — в скольких чеках есть обе позиции · «к A берут B» — из чеков с A доля с B
-          </div>
-          {pairs.slice(0, 12).map((p) => {
-            const w = pairs[0]?.support ? Math.round((p.support / pairs[0].support) * 100) : 0;
-            return (
-              <div key={`${p.a}/${p.b}`} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", borderTop: "1px solid var(--grid)" }}>
-                <div style={{ flex: 1, minWidth: 0, color: "var(--text)", fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {p.a} <span style={{ color: "var(--muted)" }}>+</span> {p.b}
-                </div>
-                <div style={{ flex: "0 0 120px", display: "flex", alignItems: "center", gap: 6 }}>
-                  <div style={{ flex: 1, height: 6, background: "var(--bg)", borderRadius: 3, overflow: "hidden" }}>
-                    <div style={{ width: `${w}%`, height: "100%", background: COLORS.primary, borderRadius: 3 }} />
-                  </div>
-                  <span style={{ flex: "0 0 56px", textAlign: "right", color: COLORS.indigoText, fontSize: 12, fontWeight: 600 }}>
-                    {p.support}%
-                  </span>
-                </div>
-                <div style={{ flex: "0 0 130px", textAlign: "right", color: "var(--muted)", fontSize: 12 }}>
-                  к «{short(p.a, 12)}» {p.confidence}%
-                </div>
-              </div>
-            );
-          })}
         </div>
       )}
     </div>
