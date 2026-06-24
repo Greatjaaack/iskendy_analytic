@@ -14,6 +14,9 @@ import type {
   DishResponse,
   HourlyBreakdown,
   HourlyResponse,
+  OpsReport,
+  PlanCell,
+  PlanMatrix,
   IngredientBrief,
   IngredientCard,
   KpiByChannel,
@@ -91,6 +94,22 @@ export const fetchByDaypart = (
     .get<DaypartSummary>(`/api/revenue/by-daypart?${rangeQS(range)}${deliveryQS(includeDelivery)}`)
     .then((r) => r.data);
 
+export const fetchOpsReport = (range: RangeSel, includeDelivery = true): Promise<OpsReport> =>
+  api
+    .get<OpsReport>(`/api/revenue/ops-report?${rangeQS(range)}${deliveryQS(includeDelivery)}`)
+    .then((r) => r.data);
+
+// ---------- План (цели по дейпартам × группам дня недели) ----------
+
+export const fetchPlan = (): Promise<PlanMatrix> =>
+  api.get<PlanMatrix>("/api/plan").then((r) => r.data);
+
+export const savePlan = (cells: Record<string, PlanCell>): Promise<{ ok: boolean }> =>
+  api.put<{ ok: boolean }>("/api/plan", { cells }).then((r) => r.data);
+
+export const seedPlanFromHistory = (months = 2): Promise<{ ok: boolean; segments: number }> =>
+  api.post<{ ok: boolean; segments: number }>(`/api/plan/seed-from-history?months=${months}`).then((r) => r.data);
+
 /** Запустить синхронизацию. `days>0` — лёгкий синк за последние N дней (автосинхронизация),
  *  без аргумента — полный синк (кнопка «Синхронизировать»). */
 export const triggerSync = (days?: number) =>
@@ -128,10 +147,11 @@ export const fetchBasket = (
   range: RangeSel,
   group: DishGroupBy = "category",
   includeDelivery = true,
+  top = 14,
 ): Promise<Basket> =>
   api
     .get<Basket>(
-      `/api/dishes/basket?group=${group}&${rangeQS(range)}${deliveryQS(includeDelivery)}`,
+      `/api/dishes/basket?group=${group}&top=${top}&${rangeQS(range)}${deliveryQS(includeDelivery)}`,
     )
     .then((r) => r.data);
 

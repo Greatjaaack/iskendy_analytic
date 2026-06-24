@@ -17,6 +17,18 @@ DAY_NAMES_EN = [
 ]
 DAY_NAMES_RU = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
 
+# Группы дней недели для слоя «План» (та же логика, что в WEEKDAY_GROUPS на фронте):
+# Пн и Чт — особые, Вт-Ср — обычные, Пт-Вс — выходные. План задаётся дневной нормой
+# на (дейпарт × группа) и масштабируется на число подходящих дней периода.
+WEEKDAY_GROUPS = [
+    {"key": "mon", "label": "Пн", "weekdays": [0]},
+    {"key": "ordinary", "label": "Вт–Ср", "weekdays": [1, 2]},
+    {"key": "thu", "label": "Чт", "weekdays": [3]},
+    {"key": "weekend", "label": "Пт–Вс", "weekdays": [4, 5, 6]},
+]
+# weekday() (0=Пн) → ключ группы
+WEEKDAY_TO_GROUP = {wd: g["key"] for g in WEEKDAY_GROUPS for wd in g["weekdays"]}
+
 
 # ─── Дейпарты (операционные окна дня) ────────────────────────────────────────
 # Границы взяты из исторического «свода» ресторана (ручной Excel-план): Завтрак /
@@ -116,6 +128,17 @@ DELIVERY_NAME_MARKER = "_д"
 CATEGORY_DISPLAY = {
     "Меню": "Допы и соусы",
 }
+
+# Группы категорий для food cost % по типу продукта (нижний блок Excel-свода «ОП»):
+# Еда / Напитки / Алкоголь. У точки алкоголя нет, но маппинг держим на будущее.
+# Любая продуктовая меню-категория, не попавшая в напитки/алкоголь, считается «Едой».
+DRINK_CATEGORIES = {"Напитки"}
+ALCOHOL_CATEGORIES: set[str] = set()
+CATEGORY_GROUP_FOOD = "Еда"
+CATEGORY_GROUP_DRINK = "Напитки"
+CATEGORY_GROUP_ALCOHOL = "Алкоголь"
+# Порядок отображения групп в отчёте
+CATEGORY_GROUP_ORDER = [CATEGORY_GROUP_FOOD, CATEGORY_GROUP_DRINK, CATEGORY_GROUP_ALCOHOL]
 
 
 # ─── OLAP-движок iiko (асинхронные отчёты SALES) ─────────────────────────────

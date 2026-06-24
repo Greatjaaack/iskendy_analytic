@@ -16,9 +16,19 @@ const TYPE_COLORS: Record<string, string> = {
 };
 const colorFor = (t: string) => TYPE_COLORS[t] ?? COLORS.accent;
 
+interface Seg {
+  type: string;
+  color: string;
+  count: number;
+  countShare: number;
+  rev: number;
+  revShare: number;
+}
+
 /** Распределение чеков по типу обслуживания (#1): доставка / в зале / с собой.
  *  Данные — уникальные заказы по каналу (OLAP): сумма по типам = числу чеков.
- *  Рядом — доля выручки того же канала: видно перекос (напр. доставка = 30% чеков, но 50% выручки). */
+ *  Две 100%-стопки (Чеки / Выручка), сегменты — каналы (один цвет в обеих полосах):
+ *  видно перекос (напр. доставка = 30% чеков, но 50% выручки). */
 export function ChecksDistribution({ range, withDelivery = true }: Props) {
   const q = useQuery({
     queryKey: ["check-distribution", rangeKey(range), withDelivery],
@@ -48,62 +58,101 @@ export function ChecksDistribution({ range, withDelivery = true }: Props) {
     });
   const totalRev = Object.values(revByChannel).reduce((s, v) => s + v, 0);
 
+  const segs: Seg[] = rows.map((r) => {
+    const rev = revByChannel[r.type.toLowerCase()] ?? 0;
+    return {
+      type: r.type,
+      color: colorFor(r.type),
+      count: r.count,
+      countShare: r.share,
+      rev,
+      revShare: totalRev ? Math.round((rev / totalRev) * 1000) / 10 : 0,
+    };
+  });
+
   return (
     <div style={{ background: "var(--card)", borderRadius: 12, padding: "20px 24px" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 18 }}>
         <div style={{ color: "var(--text)", fontWeight: 600 }}>Чеки и выручка по типу обслуживания</div>
         <div style={{ color: "var(--muted)", fontSize: 13 }}>
           {q.data?.total ?? 0} чек. · {fmtInt(totalRev)} ₽
         </div>
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-        {rows.map((r) => {
-          const rev = revByChannel[r.type.toLowerCase()] ?? 0;
-          const revShare = totalRev ? Math.round((rev / totalRev) * 1000) / 10 : 0;
-          const color = colorFor(r.type);
-          return (
-            <div key={r.type}>
-              <div style={{ color: "var(--text)", fontSize: 13, fontWeight: 600, marginBottom: 6 }}>{r.type}</div>
-              {/* чеки */}
-              <Metric
-                name="Чеки"
-                label={`${r.count} чек.`}
-                share={r.share}
-                color={color}
-              />
-              {/* выручка того же канала */}
-              <Metric
-                name="Выручка"
-                label={`${fmtInt(rev)} ₽`}
-                share={revShare}
-                color={color}
-              />
-            </div>
-          );
-        })}
-      </div>
+      {segs.length > 0 && (
+        <>
+          <StackBar
+            name="Чеки"
+            segs={segs}
+            valueOf={(s) => s.countShare}
+            label={(s) => `${s.type} · ${fmtInt(s.count)} чек. · ${s.countShare}%`}
+          />
+          <StackBar
+            name="Выручка"
+            segs={segs}
+            valueOf={(s) => s.revShare}
+            label={(s) => `${s.type} · ${fmtInt(s.rev)} ₽ · ${s.revShare}%`}
+          />
 
-      {!q.isLoading && rows.length === 0 && (
+          {/* легенда каналов */}
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 16, marginTop: 14 }}>
+            {segs.map((s) => (
+              <div key={s.type} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--muted)" }}>
+                <span style={{ width: 10, height: 10, borderRadius: 2, background: s.color }} />
+                {s.type}
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {!q.isLoading && segs.length === 0 && (
         <div style={{ color: "var(--muted)", textAlign: "center", padding: 16 }}>Нет данных</div>
       )}
     </div>
   );
 }
 
-/** Одна метрика канала: название + значение слева, доля-полоска, % справа. */
-function Metric({ name, label, share, color }: { name: string; label: string; share: number; color: string }) {
+/** Одна 100%-стопка: подпись слева, сегменты каналов с долями (% подписан внутри, если влезает). */
+function StackBar({
+  name,
+  segs,
+  valueOf,
+  label,
+}: {
+  name: string;
+  segs: Seg[];
+  valueOf: (s: Seg) => number;
+  label: (s: Seg) => string;
+}) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
-      <div style={{ flex: "0 0 130px", display: "flex", justifyContent: "space-between", fontSize: 12, color: "var(--muted)" }}>
-        <span>{name}</span>
-        <span style={{ color: "var(--text)" }}>{label}</span>
-      </div>
-      <div style={{ flex: 1, height: 8, background: "var(--bg)", borderRadius: 4, overflow: "hidden" }}>
-        <div style={{ width: `${share}%`, height: "100%", background: color }} />
-      </div>
-      <div style={{ flex: "0 0 46px", textAlign: "right", fontSize: 12, fontWeight: 600, color }}>
-        {share}%
+    <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
+      <div style={{ flex: "0 0 60px", fontSize: 12, color: "var(--muted)" }}>{name}</div>
+      <div style={{ flex: 1, display: "flex", height: 26, borderRadius: 6, overflow: "hidden", background: "var(--bg)" }}>
+        {segs.map((s) => {
+          const v = valueOf(s);
+          if (v <= 0) return null;
+          return (
+            <div
+              key={s.type}
+              title={label(s)}
+              style={{
+                width: `${v}%`,
+                background: s.color,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: 11,
+                fontWeight: 600,
+                color: "#fff",
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+              }}
+            >
+              {v >= 8 ? `${v}%` : ""}
+            </div>
+          );
+        })}
       </div>
     </div>
   );

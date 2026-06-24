@@ -7,6 +7,7 @@ import { RevenueChart } from "../components/RevenueChart";
 import { WeekdaySummary } from "../components/WeekdaySummary";
 import { HourlyChart } from "../components/HourlyChart";
 import { DaypartBreakdown } from "../components/DaypartBreakdown";
+import { OpsReport } from "../components/OpsReport";
 import { HourlyBreakdown } from "../components/HourlyBreakdown";
 import { CheckComposition } from "../components/CheckComposition";
 import { CheckFullness } from "../components/CheckFullness";
@@ -229,6 +230,12 @@ export function Dashboard() {
               <div className="dash-full">
                 <DaypartBreakdown range={sel} withDelivery={withDelivery} />
               </div>
+              {/* ежедневный операционный отчёт (дни × дейпарты) — для одного дня вырождается */}
+              {!isSingleDay && (
+                <div className="dash-full">
+                  <OpsReport range={sel} withDelivery={withDelivery} />
+                </div>
+              )}
               <HourlyChart range={sel} withDelivery={withDelivery} />
               <CheckFullness range={sel} withDelivery={withDelivery} />
               <div className="dash-full">
@@ -239,7 +246,9 @@ export function Dashboard() {
           {tab === "menu" && (
             <div className="dash-grid">
               <CheckComposition range={sel} withDelivery={withDelivery} />
-              <MenuBasket range={sel} withDelivery={withDelivery} />
+              <div className="dash-full">
+                <MenuBasket range={sel} withDelivery={withDelivery} />
+              </div>
               <div className="dash-full">
                 <MenuEngineering range={sel} withDelivery={withDelivery} />
               </div>

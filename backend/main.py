@@ -14,7 +14,7 @@ from sqlalchemy import select
 import storage
 from cache import cache_clear
 from models import SessionLocal, SyncLog, init_db
-from routers import dishes, imports, nomenclature, revenue, suppliers
+from routers import dishes, imports, nomenclature, plan, revenue, suppliers
 from scheduler import full_sync, setup_scheduler, sync_dishes, sync_revenue
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -43,6 +43,7 @@ app.include_router(dishes.router)
 app.include_router(suppliers.router)
 app.include_router(nomenclature.router)
 app.include_router(imports.router)
+app.include_router(plan.router)
 
 
 @app.get("/api/health")

@@ -91,6 +91,88 @@ export interface DaypartSummary {
   data: DaypartRow[];
 }
 
+// ── Ежедневный операционный отчёт (дни × дейпарты), аналог Excel-свода «ОП» ──
+export interface OpsCell {
+  revenue: number;
+  checks: number;
+  guests: number;
+  avg_check: number;
+  cost: number;
+  food_cost_pct: number | null; // null — нет блюд с ТТК-привязкой
+  coverage: number; // % выручки окна, покрытый ТТК (надёжность кост%)
+}
+export interface OpsAvg {
+  revenue: number;
+  checks: number;
+  guests: number;
+  avg_check: number;
+}
+export interface OpsCatCell {
+  revenue: number;
+  cost: number;
+  food_cost_pct: number | null;
+  coverage: number; // % выручки группы, покрытый ТТК
+  revenue_share: number; // доля группы в выручке (дейпарта или периода)
+}
+export interface OpsPlan {
+  revenue: number;
+  avg_check: number;
+  guests: number;
+}
+export interface OpsPlanPct {
+  revenue: number | null;
+  avg_check: number | null;
+  guests: number | null;
+}
+export interface OpsDaypart {
+  key: string;
+  label: string;
+  range: string;
+  cells: Record<string, OpsCell>; // дата ISO → метрики
+  total: OpsCell; // Факт за период
+  avg_per_day: OpsAvg; // Среднее на активный день
+  active_days: number;
+  revenue_share: number; // доля дейпарта в выручке периода, %
+  categories: Record<string, OpsCatCell>; // группа (Еда/Напитки/Алкоголь) → food cost
+  plan: OpsPlan; // план на период (норма × число дней)
+  plan_pct: OpsPlanPct; // % выполнения плана по метрикам
+}
+export interface OpsDay {
+  date: string;
+  dom: number; // число месяца
+  weekday: string; // «Пн» … «Вс»
+}
+export interface OpsReport {
+  period: Period | "custom";
+  date_from: string;
+  date_to: string;
+  days: OpsDay[];
+  dayparts: OpsDaypart[];
+  totals: {
+    cells: Record<string, OpsCell>;
+    total: OpsCell;
+    avg_per_day: OpsAvg;
+    plan: OpsPlan;
+    plan_pct: OpsPlanPct;
+  };
+  category_groups: string[]; // присутствующие группы (Еда / Напитки / …)
+  category_totals: Record<string, OpsCatCell>; // итог по группе за период
+  has_plan: boolean; // задан ли план (хотя бы одна норма выручки > 0)
+}
+
+// ── Слой плана: матрица (дейпарт × группа дня недели) дневных норм ──
+export interface PlanCell {
+  revenue: number;
+  avg_check: number;
+  guests: number;
+}
+export interface PlanMatrix {
+  dayparts: { key: string; label: string; range: string }[];
+  weekday_groups: { key: string; label: string }[];
+  cells: Record<string, PlanCell>; // "<дейпарт>|<группа>" → норма на день
+  has_plan: boolean;
+}
+
 // ---------- Продажи блюд ----------
 
 export type DishGroupBy = "dish" | "category";

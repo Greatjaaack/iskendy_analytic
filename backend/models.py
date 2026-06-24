@@ -16,6 +16,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     String,
+    UniqueConstraint,
     create_engine,
 )
 from sqlalchemy.orm import DeclarativeBase, relationship, sessionmaker
@@ -224,6 +225,29 @@ class DishMapping(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     ttk = relationship("Ttk")
+
+
+class DaypartPlan(Base):
+    """План (цель) по дейпарту × группе дня недели — дневная норма на сегмент.
+
+    Гранулярность: ОДИН день каждого сегмента (дейпарт × группа дня недели:
+    Пн / Вт-Ср / Чт / выходные Пт-Вс). План на период считается умножением нормы
+    на число подходящих дней в периоде — так `% к плану` честен для день/неделя/MTD/
+    диапазона (месячный план в Excel врал на неполном месяце). Заполняется автосидом
+    из истории (`POST /api/plan/seed-from-history`) и правится вручную.
+    """
+
+    __tablename__ = "daypart_plan"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    daypart_key = Column(String, index=True)  # ключ дейпарта (DAYPARTS)
+    weekday_group = Column(String, index=True)  # ключ группы дня недели (WEEKDAY_GROUPS)
+    revenue = Column(Float, default=0.0)  # дневная норма выручки
+    avg_check = Column(Float, default=0.0)  # целевой средний чек
+    guests = Column(Float, default=0.0)  # дневная норма гостей
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (UniqueConstraint("daypart_key", "weekday_group", name="uq_daypart_group"),)
 
 
 def init_db():

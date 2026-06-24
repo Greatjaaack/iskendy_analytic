@@ -6,11 +6,17 @@ from fastapi import APIRouter, Query
 from sqlalchemy import select
 
 from constants import (
+    ALCOHOL_CATEGORIES,
+    CATEGORY_GROUP_ALCOHOL,
+    CATEGORY_GROUP_DRINK,
+    CATEGORY_GROUP_FOOD,
+    CATEGORY_GROUP_ORDER,
     CHANNEL_DELIVERY,
     CHANNEL_DINEIN,
     CHANNEL_TAKEAWAY,
     DAY_NAMES_RU,
     DAYPARTS,
+    DRINK_CATEGORIES,
     METRIC_AVG_SPEND,
     METRIC_COST,
     METRIC_DISCOUNT,
@@ -22,14 +28,19 @@ from constants import (
     OLAP_FIELD_HOUR,
     OLAP_FIELD_OPEN_DATE,
     OLAP_FIELD_ORDER_NUM,
+    OLAP_FIELD_QTY,
     OLAP_FIELD_SUM,
     ORDER_STATUS_CATEGORY,
     ORDER_STATUS_CHANNELS,
+    WEEKDAY_TO_GROUP,
 )
 from iiko_web_client import iiko_web
-from models import RevenueDaily, SessionLocal
-from utils import is_delivery, period_range, prev_period_range, today
+from models import DaypartPlan, RevenueDaily, SessionLocal
+from routers.dishes import _dish_unit_cost
+from utils import is_delivery, normalize_name, period_range, prev_period_range, today
 from weather import get_weather
+
+OLAP_FIELD_GUESTS = "GuestNum"  # число гостей (атрибут заказа, повторяется по строкам)
 
 CHANNELS = (CHANNEL_DINEIN, CHANNEL_TAKEAWAY, CHANNEL_DELIVERY)
 
@@ -40,6 +51,14 @@ def _split4(value: str) -> tuple[str, str, str, str]:
     if len(parts) < 4:
         return "", "", "", ""
     return parts[0], parts[1], parts[2], ", ".join(parts[3:])
+
+
+def _split5(value: str) -> tuple[str, str, str, str, str]:
+    """field0 «дата, час, OrderNum, Категория, Имя» → 5 частей (имя может содержать ', ')."""
+    parts = str(value).split(", ")
+    if len(parts) < 5:
+        return "", "", "", "", ""
+    return parts[0], parts[1], parts[2], parts[3], ", ".join(parts[4:])
 
 
 def _channel_revenue(rows: list[dict]) -> dict[str, dict[str, float]]:
@@ -474,6 +493,329 @@ async def get_by_daypart(
         "date_from": df.isoformat(),
         "date_to": dt.isoformat(),
         "data": data,
+    }
+
+
+def _hour_to_daypart() -> dict[int, str]:
+    """{час → ключ дейпарта} из `DAYPARTS` (для свёртки часов в окна дня)."""
+    out: dict[int, str] = {}
+    for dp in DAYPARTS:
+        for h in dp["hours"]:
+            out[h] = dp["key"]
+    return out
+
+
+def _category_group(category: str) -> str:
+    """Меню-категория iiko → группа для food cost (Еда / Напитки / Алкоголь)."""
+    if category in DRINK_CATEGORIES:
+        return CATEGORY_GROUP_DRINK
+    if category in ALCOHOL_CATEGORIES:
+        return CATEGORY_GROUP_ALCOHOL
+    return CATEGORY_GROUP_FOOD
+
+
+def _blank_bucket() -> dict:
+    return {
+        "revenue": 0.0,
+        "cost": 0.0,
+        "rev_with_cost": 0.0,  # выручка блюд, у которых есть ТТК-привязка (знаменатель кост%)
+        "orders": set(),
+        "guests": {},  # OrderNum → гостей (берём раз на заказ)
+    }
+
+
+def _finalize(b: dict) -> dict:
+    """Свёртка накопителя в метрики: выручка/чеки/гости/ср.чек/кост%/покрытие."""
+    rev = round(b["revenue"], 2)
+    checks = len(b["orders"])
+    guests = int(sum(b["guests"].values()))
+    cost = round(b["cost"], 2)
+    rwc = b["rev_with_cost"]
+    return {
+        "revenue": rev,
+        "checks": checks,
+        "guests": guests,
+        "avg_check": round(rev / checks, 2) if checks else 0,
+        "cost": cost,
+        # кост% считаем от выручки блюд С привязкой (иначе занижается); coverage — какая
+        # доля выручки окна покрыта ТТК (чтобы видеть надёжность процента)
+        "food_cost_pct": round(cost / rwc * 100, 1) if rwc else None,
+        "coverage": round(rwc / rev * 100, 1) if rev else 0,
+    }
+
+
+def _finalize_cat(cb: dict, base_revenue: float) -> dict:
+    """Свёртка накопителя группы категорий: выручка/кост%/покрытие/доля в выручке."""
+    rev = round(cb["revenue"], 2)
+    cost = round(cb["cost"], 2)
+    rwc = cb["rev_with_cost"]
+    return {
+        "revenue": rev,
+        "cost": cost,
+        "food_cost_pct": round(cost / rwc * 100, 1) if rwc else None,
+        "coverage": round(rwc / rev * 100, 1) if rev else 0,
+        "revenue_share": round(rev / base_revenue * 100, 1) if base_revenue else 0,
+    }
+
+
+def _period_plan(
+    plan_rows: dict, dp_key: str, group_day_count: dict[str, int], total_days: int
+) -> dict:
+    """План на период для дейпарта: дневная норма × число подходящих дней группы.
+
+    Выручка/гости — сумма норм по дням периода; средний чек — день-взвешенное среднее
+    нормы (он не суммируется). Так `% к плану` корректен для любого периода.
+    """
+    rev = guests = 0.0
+    avg_weighted = 0.0
+    for grp, n in group_day_count.items():
+        r = plan_rows.get((dp_key, grp))
+        if not r:
+            continue
+        rev += (r.revenue or 0) * n
+        guests += (r.guests or 0) * n
+        avg_weighted += (r.avg_check or 0) * n
+    return {
+        "revenue": round(rev, 2),
+        "guests": round(guests, 1),
+        "avg_check": round(avg_weighted / total_days, 2) if total_days else 0,
+    }
+
+
+def _plan_pct(fact: dict, plan: dict) -> dict:
+    """{метрика: % выполнения плана} (None, если плана нет)."""
+    return {
+        m: (round(fact[m] / plan[m] * 100, 1) if plan.get(m) else None)
+        for m in ("revenue", "avg_check", "guests")
+    }
+
+
+@router.get("/ops-report")
+async def get_ops_report(
+    period: str = Query("month", enum=["day", "week", "month"]),
+    date_from: str | None = None,
+    date_to: str | None = None,
+    include_delivery: bool = True,
+):
+    """Ежедневный операционный отчёт: дни (столбцы) × дейпарты (строки).
+
+    Аналог исторического Excel-свода «Ежедневный ОП». По каждому дню × дейпарту —
+    выручка, чеки, гости (`GuestNum`), средний чек и food cost % (с/с порций по ТТК).
+    Справа — Факт (сумма за период), Среднее (на активный день) и доля % дейпарта.
+    Один OLAP-запрос по [дата, час, заказ, категория, имя] + DishSumInt/Qty/GuestNum.
+    План пока не показываем (нет источника в iiko). `include_delivery=false` — отсев
+    доставочных позиций (`utils.is_delivery`).
+    """
+    df, dt = period_range(period, date_from, date_to)
+
+    rows = await iiko_web.olap_sales(
+        group_fields=[
+            OLAP_FIELD_OPEN_DATE,
+            OLAP_FIELD_HOUR,
+            OLAP_FIELD_ORDER_NUM,
+            OLAP_FIELD_DISH_CATEGORY,
+            OLAP_FIELD_DISH_NAME,
+        ],
+        data_fields=[OLAP_FIELD_SUM, OLAP_FIELD_QTY, OLAP_FIELD_GUESTS],
+        date_from=df.isoformat(),
+        date_to=dt.isoformat(),
+    )
+
+    unit_cost = _dish_unit_cost()
+    h2dp = _hour_to_daypart()
+    # накопитель: (дата, ключ дейпарта) → bucket
+    agg: dict[tuple[str, str], dict] = {}
+    # food cost по группам категорий (Еда/Напитки/Алкоголь) на дейпарт — нижний блок свода
+    cat_agg: dict[tuple[str, str], dict] = (
+        {}
+    )  # (ключ дейпарта, группа) → {revenue,cost,rev_with_cost}
+
+    for r in rows:
+        ds, hs, ordernum, category, name = _split5(r.get("field0", {}).get("value", ""))
+        if not name or category == ORDER_STATUS_CATEGORY:
+            continue
+        if not include_delivery and is_delivery(category, name):
+            continue
+        try:
+            hour = int(hs)
+        except ValueError:
+            continue
+        dp = h2dp.get(hour)
+        if dp is None:
+            continue
+        rev = float(r.get("field1", {}).get("value", 0) or 0)
+        qty = float(r.get("field2", {}).get("value", 0) or 0)
+        guests = float(r.get("field3", {}).get("value", 0) or 0)
+        key = (ds, dp)
+        b = agg.get(key)
+        if b is None:
+            b = agg[key] = _blank_bucket()
+        b["revenue"] += rev
+        b["orders"].add(ordernum)
+        b["guests"].setdefault(ordernum, guests)
+        c = unit_cost.get(normalize_name(name))
+        # группа категории для food cost (дейпарт × Еда/Напитки/Алкоголь)
+        ck = (dp, _category_group(category))
+        cb = cat_agg.get(ck)
+        if cb is None:
+            cb = cat_agg[ck] = {"revenue": 0.0, "cost": 0.0, "rev_with_cost": 0.0}
+        cb["revenue"] += rev
+        if c is not None:
+            b["cost"] += c * qty
+            b["rev_with_cost"] += rev
+            cb["cost"] += c * qty
+            cb["rev_with_cost"] += rev
+
+    # столбцы — все календарные дни периода
+    days = []
+    d = df
+    while d <= dt:
+        days.append(
+            {
+                "date": d.isoformat(),
+                "dom": d.day,
+                "weekday": DAY_NAMES_RU[d.weekday()],
+            }
+        )
+        d += timedelta(days=1)
+    day_keys = [x["date"] for x in days]
+
+    # число дней каждой группы дня недели в периоде — для масштабирования плана
+    group_day_count: dict[str, int] = {}
+    for x in days:
+        grp = WEEKDAY_TO_GROUP.get(date.fromisoformat(x["date"]).weekday())
+        if grp:
+            group_day_count[grp] = group_day_count.get(grp, 0) + 1
+    total_days = len(days)
+    with SessionLocal() as db:
+        plan_rows = {
+            (r.daypart_key, r.weekday_group): r for r in db.execute(select(DaypartPlan)).scalars()
+        }
+    has_plan = any((r.revenue or 0) for r in plan_rows.values())
+
+    grand_revenue = sum(b["revenue"] for b in agg.values()) or 0.0
+
+    dayparts = []
+    for dp in DAYPARTS:
+        cells = {}
+        tot = _blank_bucket()
+        active = 0
+        for dk in day_keys:
+            b = agg.get((dk, dp["key"]))
+            if b is None:
+                continue
+            cells[dk] = _finalize(b)
+            if b["revenue"] > 0 or b["orders"]:
+                active += 1
+            # копим в total
+            tot["revenue"] += b["revenue"]
+            tot["cost"] += b["cost"]
+            tot["rev_with_cost"] += b["rev_with_cost"]
+            tot["orders"] |= b["orders"]
+            for on, g in b["guests"].items():
+                tot["guests"].setdefault((dk, on), g)
+        total = _finalize(tot)
+        # Среднее — на активный день (как в Excel «Среднее»)
+        avg_per_day = {
+            "revenue": round(total["revenue"] / active, 2) if active else 0,
+            "checks": round(total["checks"] / active, 1) if active else 0,
+            "guests": round(total["guests"] / active, 1) if active else 0,
+            "avg_check": total["avg_check"],
+        }
+        # food cost по группам категорий внутри дейпарта (Еда/Напитки/Алкоголь)
+        cats = {}
+        for grp in CATEGORY_GROUP_ORDER:
+            cb = cat_agg.get((dp["key"], grp))
+            if cb and cb["revenue"] > 0:
+                cats[grp] = _finalize_cat(cb, total["revenue"])
+        dp_plan = _period_plan(plan_rows, dp["key"], group_day_count, total_days)
+        dayparts.append(
+            {
+                "key": dp["key"],
+                "label": dp["label"],
+                "range": dp["range"],
+                "cells": cells,
+                "total": total,
+                "avg_per_day": avg_per_day,
+                "active_days": active,
+                "revenue_share": (
+                    round(total["revenue"] / grand_revenue * 100, 1) if grand_revenue else 0
+                ),
+                "categories": cats,
+                "plan": dp_plan,
+                "plan_pct": _plan_pct(total, dp_plan),
+            }
+        )
+
+    # строка Итого — сумма по всем дейпартам в каждый день
+    tot_cells = {}
+    grand = _blank_bucket()
+    active_total = 0
+    for dk in day_keys:
+        acc = _blank_bucket()
+        has = False
+        for dp in DAYPARTS:
+            b = agg.get((dk, dp["key"]))
+            if b is None:
+                continue
+            has = True
+            acc["revenue"] += b["revenue"]
+            acc["cost"] += b["cost"]
+            acc["rev_with_cost"] += b["rev_with_cost"]
+            acc["orders"] |= b["orders"]
+            for on, g in b["guests"].items():
+                acc["guests"].setdefault(on, g)
+        if has:
+            tot_cells[dk] = _finalize(acc)
+            active_total += 1
+            grand["revenue"] += acc["revenue"]
+            grand["cost"] += acc["cost"]
+            grand["rev_with_cost"] += acc["rev_with_cost"]
+            grand["orders"] |= acc["orders"]
+            for on, g in acc["guests"].items():
+                grand["guests"].setdefault((dk, on), g)
+    grand_total = _finalize(grand)
+    # план на период по всей точке = сумма планов дейпартов
+    grand_plan = {m: round(sum(dp["plan"][m] for dp in dayparts), 2) for m in ("revenue", "guests")}
+    grand_plan["avg_check"] = (
+        round(grand_plan["revenue"] / grand_plan["guests"], 2) if grand_plan["guests"] else 0
+    )
+    totals = {
+        "cells": tot_cells,
+        "total": grand_total,
+        "avg_per_day": {
+            "revenue": round(grand_total["revenue"] / active_total, 2) if active_total else 0,
+            "checks": round(grand_total["checks"] / active_total, 1) if active_total else 0,
+            "guests": round(grand_total["guests"] / active_total, 1) if active_total else 0,
+            "avg_check": grand_total["avg_check"],
+        },
+        "plan": grand_plan,
+        "plan_pct": _plan_pct(grand_total, grand_plan),
+    }
+
+    # сводный блок food cost по группам категорий (нижний блок Excel-свода «ОП»)
+    cat_total_acc: dict[str, dict] = {}
+    for (_dpk, grp), cb in cat_agg.items():
+        a = cat_total_acc.setdefault(grp, {"revenue": 0.0, "cost": 0.0, "rev_with_cost": 0.0})
+        a["revenue"] += cb["revenue"]
+        a["cost"] += cb["cost"]
+        a["rev_with_cost"] += cb["rev_with_cost"]
+    cat_grand_rev = sum(a["revenue"] for a in cat_total_acc.values()) or 0.0
+    category_groups = [
+        g for g in CATEGORY_GROUP_ORDER if cat_total_acc.get(g, {}).get("revenue", 0)
+    ]
+    category_totals = {g: _finalize_cat(cat_total_acc[g], cat_grand_rev) for g in category_groups}
+
+    return {
+        "period": "custom" if (date_from and date_to) else period,
+        "date_from": df.isoformat(),
+        "date_to": dt.isoformat(),
+        "days": days,
+        "dayparts": dayparts,
+        "totals": totals,
+        "category_groups": category_groups,
+        "category_totals": category_totals,
+        "has_plan": has_plan,
     }
 
 
