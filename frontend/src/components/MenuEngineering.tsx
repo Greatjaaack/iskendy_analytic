@@ -5,8 +5,16 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, Legend,
 } from "recharts";
 import { fetchDishes, rangeKey, type RangeSel, type DishRow } from "../api";
-import { CHART_HEIGHT, REFETCH_INTERVAL_MS, COLORS } from "../constants";
+import { CHART_HEIGHT, REFETCH_INTERVAL_MS, COLORS, FOOD_COST_THRESHOLDS } from "../constants";
 import { fmtInt } from "../format";
+
+// цвет food cost % по порогам (как в OpsReport): дешевле — зелёный, дороже — красный
+const costColor = (v: number | null): string => {
+  if (v == null) return "var(--muted)";
+  if (v < FOOD_COST_THRESHOLDS.good) return COLORS.good;
+  if (v <= FOOD_COST_THRESHOLDS.warn) return COLORS.warn;
+  return COLORS.bad;
+};
 
 interface Props {
   range: RangeSel;
@@ -70,11 +78,15 @@ export function MenuEngineering({ range, withDelivery = true }: Props) {
     // по прибыли — только блюда с известной с/с (без неё «прибыль» = выручка, искажает)
     const src = abcBasis === "rev" ? all : all.filter((d) => d.has_cost);
     const base = src
-      .map((d) => ({ name: d.name, value: abcBasis === "rev" ? d.revenue : d.revenue - d.cost_sum }))
+      .map((d) => ({
+        name: d.name,
+        value: abcBasis === "rev" ? d.revenue : d.revenue - d.cost_sum,
+        cost_pct: d.cost_pct,
+      }))
       .filter((d) => d.value > 0)
       .sort((a, b) => b.value - a.value);
     const total = base.reduce((s, d) => s + d.value, 0) || 1;
-    const rows: { name: string; value: number; cum: number; cls: string }[] = [];
+    const rows: { name: string; value: number; cost_pct: number | null; cum: number; cls: string }[] = [];
     let acc = 0;
     for (const d of base) {
       acc += d.value;
@@ -200,8 +212,42 @@ export function MenuEngineering({ range, withDelivery = true }: Props) {
               <Line yAxisId="cum" dataKey="cum" name="Накопительно" stroke={COLORS.primary} strokeWidth={2} dot={false} />
             </ComposedChart>
           </ResponsiveContainer>
+
+          {/* таблица ABC: ранжированный список блюд + кост % (food cost) по порогам */}
+          <div style={{ marginTop: 14, maxHeight: 320, overflowY: "auto", border: "1px solid var(--grid)", borderRadius: 8 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead>
+                <tr style={{ position: "sticky", top: 0, background: "var(--card)", zIndex: 1 }}>
+                  <th style={{ ...ABC_TH, textAlign: "left" }}>#</th>
+                  <th style={{ ...ABC_TH, textAlign: "left" }}>Блюдо</th>
+                  <th style={ABC_TH}>Класс</th>
+                  <th style={{ ...ABC_TH, textAlign: "right" }}>{abcBasis === "rev" ? "Выручка" : "Прибыль"}</th>
+                  <th style={{ ...ABC_TH, textAlign: "right" }}>Накоп.</th>
+                  <th style={{ ...ABC_TH, textAlign: "right" }}>Кост %</th>
+                </tr>
+              </thead>
+              <tbody>
+                {abc.rows.map((r, i) => (
+                  <tr key={r.name} style={{ borderTop: "1px solid var(--grid)" }}>
+                    <td style={{ ...ABC_TD, color: "var(--muted)" }}>{i + 1}</td>
+                    <td style={{ ...ABC_TD, color: "var(--text)", maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</td>
+                    <td style={{ ...ABC_TD, textAlign: "center" }}>
+                      <span style={{ color: "#fff", background: ABC_COLOR[r.cls], borderRadius: 5, padding: "1px 7px", fontSize: 12, fontWeight: 700 }}>{r.cls}</span>
+                    </td>
+                    <td style={{ ...ABC_TD, textAlign: "right", color: "var(--text)" }}>{fmtInt(r.value)} ₽</td>
+                    <td style={{ ...ABC_TD, textAlign: "right", color: "var(--muted)" }}>{r.cum}%</td>
+                    <td style={{ ...ABC_TD, textAlign: "right", color: costColor(r.cost_pct), fontWeight: 600 }}>
+                      {r.cost_pct == null ? "—" : `${Math.round(r.cost_pct)}%`}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
           <div style={{ color: "var(--muted)", fontSize: 12, marginTop: 8 }}>
             A — до 80% {abcBasis === "rev" ? "выручки" : "прибыли"} (ключевые), B — до 95%, C — хвост (кандидаты на вывод/пересмотр).
+            {" "}Кост % = с/с ÷ цена реализации (по порогам food cost; «—» — нет привязки ТТК).
           </div>
         </>
       )}
@@ -217,3 +263,8 @@ const mini = (active: boolean): React.CSSProperties => ({
   background: active ? COLORS.primary : "transparent",
   color: active ? "var(--text)" : "var(--muted)",
 });
+
+const ABC_TH: React.CSSProperties = {
+  padding: "8px 12px", textAlign: "center", color: "var(--muted)", fontSize: 12, fontWeight: 600,
+};
+const ABC_TD: React.CSSProperties = { padding: "6px 12px" };
