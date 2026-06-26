@@ -20,6 +20,7 @@ from constants import (
     METRIC_TRN_ALL,
     OLAP_FIELD_DISH_CATEGORY,
     OLAP_FIELD_DISH_NAME,
+    OLAP_FIELD_GUESTS,
     OLAP_FIELD_HOUR,
     OLAP_FIELD_OPEN_DATE,
     OLAP_FIELD_ORDER_NUM,
@@ -42,10 +43,9 @@ from services.ops_aggregation import (
     period_plan,
     plan_pct,
 )
+from services.order_store import order_rows
 from utils import is_delivery, normalize_name, period_range, prev_period_range, today
 from weather import get_weather
-
-OLAP_FIELD_GUESTS = "GuestNum"  # число гостей (атрибут заказа, повторяется по строкам)
 
 CHANNELS = (CHANNEL_DINEIN, CHANNEL_TAKEAWAY, CHANNEL_DELIVERY)
 
@@ -447,7 +447,7 @@ async def get_ops_report(
     """
     df, dt = period_range(period, date_from, date_to)
 
-    rows = await iiko_web.olap_sales(
+    rows = await order_rows(
         group_fields=[
             OLAP_FIELD_OPEN_DATE,
             OLAP_FIELD_HOUR,
@@ -672,7 +672,7 @@ async def get_revenue_by_channel(
     """
     df, dt = period_range(period, date_from, date_to)
     channels = [c for c in CHANNELS if include_delivery or c != CHANNEL_DELIVERY]
-    rows = await iiko_web.olap_sales(
+    rows = await order_rows(
         group_fields=[
             OLAP_FIELD_OPEN_DATE,
             OLAP_FIELD_ORDER_NUM,
@@ -715,7 +715,7 @@ async def get_hourly_by_channel(
 ):
     """Продажи по часам в разрезе каналов (зал/с собой/доставка) — через OLAP SALES."""
     df, dt = period_range(period, date_from, date_to)
-    rows = await iiko_web.olap_sales(
+    rows = await order_rows(
         group_fields=[
             OLAP_FIELD_HOUR,
             OLAP_FIELD_ORDER_NUM,
@@ -759,7 +759,7 @@ async def get_kpi_by_channel(
     меню-категории «Доставка»; иначе — не доставка. Через OLAP SALES по `OrderNum`.
     """
     df, dt = period_range(period, date_from, date_to)
-    rows = await iiko_web.olap_sales(
+    rows = await order_rows(
         group_fields=[
             OLAP_FIELD_ORDER_NUM,
             OLAP_FIELD_DISH_CATEGORY,

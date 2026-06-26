@@ -220,7 +220,8 @@ class IikoWebClient:
         qty = data.get(METRICS_DISHES[0], {})
         amt = data.get(METRICS_DISHES[1], {})
         cost = data.get(METRICS_DISHES[2], {})
-        products = decoration.get("product", {})
+        # на пустом периоде iiko возвращает decoration списком, а не объектом — защищаемся
+        products = decoration.get("product", {}) if isinstance(decoration, dict) else {}
 
         rows = []
         for dish_id in set(qty) | set(amt):

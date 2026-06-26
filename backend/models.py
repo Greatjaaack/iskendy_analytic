@@ -61,6 +61,64 @@ class DishSale(Base):
     updated_at = Column(DateTime, default=datetime.utcnow)
 
 
+class OrderItem(Base):
+    """Заказ-уровень (одна строка = позиция заказа за день) — источник всех
+    OLAP-разрезов из БД. Заполняется по дню из olap_sales; служит для пересчёта
+    состава/сочетаемости/наполненности чека, почасовых разрезов, ОП-отчёта и т.д.
+    без живого запроса. `guests` — атрибут заказа (повторяется в строках заказа).
+    """
+
+    __tablename__ = "order_items"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    date = Column(Date, index=True)
+    hour = Column(Integer)
+    order_num = Column(String)
+    category = Column(String)
+    name = Column(String)
+    qty = Column(Float, default=0)  # DishAmountInt
+    sum = Column(Float, default=0)  # DishSumInt (выручка без скидки)
+    guests = Column(Float, default=0)  # GuestNum (на заказ)
+
+
+class DishDetail(Base):
+    """Per-day выгрузка блюд (get-data DATA_DETAILS) — источник таблицы «Продажи
+    блюд» и набора модификаторов (`product_type`, которого нет в OLAP). По дню,
+    чтобы отдавать произвольные периоды суммированием.
+    """
+
+    __tablename__ = "dish_detail"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    date = Column(Date, index=True)
+    dish_id = Column(String)
+    dish_name = Column(String)
+    category = Column(String)
+    product_type = Column(String)
+    quantity = Column(Float, default=0)
+    revenue = Column(Float, default=0)
+    cost_sum = Column(Float, default=0)
+
+
+class Order(Base):
+    """Чек (заказ) как сущность — для будущей аналитики по чекам. Одна строка =
+    один заказ; денормализованный срез из `order_items` (канал из «Статуса»,
+    число гостей, сумма, число позиций). Текущие эндпоинты её не читают —
+    источник истины остаётся `order_items`; заполняется тем же синком.
+    """
+
+    __tablename__ = "orders"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    date = Column(Date, index=True)
+    order_num = Column(String)  # номер чека (id заказа в iiko)
+    hour = Column(Integer)  # час открытия (минимальный по позициям)
+    channel = Column(String)  # канал из «Статуса»: в зале / с собой / доставка
+    guests = Column(Float, default=0)  # GuestNum
+    total_sum = Column(Float, default=0)  # сумма позиций заказа
+    item_count = Column(Float, default=0)  # число позиций (сумма qty, без «Статуса»)
+
+
 class SyncLog(Base):
     __tablename__ = "sync_log"
 

@@ -5,6 +5,8 @@
 Так все параметры окружения собраны в одном месте, валидируются и имеют дефолты.
 """
 
+from datetime import date
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -39,6 +41,10 @@ class Settings(BaseSettings):
     jwt_secret: str = ""
     # Срок жизни токена сессии, часов.
     jwt_ttl_hours: int = 12
+
+    # Начало истории для бэкафилла заказов в БД (ISO `YYYY-MM-DD`). Если не задано —
+    # определяется автоматически (probe по выручке: первая дата с продажами).
+    history_start_date: date | None = None
 
 
 settings = Settings()

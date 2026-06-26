@@ -13,8 +13,8 @@ from constants import (
     OLAP_FIELD_ORDER_NUM,
     OLAP_FIELD_SUM,
 )
-from iiko_web_client import iiko_web
 from services.olap_parse import split_field_4
+from services.order_store import order_rows
 from utils import is_delivery
 
 
@@ -43,7 +43,7 @@ def delivery_per_bucket(rows: list[dict]) -> dict[str, dict[str, float]]:
 
 async def delivery_buckets(date_from: date, date_to: date, bucket_field: str) -> dict[str, dict]:
     """Выручка и чеки доставки по корзинам (дата/час) за период — через OLAP SALES."""
-    rows = await iiko_web.olap_sales(
+    rows = await order_rows(
         group_fields=[
             bucket_field,
             OLAP_FIELD_ORDER_NUM,

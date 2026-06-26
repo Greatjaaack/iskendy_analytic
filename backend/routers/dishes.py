@@ -26,6 +26,7 @@ from constants import (
 from iiko_web_client import iiko_web
 from models import DishMapping, SessionLocal, Ttk
 from services.olap_parse import split_field_3
+from services.order_store import dish_detail_rows, order_rows
 from utils import (
     classify_channel,
     display_category,
@@ -82,7 +83,7 @@ async def _modifier_filters(date_from_iso: str, date_to_iso: str) -> tuple[set[s
     Категория и имена «Статуса» (Доставка/В зале/С собой) тоже сюда попадают — в разрезах
     они либо уже отсекаются по категории, либо предварительно дают канал заказа.
     """
-    rows = await iiko_web.dishes_detail(date_from_iso, date_to_iso)
+    rows = await dish_detail_rows(date_from_iso, date_to_iso)
     names: set[str] = set()
     cat_has_mod: set[str] = set()
     cat_has_dish: set[str] = set()
@@ -119,7 +120,7 @@ async def get_dishes(
     Возвращает кол-во, выручку, с/с, маржу и доли (% от выручки и % от кол-ва)."""
     date_from_d, date_to_d = period_range(period, date_from, date_to)
 
-    rows = await iiko_web.dishes_detail(date_from_d.isoformat(), date_to_d.isoformat())
+    rows = await dish_detail_rows(date_from_d.isoformat(), date_to_d.isoformat())
     # rows: dish_id, dish_name, category, product_type, quantity, revenue, cost_sum
     # MODIFIER (Доставка/В зале/С собой и платные добавки) — не блюда, в список не берём
     rows = [r for r in rows if r.get("product_type") != PRODUCT_TYPE_MODIFIER]
@@ -234,7 +235,7 @@ async def get_check_distribution(
     """
     date_from_d, date_to_d = period_range(period, date_from, date_to)
 
-    rows = await iiko_web.olap_sales(
+    rows = await order_rows(
         group_fields=[
             OLAP_FIELD_ORDER_NUM,
             OLAP_FIELD_DISH_CATEGORY,
@@ -324,7 +325,7 @@ async def get_hourly_breakdown(
     group_fields = (
         [OLAP_FIELD_HOUR, OLAP_FIELD_DISH_CATEGORY, dim] if with_cat else [OLAP_FIELD_HOUR, dim]
     )
-    rows = await iiko_web.olap_sales(
+    rows = await order_rows(
         group_fields=group_fields,
         data_fields=[OLAP_FIELD_SUM, OLAP_FIELD_QTY],
         date_from=date_from_d.isoformat(),
@@ -429,7 +430,7 @@ async def get_service_breakdown(
     date_from_d, date_to_d = period_range(period, date_from, date_to)
 
     _, mod_cats = await _modifier_filters(date_from_d.isoformat(), date_to_d.isoformat())
-    rows = await iiko_web.olap_sales(
+    rows = await order_rows(
         group_fields=[
             OLAP_FIELD_ORDER_NUM,
             OLAP_FIELD_DISH_CATEGORY,
@@ -504,6 +505,7 @@ async def get_order_types(
     (доставка/самовывоз/обычный…). При неверном имени поля OLAP вернёт ошибку.
     """
     df, dt = period_range(period, date_from, date_to)
+    # диагностика OrderType — намеренно живой запрос (поле в БД не храним, оно пусто)
     rows = await iiko_web.olap_sales(
         group_fields=[OLAP_FIELD_ORDER_TYPE],
         data_fields=[OLAP_FIELD_QTY],
@@ -534,7 +536,7 @@ async def get_check_composition(
     """
     df, dt = period_range(period, date_from, date_to)
     _, mod_cats = await _modifier_filters(df.isoformat(), dt.isoformat())
-    rows = await iiko_web.olap_sales(
+    rows = await order_rows(
         group_fields=[
             OLAP_FIELD_HOUR,
             OLAP_FIELD_ORDER_NUM,
@@ -634,7 +636,7 @@ async def get_check_fullness(
     """
     df, dt = period_range(period, date_from, date_to)
     _, mod_cats = await _modifier_filters(df.isoformat(), dt.isoformat())
-    rows = await iiko_web.olap_sales(
+    rows = await order_rows(
         group_fields=[
             OLAP_FIELD_HOUR,
             OLAP_FIELD_ORDER_NUM,
@@ -714,7 +716,7 @@ async def get_basket(
     """
     df, dt = period_range(period, date_from, date_to)
     _, mod_cats = await _modifier_filters(df.isoformat(), dt.isoformat())
-    rows = await iiko_web.olap_sales(
+    rows = await order_rows(
         group_fields=[
             OLAP_FIELD_ORDER_NUM,
             OLAP_FIELD_DISH_CATEGORY,

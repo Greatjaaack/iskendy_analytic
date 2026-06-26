@@ -14,6 +14,7 @@ from sqlalchemy import delete, select
 from constants import (
     DAYPARTS,
     OLAP_FIELD_DISH_CATEGORY,
+    OLAP_FIELD_GUESTS,
     OLAP_FIELD_HOUR,
     OLAP_FIELD_OPEN_DATE,
     OLAP_FIELD_ORDER_NUM,
@@ -22,13 +23,11 @@ from constants import (
     WEEKDAY_GROUPS,
     WEEKDAY_TO_GROUP,
 )
-from iiko_web_client import iiko_web
 from models import DaypartPlan, SessionLocal
 from services.daypart import hour_to_daypart
 from services.olap_parse import split_field_4
+from services.order_store import order_rows
 from utils import today
-
-OLAP_FIELD_GUESTS = "GuestNum"
 
 router = APIRouter(prefix="/api/plan", tags=["plan"])
 
@@ -99,7 +98,7 @@ async def seed_from_history(months: int = Query(2, ge=1, le=12)):
     dt = today() - timedelta(days=1)  # вчера — последний полный день
     df = dt - timedelta(days=months * 30)
 
-    rows = await iiko_web.olap_sales(
+    rows = await order_rows(
         group_fields=[
             OLAP_FIELD_OPEN_DATE,
             OLAP_FIELD_HOUR,

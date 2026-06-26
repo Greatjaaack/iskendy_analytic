@@ -4,6 +4,7 @@
 синков и делаем первый полный синк продаж из iiko.
 """
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -16,7 +17,13 @@ from auth import require_auth
 from cache import cache_clear
 from models import SessionLocal, SyncLog, init_db
 from routers import auth, dishes, imports, nomenclature, plan, revenue, suppliers
-from scheduler import full_sync, setup_scheduler, sync_dishes, sync_revenue
+from scheduler import (
+    full_sync,
+    run_startup_sync,
+    setup_scheduler,
+    sync_orders_recent,
+    sync_revenue,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -26,7 +33,10 @@ async def lifespan(app: FastAPI):
     init_db()
     storage.ensure_dir()
     setup_scheduler()
-    await full_sync()
+    # выручка готовится сразу (быстро), а заказы + бэкафилл всей истории — в фоне,
+    # чтобы старт не блокировался выкачкой истории (приложение отвечает мгновенно).
+    await sync_revenue(days_back=31)
+    asyncio.create_task(run_startup_sync())
     yield
 
 
@@ -86,7 +96,7 @@ async def trigger_sync(days: int = 0):
     cache_clear()
     if days > 0:
         await sync_revenue(days)
-        await sync_dishes(days)
+        await sync_orders_recent(days)
     else:
         await full_sync()
     return {"status": "sync triggered"}
