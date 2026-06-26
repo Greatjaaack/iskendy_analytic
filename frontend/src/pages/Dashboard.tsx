@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useLiveQuery } from "../hooks";
 import { fetchRevenue, triggerSync, fetchLastSync, rangeKey } from "../api";
 import type { Period, RangeSel, RevenueDay } from "../api";
 import { KpiCards } from "../components/KpiCards";
@@ -16,7 +16,7 @@ import { MenuBasket } from "../components/MenuBasket";
 import { DishTable } from "../components/DishTable";
 import { ChecksDistribution } from "../components/ChecksDistribution";
 import {
-  REFETCH_INTERVAL_MS, COLORS, PERIODS, weatherInfo,
+  COLORS, PERIODS, weatherInfo,
   AUTOSYNC_OPTIONS, AUTOSYNC_DAYS,
 } from "../constants";
 
@@ -53,16 +53,14 @@ export function Dashboard() {
   // столбец, поэтому в «Пульсе» показываем внутридневную динамику — почасовой график.
   const isSingleDay = isCustom ? sel.from === sel.to : sel.period === "day";
 
-  const revenueQ = useQuery({
+  const revenueQ = useLiveQuery({
     queryKey: ["revenue", rangeKey(sel), withDelivery],
     queryFn: () => fetchRevenue(sel, withDelivery),
-    refetchInterval: REFETCH_INTERVAL_MS,
   });
 
-  const lastSyncQ = useQuery({
+  const lastSyncQ = useLiveQuery({
     queryKey: ["last-sync"],
     queryFn: fetchLastSync,
-    refetchInterval: REFETCH_INTERVAL_MS,
   });
 
   // days не задан → полный синк (кнопка); days=AUTOSYNC_DAYS → лёгкий синк (автотаймер)

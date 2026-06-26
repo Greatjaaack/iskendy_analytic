@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useLiveQuery } from "../hooks";
 import { fetchBasket, rangeKey, type RangeSel } from "../api";
-import { REFETCH_INTERVAL_MS, COLORS } from "../constants";
+import { COLORS } from "../constants";
 import { fmtInt } from "../format";
 
 interface Props {
@@ -29,10 +29,9 @@ export function MenuBasket({ range, withDelivery = true }: Props) {
   const [order, setOrder] = useState<Order>("freq");
   const [focus, setFocus] = useState(-1); // подсвеченное блюдо (клик по подписи), -1 = нет
 
-  const q = useQuery({
+  const q = useLiveQuery({
     queryKey: ["basket", rangeKey(range), "dish", withDelivery],
     queryFn: () => fetchBasket(range, "dish", withDelivery, 14),
-    refetchInterval: REFETCH_INTERVAL_MS,
   });
 
   const labels = q.data?.labels ?? [];

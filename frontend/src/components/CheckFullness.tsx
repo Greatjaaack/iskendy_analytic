@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useLiveQuery } from "../hooks";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import { fetchCheckFullness, rangeKey, type RangeSel } from "../api";
-import { CHART_HEIGHT, REFETCH_INTERVAL_MS, COLORS } from "../constants";
+import { CHART_HEIGHT, COLORS } from "../constants";
 import { fillHourGaps, hourLabel } from "../format";
 
 interface Props {
@@ -23,10 +23,9 @@ const BUCKET_COLORS: Record<string, string> = {
 export function CheckFullness({ range, withDelivery = true }: Props) {
   const [pct, setPct] = useState(false);
 
-  const q = useQuery({
+  const q = useLiveQuery({
     queryKey: ["check-fullness", rangeKey(range), withDelivery],
     queryFn: () => fetchCheckFullness(range, withDelivery),
-    refetchInterval: REFETCH_INTERVAL_MS,
   });
 
   const buckets = q.data?.buckets ?? [];

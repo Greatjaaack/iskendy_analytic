@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useLiveQuery } from "../hooks";
 import { fetchOpsReport, rangeKey, type RangeSel, type OpsCell, type OpsDaypart } from "../api";
-import { REFETCH_INTERVAL_MS, COLORS, FOOD_COST_THRESHOLDS, weekdayGroup } from "../constants";
+import { COLORS, FOOD_COST_THRESHOLDS, weekdayGroup } from "../constants";
 import { fmtInt } from "../format";
 import { PlanEditor } from "./PlanEditor";
 
@@ -61,10 +61,9 @@ const stick = (left: number, width: number, z = 2): React.CSSProperties => ({
  * `/api/revenue/ops-report`. Реагирует на галку «С доставкой».
  */
 export function OpsReport({ range, withDelivery = true }: Props) {
-  const q = useQuery({
+  const q = useLiveQuery({
     queryKey: ["ops-report", rangeKey(range), withDelivery],
     queryFn: () => fetchOpsReport(range, withDelivery),
-    refetchInterval: REFETCH_INTERVAL_MS,
   });
 
   const d = q.data;

@@ -1,11 +1,11 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useLiveQuery } from "../hooks";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from "recharts";
 import { fetchKpiByChannel, fetchRevenueByChannel, rangeKey } from "../api";
 import type { Period, RangeSel } from "../api";
-import { REFETCH_INTERVAL_MS, COLORS, PERIODS, CHART_HEIGHT } from "../constants";
+import { COLORS, PERIODS, CHART_HEIGHT } from "../constants";
 import { fmtInt } from "../format";
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
@@ -24,15 +24,13 @@ export function Delivery() {
 
   const isCustom = "from" in sel;
 
-  const kpiQ = useQuery({
+  const kpiQ = useLiveQuery({
     queryKey: ["kpi-by-channel", rangeKey(sel)],
     queryFn: () => fetchKpiByChannel(sel),
-    refetchInterval: REFETCH_INTERVAL_MS,
   });
-  const byDayQ = useQuery({
+  const byDayQ = useLiveQuery({
     queryKey: ["revenue-by-channel", rangeKey(sel)],
     queryFn: () => fetchRevenueByChannel(sel),
-    refetchInterval: REFETCH_INTERVAL_MS,
   });
 
   const pickPreset = (p: Period) => {

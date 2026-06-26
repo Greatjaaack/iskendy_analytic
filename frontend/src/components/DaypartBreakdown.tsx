@@ -1,10 +1,10 @@
-import { useQuery } from "@tanstack/react-query";
+import { useLiveQuery } from "../hooks";
 import {
   BarChart, Bar, Cell, LabelList,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
 import { fetchByDaypart, rangeKey, type RangeSel, type DaypartRow } from "../api";
-import { CHART_HEIGHT, REFETCH_INTERVAL_MS, COLORS } from "../constants";
+import { CHART_HEIGHT, COLORS } from "../constants";
 import { fmtInt } from "../format";
 
 interface Props {
@@ -40,10 +40,9 @@ function DaypartTooltip({ active, payload }: { active?: boolean; payload?: { pay
 
 /** Выручка по дейпартам: где зарабатывает день (Завтрак/Ланч/Полдник/Ужин/Ночь). */
 export function DaypartBreakdown({ range, withDelivery = true }: Props) {
-  const q = useQuery({
+  const q = useLiveQuery({
     queryKey: ["by-daypart", rangeKey(range), withDelivery],
     queryFn: () => fetchByDaypart(range, withDelivery),
-    refetchInterval: REFETCH_INTERVAL_MS,
   });
 
   // пустые окна (часто Ночь/Завтрак) не показываем — не засоряем ось

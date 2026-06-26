@@ -1,6 +1,6 @@
-import { useQuery } from "@tanstack/react-query";
+import { useLiveQuery } from "../hooks";
 import { fetchCheckDistribution, fetchRevenueByChannel, rangeKey, type RangeSel } from "../api";
-import { REFETCH_INTERVAL_MS, COLORS } from "../constants";
+import { COLORS } from "../constants";
 import { fmtInt } from "../format";
 
 interface Props {
@@ -30,15 +30,13 @@ interface Seg {
  *  Две 100%-стопки (Чеки / Выручка), сегменты — каналы (один цвет в обеих полосах):
  *  видно перекос (напр. доставка = 30% чеков, но 50% выручки). */
 export function ChecksDistribution({ range, withDelivery = true }: Props) {
-  const q = useQuery({
+  const q = useLiveQuery({
     queryKey: ["check-distribution", rangeKey(range), withDelivery],
     queryFn: () => fetchCheckDistribution(range, withDelivery),
-    refetchInterval: REFETCH_INTERVAL_MS,
   });
-  const revQ = useQuery({
+  const revQ = useLiveQuery({
     queryKey: ["revenue-by-channel", rangeKey(range), withDelivery],
     queryFn: () => fetchRevenueByChannel(range, withDelivery),
-    refetchInterval: REFETCH_INTERVAL_MS,
   });
 
   const isDelivery = (t: string) => t.toLowerCase() === "доставка";

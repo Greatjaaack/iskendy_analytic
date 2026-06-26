@@ -1,11 +1,11 @@
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useLiveQuery } from "../hooks";
 import {
   ScatterChart, Scatter, ComposedChart, Bar, Line, Cell, LabelList,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, Legend,
 } from "recharts";
 import { fetchDishes, rangeKey, type RangeSel, type DishRow } from "../api";
-import { CHART_HEIGHT, REFETCH_INTERVAL_MS, COLORS, FOOD_COST_THRESHOLDS } from "../constants";
+import { CHART_HEIGHT, COLORS, FOOD_COST_THRESHOLDS } from "../constants";
 import { fmtInt } from "../format";
 
 // цвет food cost % по порогам (как в OpsReport): дешевле — зелёный, дороже — красный
@@ -40,10 +40,9 @@ export function MenuEngineering({ range, withDelivery = true }: Props) {
   const [view, setView] = useState<"matrix" | "abc">("matrix");
   const [abcBasis, setAbcBasis] = useState<"rev" | "margin">("rev");
 
-  const q = useQuery({
+  const q = useLiveQuery({
     queryKey: ["dishes", rangeKey(range), "dish", withDelivery],
     queryFn: () => fetchDishes(range, "dish", withDelivery),
-    refetchInterval: REFETCH_INTERVAL_MS,
   });
   const all: DishRow[] = useMemo(() => q.data?.data ?? [], [q.data]);
 

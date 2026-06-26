@@ -1,12 +1,12 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useLiveQuery } from "../hooks";
 import {
   BarChart, Bar, Cell, ComposedChart, Line,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ReferenceLine,
 } from "recharts";
 import { fetchRevenueByChannel, rangeKey, type PrevDay, type RangeSel, type RevenueDay } from "../api";
 import {
-  CHART_HEIGHT, COLORS, REFETCH_INTERVAL_MS,
+  CHART_HEIGHT, COLORS,
   WEEKDAY_GROUPS, WEEKDAYS_ALL, WEEKDAYS_WEEKEND, WEEKDAYS_WORK,
   weatherInfo, weekdayGroup,
 } from "../constants";
@@ -57,10 +57,9 @@ export function RevenueChart({ data, prevData, range, withDelivery = true }: Pro
       return next;
     });
 
-  const chQ = useQuery({
+  const chQ = useLiveQuery({
     queryKey: ["revenue-by-channel", rangeKey(range), withDelivery],
     queryFn: () => fetchRevenueByChannel(range, withDelivery),
-    refetchInterval: REFETCH_INTERVAL_MS,
     enabled: view === "channel",
   });
 

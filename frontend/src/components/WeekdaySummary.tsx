@@ -1,6 +1,6 @@
-import { useQuery } from "@tanstack/react-query";
+import { useLiveQuery } from "../hooks";
 import { fetchRevenueByWeekday, rangeKey, type RangeSel } from "../api";
-import { REFETCH_INTERVAL_MS, COLORS, WEEKDAYS_ALL, weekdayGroup } from "../constants";
+import { COLORS, WEEKDAYS_ALL, weekdayGroup } from "../constants";
 import { fmtInt } from "../format";
 
 interface Props {
@@ -12,10 +12,9 @@ interface Props {
  *  Видно, какие дни недели «вытягивают» выручку. Данные — `/api/revenue/by-weekday`.
  *  Порядок строк всегда Пн→Вс; строки окрашены по группе дня недели (как «Выручка по дням»). */
 export function WeekdaySummary({ range, withDelivery = true }: Props) {
-  const q = useQuery({
+  const q = useLiveQuery({
     queryKey: ["revenue-by-weekday", rangeKey(range), withDelivery],
     queryFn: () => fetchRevenueByWeekday(range, withDelivery),
-    refetchInterval: REFETCH_INTERVAL_MS,
   });
 
   // Фиксированный порядок Пн→Вс независимо от того, как пришло с бэкенда.

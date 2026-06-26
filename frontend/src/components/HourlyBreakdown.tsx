@@ -1,10 +1,10 @@
 import { Fragment, useCallback, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useLiveQuery } from "../hooks";
 import {
   Bar, BarChart, Cell, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import { fetchHourlyBreakdown, rangeKey, type RangeSel, type DishGroupBy } from "../api";
-import { REFETCH_INTERVAL_MS, COLORS } from "../constants";
+import { COLORS } from "../constants";
 import { fmtInt, fillHourGaps, hourLabel } from "../format";
 
 interface Props {
@@ -34,24 +34,21 @@ export function HourlyBreakdown({ range, withDelivery = true }: Props) {
   // раскрытые категории (drill-down «категория → блюда» в таблице часа, #11)
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
-  const q = useQuery({
+  const q = useLiveQuery({
     queryKey: ["hourly-breakdown", rangeKey(range), group, withDelivery],
     queryFn: () => fetchHourlyBreakdown(range, group, withDelivery),
-    refetchInterval: REFETCH_INTERVAL_MS,
   });
   // блюда по часам (для разворота категории) — грузим, только когда что-то раскрыто
-  const dishQ = useQuery({
+  const dishQ = useLiveQuery({
     queryKey: ["hourly-breakdown", rangeKey(range), "dish", withDelivery],
     queryFn: () => fetchHourlyBreakdown(range, "dish", withDelivery),
-    refetchInterval: REFETCH_INTERVAL_MS,
     enabled: group === "category" && expanded.size > 0,
   });
   // для диаграммы всегда нужен разрез по КАТЕГОРИЯМ (стек читаем); когда таблица тоже
   // в режиме «Категории» — это тот же queryKey, и React Query не делает второй запрос.
-  const catQ = useQuery({
+  const catQ = useLiveQuery({
     queryKey: ["hourly-breakdown", rangeKey(range), "category", withDelivery],
     queryFn: () => fetchHourlyBreakdown(range, "category", withDelivery),
-    refetchInterval: REFETCH_INTERVAL_MS,
   });
 
   const data = useMemo(() => q.data?.data ?? [], [q.data]);

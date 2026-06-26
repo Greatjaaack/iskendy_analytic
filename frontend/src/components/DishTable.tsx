@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useLiveQuery } from "../hooks";
 import { fetchDishes, rangeKey, type RangeSel, type DishGroupBy, type DishRow } from "../api";
-import { REFETCH_INTERVAL_MS, MARGIN_GOOD, MARGIN_OK, COLORS } from "../constants";
+import { MARGIN_GOOD, MARGIN_OK, COLORS } from "../constants";
 import { fmtInt } from "../format";
 
 interface Props {
@@ -19,10 +19,9 @@ export function DishTable({ range, withDelivery = true }: Props) {
   const [sortKey, setSortKey] = useState<SortKey>("revenue");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
-  const q = useQuery({
+  const q = useLiveQuery({
     queryKey: ["dishes", rangeKey(range), groupBy, withDelivery],
     queryFn: () => fetchDishes(range, groupBy, withDelivery),
-    refetchInterval: REFETCH_INTERVAL_MS,
   });
 
   // sortable=false — колонки фактического с/с (пока не считаем, показываем «—»; позже

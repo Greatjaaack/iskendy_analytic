@@ -1,10 +1,10 @@
-import { useQuery } from "@tanstack/react-query";
+import { useLiveQuery } from "../hooks";
 import {
   BarChart, Bar,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from "recharts";
 import { fetchHourly, rangeKey, type RangeSel, type HourRow } from "../api";
-import { CHART_HEIGHT, REFETCH_INTERVAL_MS, COLORS } from "../constants";
+import { CHART_HEIGHT, COLORS } from "../constants";
 import { fmtInt, fillHourGaps, hourLabel } from "../format";
 
 interface Props {
@@ -14,10 +14,9 @@ interface Props {
 
 /** Выручка по часам: выручка + число чеков по каждому часу. */
 export function HourlyChart({ range, withDelivery = true }: Props) {
-  const sumQ = useQuery({
+  const sumQ = useLiveQuery({
     queryKey: ["hourly", rangeKey(range), withDelivery],
     queryFn: () => fetchHourly(range, withDelivery),
-    refetchInterval: REFETCH_INTERVAL_MS,
   });
 
   // заполняем пропуски часов → равномерная ось X (часы без продаж не схлопываются)
