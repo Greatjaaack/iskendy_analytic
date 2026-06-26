@@ -222,47 +222,41 @@ export function Dashboard() {
             </div>
           )}
           {tab === "ops" && (
-            <>
-              {/* Своды за период (агрегаты дней/дейпартов) */}
-              <SectionTitle>Своды за период</SectionTitle>
-              <div className="dash-grid">
-                {/* свод по дням недели бессмыслен для одного дня (1 строка, бар на 100%) */}
-                {!isSingleDay && <WeekdaySummary range={sel} withDelivery={withDelivery} />}
+            <div className="dash-grid">
+              {/* порядок: свод по дням → ОП-отчёт → выручка по часам → наполненность →
+                  продажи по часам → выручка по дейпартам */}
+              {/* свод по дням недели бессмыслен для одного дня (1 строка, бар на 100%) */}
+              {!isSingleDay && <WeekdaySummary range={sel} withDelivery={withDelivery} />}
+              {/* ежедневный операционный отчёт (дни × дейпарты) — для одного дня вырождается */}
+              {!isSingleDay && (
                 <div className="dash-full">
-                  <DaypartBreakdown range={sel} withDelivery={withDelivery} />
+                  <OpsReport range={sel} withDelivery={withDelivery} />
                 </div>
-                {/* ежедневный операционный отчёт (дни × дейпарты) — для одного дня вырождается */}
-                {!isSingleDay && (
-                  <div className="dash-full">
-                    <OpsReport range={sel} withDelivery={withDelivery} />
-                  </div>
-                )}
+              )}
+              {/* почасовой график в одиночный день уже показан на «Пульсе» — без дубля */}
+              {!isSingleDay && <HourlyChart range={sel} withDelivery={withDelivery} />}
+              <CheckFullness range={sel} withDelivery={withDelivery} />
+              <div className="dash-full">
+                <HourlyBreakdown range={sel} withDelivery={withDelivery} />
               </div>
-
-              {/* Почасовая динамика */}
-              <SectionTitle>Почасовая динамика</SectionTitle>
-              <div className="dash-grid">
-                {/* почасовой график в одиночный день уже показан на «Пульсе» — без дубля */}
-                {!isSingleDay && <HourlyChart range={sel} withDelivery={withDelivery} />}
-                <CheckFullness range={sel} withDelivery={withDelivery} />
-                <div className="dash-full">
-                  <HourlyBreakdown range={sel} withDelivery={withDelivery} />
-                </div>
+              <div className="dash-full">
+                <DaypartBreakdown range={sel} withDelivery={withDelivery} />
               </div>
-            </>
+            </div>
           )}
           {tab === "menu" && (
             <div className="dash-grid">
-              <CheckComposition range={sel} withDelivery={withDelivery} />
+              {/* порядок: продажи блюд → сочетаемость → меню-инжиниринг → состав чека */}
+              <div className="dash-full">
+                <DishTable range={sel} withDelivery={withDelivery} />
+              </div>
               <div className="dash-full">
                 <MenuBasket range={sel} withDelivery={withDelivery} />
               </div>
               <div className="dash-full">
                 <MenuEngineering range={sel} withDelivery={withDelivery} />
               </div>
-              <div className="dash-full">
-                <DishTable range={sel} withDelivery={withDelivery} />
-              </div>
+              <CheckComposition range={sel} withDelivery={withDelivery} />
             </div>
           )}
         </div>
@@ -283,17 +277,6 @@ const dateInput: React.CSSProperties = {
   background: COLORS.card, color: "var(--text)", fontSize: 13,
 };
 
-/** Заголовок секции внутри вкладки (разделяет своды и почасовую динамику). */
-function SectionTitle({ children }: { children: React.ReactNode }) {
-  return (
-    <div style={{
-      fontSize: 12, fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase",
-      color: COLORS.muted, marginTop: 8,
-    }}>
-      {children}
-    </div>
-  );
-}
 
 /** Шапка «Сегодня» (#7): дата, день недели и погода в Москве. */
 function TodayBanner({ day }: { day: RevenueDay }) {
