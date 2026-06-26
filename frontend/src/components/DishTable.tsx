@@ -13,11 +13,10 @@ type SortKey = keyof Pick<DishRow, "name" | "group_name" | "quantity" | "qty_sha
 
 export function DishTable({ range, withDelivery = true }: Props) {
   const [groupBy, setGroupBy] = useState<DishGroupBy>("dish");
-  const [search, setSearch] = useState("");
-  const [open, setOpen] = useState(false);
+  // какая выпадашка открыта (одна за раз)
+  const [openMenu, setOpenMenu] = useState<null | "cats" | "items">(null);
+  // отмеченные галочками товары и категории (можно одновременно и то, и другое)
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  // выбранные категории (режим «Блюда»): можно одновременно набрать и категории,
-  // и отдельные товары — таблица показывает блюда выбранных категорий ∪ выбранные блюда
   const [selCats, setSelCats] = useState<Set<string>>(new Set());
   const [sortKey, setSortKey] = useState<SortKey>("revenue");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
@@ -46,45 +45,32 @@ export function DishTable({ range, withDelivery = true }: Props) {
 
   const all = useMemo(() => q.data?.data ?? [], [q.data]);
 
-  // список категорий блюд (режим «Блюда»: фильтр по group_name)
+  // список категорий (режим «Блюда» — по group_name блюд)
   const catList = useMemo(() => {
     const s = new Set<string>();
     for (const d of all) if (d.group_name) s.add(d.group_name);
     return [...s].sort((a, b) => a.localeCompare(b, "ru"));
   }, [all]);
 
-  // подсказки-категории дропдауна (только режим «Блюда»), исключая уже выбранные
-  const catOptions = useMemo(() => {
+  // товары для чеклиста (режим «Блюда»): сужены выбранными категориями
+  // («товары из выбранных категорий»); если категории не выбраны — все товары
+  const itemList = useMemo(() => {
     if (groupBy !== "dish") return [];
-    const s = search.trim().toLowerCase();
-    return catList.filter((c) => !selCats.has(c) && (!s || c.toLowerCase().includes(s)));
-  }, [groupBy, catList, search, selCats]);
+    const items = selCats.size > 0 ? all.filter((d) => selCats.has(d.group_name)) : all;
+    return [...items].sort((a, b) => a.name.localeCompare(b.name, "ru"));
+  }, [all, groupBy, selCats]);
 
-  // подсказки-блюда: по поиску, исключая выбранные; в режиме «Блюда» сужаются
-  // выбранными категориями («товары из выбранных категорий»)
-  const options = useMemo(() => {
-    const s = search.trim().toLowerCase();
-    return all
-      .filter(
-        (d) =>
-          !selected.has(d.name) &&
-          (!s || d.name.toLowerCase().includes(s)) &&
-          (groupBy !== "dish" || selCats.size === 0 || selCats.has(d.group_name)),
-      )
-      .slice(0, 30);
-  }, [all, search, selected, groupBy, selCats]);
-
-  // строки таблицы: при выборе — блюда выбранных категорий ∪ выбранные блюда;
-  // иначе фильтр по тексту
+  // строки таблицы: блюда выбранных категорий ∪ выбранные товары (режим «Блюда»);
+  // в режиме «Категории» — отмеченные категории
   const rows = useMemo(() => {
     let r = all;
-    const useCats = groupBy === "dish" && selCats.size > 0;
-    const hasSel = selected.size > 0 || useCats;
-    if (hasSel) {
-      r = r.filter((d) => selected.has(d.name) || (useCats && selCats.has(d.group_name)));
-    } else if (search.trim()) {
-      const f = search.toLowerCase();
-      r = r.filter((d) => d.name.toLowerCase().includes(f) || d.group_name.toLowerCase().includes(f));
+    if (groupBy === "category") {
+      if (selected.size > 0) r = r.filter((d) => selected.has(d.name));
+    } else {
+      const useCats = selCats.size > 0, useItems = selected.size > 0;
+      if (useCats || useItems) {
+        r = r.filter((d) => (useCats && selCats.has(d.group_name)) || (useItems && selected.has(d.name)));
+      }
     }
     const dir = sortDir === "asc" ? 1 : -1;
     return [...r].sort((a, b) => {
@@ -93,68 +79,81 @@ export function DishTable({ range, withDelivery = true }: Props) {
       if (typeof va === "number" && typeof vb === "number") return (va - vb) * dir;
       return String(va).localeCompare(String(vb), "ru") * dir;
     });
-  }, [all, search, selected, selCats, groupBy, sortKey, sortDir]);
+  }, [all, selected, selCats, groupBy, sortKey, sortDir]);
 
-  const addSel = (name: string) => {
-    setSelected((p) => new Set(p).add(name));
-    setSearch("");
-  };
-  const removeSel = (name: string) =>
+  const toggleSel = (name: string) =>
     setSelected((p) => {
       const n = new Set(p);
-      n.delete(name);
+      if (n.has(name)) n.delete(name); else n.add(name);
       return n;
     });
-  const addCat = (name: string) => {
-    setSelCats((p) => new Set(p).add(name));
-    setSearch("");
-  };
-  const removeCat = (name: string) =>
+  const toggleCat = (name: string) =>
     setSelCats((p) => {
       const n = new Set(p);
-      n.delete(name);
+      if (n.has(name)) n.delete(name); else n.add(name);
       return n;
     });
+  const clearFilter = () => { setSelected(new Set()); setSelCats(new Set()); };
 
   const onSort = (k: SortKey) => {
     if (k === sortKey) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
     else { setSortKey(k); setSortDir(k === "name" || k === "group_name" ? "asc" : "desc"); }
   };
 
+  const closeMenu = () => setOpenMenu(null);
+  const filterCount = selCats.size + selected.size;
+  // в режиме «Категории» галочки категорий = строки таблицы (множество `selected`)
+  const catRows = useMemo(
+    () => (groupBy === "category" ? [...all].sort((a, b) => a.name.localeCompare(b.name, "ru")) : []),
+    [all, groupBy],
+  );
+
   return (
     <div style={{ background: COLORS.card, borderRadius: 12, padding: "20px 24px" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 12 }}>
         <div style={{ color: "var(--text)", fontWeight: 600 }}>Продажи блюд</div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <div style={{ position: "relative" }}>
-            <input
-              placeholder={groupBy === "category" ? "Поиск категорий…" : "Поиск категорий и блюд…"}
-              value={search}
-              onChange={(e) => { setSearch(e.target.value); setOpen(true); }}
-              onFocus={() => setOpen(true)}
-              onBlur={() => setTimeout(() => setOpen(false), 150)}
-              style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${COLORS.grid}`, background: COLORS.bg, color: "var(--text)", fontSize: 12, width: 200 }}
-            />
-            {open && (catOptions.length > 0 || options.length > 0) && (
-              <div style={dropdown}>
-                {catOptions.map((c) => (
-                  <div key={`cat:${c}`} onMouseDown={() => addCat(c)} style={dropItem}>
-                    <span style={catTag}>категория</span> {c}
-                  </div>
+          {/* отдельные кнопки-выпадашки с галочками */}
+          {groupBy === "dish" ? (
+            <>
+              <Dropdown
+                label="Категории" count={selCats.size}
+                open={openMenu === "cats"} onToggle={() => setOpenMenu(openMenu === "cats" ? null : "cats")}
+                onClose={closeMenu} onClear={() => setSelCats(new Set())}
+              >
+                {catList.map((c) => (
+                  <CheckRow key={c} label={c} checked={selCats.has(c)} onToggle={() => toggleCat(c)} />
                 ))}
-                {options.map((o) => (
-                  <div key={o.key} onMouseDown={() => addSel(o.name)} style={dropItem}>
-                    {o.name}
-                  </div>
+                {catList.length === 0 && <Empty />}
+              </Dropdown>
+              <Dropdown
+                label="Товары" count={selected.size}
+                open={openMenu === "items"} onToggle={() => setOpenMenu(openMenu === "items" ? null : "items")}
+                onClose={closeMenu} onClear={() => setSelected(new Set())}
+              >
+                {itemList.map((d) => (
+                  <CheckRow key={d.key} label={d.name} checked={selected.has(d.name)} onToggle={() => toggleSel(d.name)} />
                 ))}
-              </div>
-            )}
-          </div>
+                {itemList.length === 0 && <Empty />}
+              </Dropdown>
+            </>
+          ) : (
+            <Dropdown
+              label="Категории" count={selected.size}
+              open={openMenu === "cats"} onToggle={() => setOpenMenu(openMenu === "cats" ? null : "cats")}
+              onClose={closeMenu} onClear={() => setSelected(new Set())}
+            >
+              {catRows.map((d) => (
+                <CheckRow key={d.key} label={d.name} checked={selected.has(d.name)} onToggle={() => toggleSel(d.name)} />
+              ))}
+              {catRows.length === 0 && <Empty />}
+            </Dropdown>
+          )}
           <div style={{ display: "flex", background: COLORS.bg, borderRadius: 8, padding: 3, gap: 2 }}>
             {(["dish", "category"] as DishGroupBy[]).map((g) => (
               <button
                 key={g}
-                onClick={() => { setGroupBy(g); setSelected(new Set()); setSelCats(new Set()); }}
+                onClick={() => { setGroupBy(g); clearFilter(); closeMenu(); }}
                 style={{
                   padding: "5px 12px", borderRadius: 6, border: "none", cursor: "pointer",
                   fontSize: 12, fontWeight: 600,
@@ -169,22 +168,22 @@ export function DishTable({ range, withDelivery = true }: Props) {
         </div>
       </div>
 
-      {/* выбранные категории + позиции (мультивыбор) */}
-      {(selected.size > 0 || selCats.size > 0) && (
+      {/* активные фильтры — чипы (видны и при закрытых выпадашках) */}
+      {filterCount > 0 && (
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
           {[...selCats].map((name) => (
             <span key={`cat:${name}`} style={catChip}>
               <span style={catTag}>кат.</span> {name}
-              <span onClick={() => removeCat(name)} style={{ cursor: "pointer", color: COLORS.muted }}>✕</span>
+              <span onClick={() => toggleCat(name)} style={{ cursor: "pointer", color: COLORS.muted }}>✕</span>
             </span>
           ))}
           {[...selected].map((name) => (
             <span key={name} style={selChip}>
               {name}
-              <span onClick={() => removeSel(name)} style={{ cursor: "pointer", color: COLORS.muted }}>✕</span>
+              <span onClick={() => toggleSel(name)} style={{ cursor: "pointer", color: COLORS.muted }}>✕</span>
             </span>
           ))}
-          <button onClick={() => { setSelected(new Set()); setSelCats(new Set()); }} style={{ ...selChip, cursor: "pointer", color: COLORS.muted }}>
+          <button onClick={clearFilter} style={{ ...selChip, cursor: "pointer", color: COLORS.muted }}>
             очистить
           </button>
         </div>
@@ -246,15 +245,70 @@ export function DishTable({ range, withDelivery = true }: Props) {
   );
 }
 
+/** Кнопка-выпадашка с галочками: триггер со стрелкой ▾ + панель чеклиста. */
+function Dropdown({
+  label, count, open, onToggle, onClose, onClear, children,
+}: {
+  label: string; count: number; open: boolean;
+  onToggle: () => void; onClose: () => void; onClear: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div style={{ position: "relative" }}>
+      <button onClick={onToggle} style={ddBtn(count > 0 || open)}>
+        {label}{count > 0 ? ` (${count})` : ""} <span style={{ fontSize: 10, opacity: 0.7 }}>▾</span>
+      </button>
+      {open && (
+        <>
+          {/* подложка-перехватчик клика вне панели */}
+          <div onClick={onClose} style={backdrop} />
+          <div style={panel}>
+            <div style={{ maxHeight: 260, overflowY: "auto", padding: "4px 0" }}>{children}</div>
+            {count > 0 && (
+              <div style={{ borderTop: `1px solid ${COLORS.grid}`, padding: "6px 12px", textAlign: "right" }}>
+                <button onClick={onClear} style={linkBtn}>Сбросить</button>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** Строка-галочка чеклиста. */
+function CheckRow({ label, checked, onToggle }: { label: string; checked: boolean; onToggle: () => void }) {
+  return (
+    <label style={checkItem}>
+      <input type="checkbox" checked={checked} onChange={onToggle} style={{ cursor: "pointer" }} />
+      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
+    </label>
+  );
+}
+
+const Empty = () => <div style={{ padding: "6px 12px", fontSize: 12, color: COLORS.muted }}>—</div>;
+
 const td: React.CSSProperties = { padding: "8px 12px" };
 const tdR: React.CSSProperties = { padding: "8px 12px", textAlign: "right" };
-const dropdown: React.CSSProperties = {
-  position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 10,
+
+const ddBtn = (active: boolean): React.CSSProperties => ({
+  padding: "6px 12px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer",
+  border: `1px solid ${active ? COLORS.primary : COLORS.grid}`,
+  background: COLORS.bg, color: active ? COLORS.indigoText : "var(--text)", whiteSpace: "nowrap",
+});
+const backdrop: React.CSSProperties = { position: "fixed", inset: 0, zIndex: 9 };
+const panel: React.CSSProperties = {
+  position: "absolute", top: "calc(100% + 4px)", right: 0, zIndex: 10, width: 240,
   background: COLORS.bg, border: `1px solid ${COLORS.grid}`, borderRadius: 8,
-  maxHeight: 240, overflowY: "auto", boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
+  boxShadow: "0 8px 24px rgba(0,0,0,0.4)", overflow: "hidden",
 };
-const dropItem: React.CSSProperties = {
-  padding: "8px 12px", fontSize: 13, color: "var(--text)", cursor: "pointer", whiteSpace: "nowrap",
+const checkItem: React.CSSProperties = {
+  display: "flex", alignItems: "center", gap: 8, padding: "5px 12px",
+  fontSize: 13, color: "var(--text)", cursor: "pointer",
+};
+const linkBtn: React.CSSProperties = {
+  background: "none", border: "none", cursor: "pointer", fontSize: 12, fontWeight: 600,
+  color: COLORS.indigoText, padding: 0,
 };
 const selChip: React.CSSProperties = {
   display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 10px",
