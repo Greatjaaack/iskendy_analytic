@@ -6,17 +6,12 @@ from fastapi import APIRouter, Query
 from sqlalchemy import select
 
 from constants import (
-    ALCOHOL_CATEGORIES,
-    CATEGORY_GROUP_ALCOHOL,
-    CATEGORY_GROUP_DRINK,
-    CATEGORY_GROUP_FOOD,
     CATEGORY_GROUP_ORDER,
     CHANNEL_DELIVERY,
     CHANNEL_DINEIN,
     CHANNEL_TAKEAWAY,
     DAY_NAMES_RU,
     DAYPARTS,
-    DRINK_CATEGORIES,
     METRIC_AVG_SPEND,
     METRIC_COST,
     METRIC_DISCOUNT,
@@ -37,6 +32,8 @@ from constants import (
 from iiko_web_client import iiko_web
 from models import DaypartPlan, RevenueDaily, SessionLocal
 from routers.dishes import _dish_unit_cost
+from services.daypart import category_group, hour_to_daypart
+from services.olap_parse import split_field_4, split_field_5
 from utils import is_delivery, normalize_name, period_range, prev_period_range, today
 from weather import get_weather
 
@@ -45,35 +42,19 @@ OLAP_FIELD_GUESTS = "GuestNum"  # число гостей (атрибут зак
 CHANNELS = (CHANNEL_DINEIN, CHANNEL_TAKEAWAY, CHANNEL_DELIVERY)
 
 
-def _split4(value: str) -> tuple[str, str, str, str]:
-    """field0 «bucket, OrderNum, Категория, Имя» → 4 части (имя может содержать ', ')."""
-    parts = str(value).split(", ")
-    if len(parts) < 4:
-        return "", "", "", ""
-    return parts[0], parts[1], parts[2], ", ".join(parts[3:])
-
-
-def _split5(value: str) -> tuple[str, str, str, str, str]:
-    """field0 «дата, час, OrderNum, Категория, Имя» → 5 частей (имя может содержать ', ')."""
-    parts = str(value).split(", ")
-    if len(parts) < 5:
-        return "", "", "", "", ""
-    return parts[0], parts[1], parts[2], parts[3], ", ".join(parts[4:])
-
-
 def _channel_revenue(rows: list[dict]) -> dict[str, dict[str, float]]:
     """{bucket → {канал: выручка}}. bucket = 1-е group-поле (дата/час). Канал: категория
     «Доставка» → доставка; иначе «Статус» заказа (по умолчанию зал)."""
     order_channel: dict[str, str] = {}
     for r in rows:
-        _b, ordernum, category, name = _split4(r.get("field0", {}).get("value", ""))
+        _b, ordernum, category, name = split_field_4(r.get("field0", {}).get("value", ""))
         if category == ORDER_STATUS_CATEGORY:
             ch = ORDER_STATUS_CHANNELS.get(name.strip().lower())
             if ch:
                 order_channel[ordernum] = ch
     out: dict[str, dict[str, float]] = {}
     for r in rows:
-        bucket, ordernum, category, name = _split4(r.get("field0", {}).get("value", ""))
+        bucket, ordernum, category, name = split_field_4(r.get("field0", {}).get("value", ""))
         if not name or category == ORDER_STATUS_CATEGORY:
             continue
         rev = float(r.get("field1", {}).get("value", 0) or 0)
@@ -96,7 +77,7 @@ def _delivery_per_bucket(rows: list[dict]) -> dict[str, dict[str, float]]:
     out: dict[str, dict[str, float]] = {}
     seen: dict[str, set[str]] = {}
     for r in rows:
-        bucket, ordernum, category, name = _split4(r.get("field0", {}).get("value", ""))
+        bucket, ordernum, category, name = split_field_4(r.get("field0", {}).get("value", ""))
         if not name or not is_delivery(category, name):
             continue
         rev = float(r.get("field1", {}).get("value", 0) or 0)
@@ -496,24 +477,6 @@ async def get_by_daypart(
     }
 
 
-def _hour_to_daypart() -> dict[int, str]:
-    """{час → ключ дейпарта} из `DAYPARTS` (для свёртки часов в окна дня)."""
-    out: dict[int, str] = {}
-    for dp in DAYPARTS:
-        for h in dp["hours"]:
-            out[h] = dp["key"]
-    return out
-
-
-def _category_group(category: str) -> str:
-    """Меню-категория iiko → группа для food cost (Еда / Напитки / Алкоголь)."""
-    if category in DRINK_CATEGORIES:
-        return CATEGORY_GROUP_DRINK
-    if category in ALCOHOL_CATEGORIES:
-        return CATEGORY_GROUP_ALCOHOL
-    return CATEGORY_GROUP_FOOD
-
-
 def _blank_bucket() -> dict:
     return {
         "revenue": 0.0,
@@ -622,7 +585,7 @@ async def get_ops_report(
     )
 
     unit_cost = _dish_unit_cost()
-    h2dp = _hour_to_daypart()
+    h2dp = hour_to_daypart()
     # накопитель: (дата, ключ дейпарта) → bucket
     agg: dict[tuple[str, str], dict] = {}
     # food cost по группам категорий (Еда/Напитки/Алкоголь) на дейпарт — нижний блок свода
@@ -631,7 +594,7 @@ async def get_ops_report(
     )  # (ключ дейпарта, группа) → {revenue,cost,rev_with_cost}
 
     for r in rows:
-        ds, hs, ordernum, category, name = _split5(r.get("field0", {}).get("value", ""))
+        ds, hs, ordernum, category, name = split_field_5(r.get("field0", {}).get("value", ""))
         if not name or category == ORDER_STATUS_CATEGORY:
             continue
         if not include_delivery and is_delivery(category, name):
@@ -655,7 +618,7 @@ async def get_ops_report(
         b["guests"].setdefault(ordernum, guests)
         c = unit_cost.get(normalize_name(name))
         # группа категории для food cost (дейпарт × Еда/Напитки/Алкоголь)
-        ck = (dp, _category_group(category))
+        ck = (dp, category_group(category))
         cb = cat_agg.get(ck)
         if cb is None:
             cb = cat_agg[ck] = {"revenue": 0.0, "cost": 0.0, "rev_with_cost": 0.0}

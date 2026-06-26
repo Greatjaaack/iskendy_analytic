@@ -25,6 +25,7 @@ from constants import (
 )
 from iiko_web_client import iiko_web
 from models import DishMapping, SessionLocal, Ttk
+from services.olap_parse import split_field_3
 from utils import (
     classify_channel,
     display_category,
@@ -244,17 +245,11 @@ async def get_check_distribution(
         date_to=date_to_d.isoformat(),
     )
 
-    def _split(value: str) -> tuple[str, str, str]:
-        parts = str(value).split(", ")
-        if len(parts) < 3:
-            return "", "", ""
-        return parts[0], parts[1], ", ".join(parts[2:])
-
     order_channel: dict[str, str] = {}  # канал из «Статус»-строки заказа
     order_has_delivery: set[str] = set()  # в заказе есть позиция меню-категории «Доставка»
     orders: set[str] = set()  # все товарные заказы (по которым считаем чеки)
     for r in rows:
-        order_num, category, name = _split(r.get("field0", {}).get("value", ""))
+        order_num, category, name = split_field_3(r.get("field0", {}).get("value", ""))
         if not order_num:
             continue
         if category == ORDER_STATUS_CATEGORY:
@@ -446,17 +441,11 @@ async def get_service_breakdown(
     )
 
     # field0 = "<OrderNum>, <Категория>, <Имя>". OrderNum и категория без запятых; имя
-    # может содержать ", " — поэтому склеиваем хвост обратно.
-    def _split(value: str) -> tuple[str, str, str]:
-        parts = str(value).split(", ")
-        if len(parts) < 3:
-            return "", "", ""
-        return parts[0], parts[1], ", ".join(parts[2:])
-
+    # может содержать ", " — поэтому склеиваем хвост обратно (split_field_3).
     # 1-й проход: канал каждого заказа из его строки категории «Статус»
     order_channel: dict[str, str] = {}
     for r in rows:
-        order_num, category, name = _split(r.get("field0", {}).get("value", ""))
+        order_num, category, name = split_field_3(r.get("field0", {}).get("value", ""))
         if category == ORDER_STATUS_CATEGORY:
             ch = ORDER_STATUS_CHANNELS.get(name.strip().lower())
             if ch:
@@ -467,7 +456,7 @@ async def get_service_breakdown(
     channels = (CHANNEL_DINEIN, CHANNEL_TAKEAWAY, CHANNEL_DELIVERY)
     agg: dict[str, dict] = {}
     for r in rows:
-        order_num, category, name = _split(r.get("field0", {}).get("value", ""))
+        order_num, category, name = split_field_3(r.get("field0", {}).get("value", ""))
         # пропускаем «Статус» (он дал канал в 1-м проходе) и платные модификаторы — не блюда
         if not name or category == ORDER_STATUS_CATEGORY or category in mod_cats:
             continue

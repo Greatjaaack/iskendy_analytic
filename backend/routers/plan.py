@@ -24,27 +24,13 @@ from constants import (
 )
 from iiko_web_client import iiko_web
 from models import DaypartPlan, SessionLocal
+from services.daypart import hour_to_daypart
+from services.olap_parse import split_field_4
 from utils import today
 
 OLAP_FIELD_GUESTS = "GuestNum"
 
 router = APIRouter(prefix="/api/plan", tags=["plan"])
-
-
-def _hour_to_daypart() -> dict[int, str]:
-    out: dict[int, str] = {}
-    for dp in DAYPARTS:
-        for h in dp["hours"]:
-            out[h] = dp["key"]
-    return out
-
-
-def _split4(value: str) -> tuple[str, str, str, str]:
-    """field0 «дата, час, OrderNum, Категория» → 4 части."""
-    parts = str(value).split(", ")
-    if len(parts) < 4:
-        return "", "", "", ""
-    return parts[0], parts[1], parts[2], ", ".join(parts[3:])
 
 
 def _load_plan() -> dict[tuple[str, str], DaypartPlan]:
@@ -125,11 +111,11 @@ async def seed_from_history(months: int = Query(2, ge=1, le=12)):
         date_to=dt.isoformat(),
     )
 
-    h2dp = _hour_to_daypart()
+    h2dp = hour_to_daypart()
     # (дата, дейпарт) → {revenue, orders:set, guests:{order:n}}
     acc: dict[tuple[str, str], dict] = {}
     for r in rows:
-        ds, hs, ordernum, category = _split4(r.get("field0", {}).get("value", ""))
+        ds, hs, ordernum, category = split_field_4(r.get("field0", {}).get("value", ""))
         if not ds or category == ORDER_STATUS_CATEGORY:
             continue
         try:
