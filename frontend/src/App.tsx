@@ -18,9 +18,9 @@ const queryClient = new QueryClient({
 
 function Layout() {
   return (
-    <div style={{ display: "flex", minHeight: "100vh", background: "var(--bg)" }}>
+    <div className="app-shell">
       <Sidebar />
-      <div style={{ flex: 1, minWidth: 0 }}>
+      <div className="app-main">
         <Outlet />
       </div>
     </div>

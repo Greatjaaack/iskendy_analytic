@@ -15,7 +15,7 @@ export function TtkCard() {
   const t = q.data;
 
   return (
-    <div style={{ padding: 24, color: "var(--text)" }}>
+    <div className="page" style={{ color: "var(--text)" }}>
       <Link to="/nomenclature" style={{ color: "var(--muted)", fontSize: 13, textDecoration: "none" }}>
         ← Номенклатура ↔ ТТК
       </Link>

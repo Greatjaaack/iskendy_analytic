@@ -69,7 +69,7 @@ export function NewSupplier() {
   };
 
   return (
-    <div style={{ padding: 24, color: "var(--text)", maxWidth: 720 }}>
+    <div className="page" style={{ color: "var(--text)", maxWidth: 720 }}>
       <Link to="/suppliers" style={{ color: "var(--muted)", fontSize: 13, textDecoration: "none" }}>
         ← Поставщики
       </Link>

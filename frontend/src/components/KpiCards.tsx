@@ -39,7 +39,7 @@ export function KpiCards({ summary }: Props) {
   ];
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
+    <div className="kpi-grid">
       {cards.map((c) => (
         <div
           key={c.label}

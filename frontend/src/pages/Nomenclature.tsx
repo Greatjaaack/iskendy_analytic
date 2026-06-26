@@ -13,7 +13,7 @@ export function Nomenclature() {
   const ingQ = useQuery({ queryKey: ["ingredients"], queryFn: fetchIngredients });
 
   return (
-    <div style={{ padding: 24, color: "var(--text)" }}>
+    <div className="page" style={{ color: "var(--text)" }}>
       <div style={{ fontSize: 22, fontWeight: 700, marginBottom: 16 }}>Номенклатура ↔ ТТК</div>
 
       <div style={{ display: "flex", gap: 4, background: "var(--card)", borderRadius: 8, padding: 4, width: "fit-content", marginBottom: 16 }}>

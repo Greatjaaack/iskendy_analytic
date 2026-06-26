@@ -35,7 +35,7 @@ export function Suppliers() {
   };
 
   return (
-    <div style={{ padding: 24, color: "var(--text)" }}>
+    <div className="page" style={{ color: "var(--text)" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
         <div style={{ fontSize: 22, fontWeight: 700 }}>Поставщики</div>
         <div style={{ display: "flex", gap: 8 }}>
