@@ -14,10 +14,13 @@ from datetime import date
 from sqlalchemy import func, select
 
 from constants import (
+    OLAP_FIELD_COST,
     OLAP_FIELD_DISH_CATEGORY,
     OLAP_FIELD_DISH_NAME,
+    OLAP_FIELD_DISH_TYPE,
     OLAP_FIELD_GUESTS,
     OLAP_FIELD_HOUR,
+    OLAP_FIELD_NET,
     OLAP_FIELD_OPEN_DATE,
     OLAP_FIELD_ORDER_NUM,
     OLAP_FIELD_QTY,
@@ -32,15 +35,18 @@ _GROUP_GETTERS = {
     OLAP_FIELD_HOUR: lambda r: str(r.hour if r.hour is not None else ""),
     OLAP_FIELD_ORDER_NUM: lambda r: r.order_num or "",
     OLAP_FIELD_DISH_CATEGORY: lambda r: r.category or "",
+    OLAP_FIELD_DISH_TYPE: lambda r: r.dish_type or "",
     OLAP_FIELD_DISH_NAME: lambda r: r.name or "",
 }
-# data-поля: SUM/QTY суммируются, GUESTS — атрибут заказа (в группе с OrderNum
-# константен), берём максимум
+# data-поля: SUM/QTY/COST/NET суммируются, GUESTS — атрибут заказа (в группе с
+# OrderNum константен), берём максимум
 _MAX_FIELDS = {OLAP_FIELD_GUESTS}
 _VALUE_GETTERS = {
     OLAP_FIELD_SUM: lambda r: r.sum or 0.0,
     OLAP_FIELD_QTY: lambda r: r.qty or 0.0,
     OLAP_FIELD_GUESTS: lambda r: r.guests or 0.0,
+    OLAP_FIELD_COST: lambda r: r.cost or 0.0,
+    OLAP_FIELD_NET: lambda r: r.net or 0.0,
 }
 
 

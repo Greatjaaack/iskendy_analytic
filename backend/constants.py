@@ -153,11 +153,22 @@ OLAP_STATUS_ERROR = "ERROR"
 OLAP_FIELD_HOUR = "HourOpen"  # час открытия (группировка)
 OLAP_FIELD_DISH_CATEGORY = "DishCategory"
 OLAP_FIELD_DISH_NAME = "DishName"
+OLAP_FIELD_DISH_TYPE = "DishType"  # DISH / MODIFIER / GOODS (тип позиции, в самом OLAP)
 OLAP_FIELD_SUM = "DishSumInt"  # сумма без скидки (выручка)
 OLAP_FIELD_QTY = "DishAmountInt"  # количество
 OLAP_FIELD_GUESTS = "GuestNum"  # число гостей (атрибут заказа, повторяется по строкам)
+OLAP_FIELD_COST = "ProductCostBase.ProductCost"  # себестоимость iiko по позиции
+OLAP_FIELD_NET = "DishDiscountSumInt"  # выручка после скидки (= брутто, скидок нет)
 OLAP_FILTER_DATE = "OpenDate.Typed"  # поле фильтра по дате
 OLAP_FIELD_OPEN_DATE = "OpenDate.Typed"  # дата заказа (группировка, ISO YYYY-MM-DD)
+# Заказ-уровневые атрибуты (для таблицы orders): время, касса, зал/стол, оплата
+OLAP_FIELD_OPEN_TIME = "OpenTime"  # ISO-таймстамп открытия заказа
+OLAP_FIELD_CLOSE_TIME = "CloseTime"  # ISO-таймстамп закрытия заказа
+OLAP_FIELD_CASHIER = "Cashier"  # кассир
+OLAP_FIELD_SESSION = "SessionNum"  # номер кассовой смены
+OLAP_FIELD_SECTION = "RestaurantSection"  # зал/секция
+OLAP_FIELD_TABLE = "TableNum"  # номер стола
+OLAP_FIELD_PAYTYPES = "PayTypes"  # способ оплаты (нал/карта/агрегатор; может быть сплит)
 
 # Тип обслуживания заказа (доставка / с собой / в зале) для разреза блюдо×канал (#4).
 # ⚠️ Имя поля подобрано по стандарту iiko OLAP SALES — ПРОВЕРИТЬ на живом API через

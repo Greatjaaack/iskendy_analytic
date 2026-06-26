@@ -78,8 +78,11 @@ class OrderItem(Base):
     order_num = Column(String)
     category = Column(String)
     name = Column(String)
+    dish_type = Column(String)  # DISH / MODIFIER / GOODS (из OLAP)
     qty = Column(Float, default=0)  # DishAmountInt
     sum = Column(Float, default=0)  # DishSumInt (выручка без скидки)
+    net = Column(Float, default=0)  # DishDiscountSumInt (после скидки)
+    cost = Column(Float, default=0)  # ProductCostBase.ProductCost (с/с iiko)
     guests = Column(Float, default=0)  # GuestNum (на заказ)
 
 
@@ -121,8 +124,33 @@ class Order(Base):
     is_delivery = Column(Boolean, default=False)  # бизнес-правило доставки (категория/_д)
     guests = Column(Float, default=0)  # GuestNum
     total_sum = Column(Float, default=0)  # сумма позиций заказа
+    cost_sum = Column(Float, default=0)  # с/с iiko по позициям заказа
     item_count = Column(Float, default=0)  # число позиций (сумма qty, без «Статуса»)
     dish_count = Column(Integer, default=0)  # число РАЗНЫХ позиций (без «Статуса»)
+    # заказ-уровневые атрибуты из OLAP (отдельный запрос)
+    pay_type = Column(String)  # способ оплаты (нал/карта/агрегатор; сплит — через «, »)
+    table_num = Column(String)  # номер стола
+    section = Column(String)  # зал/секция
+    cashier = Column(String)  # кассир
+    session_num = Column(String)  # номер кассовой смены
+    open_time = Column(String)  # ISO-таймстамп открытия
+    close_time = Column(String)  # ISO-таймстамп закрытия
+    duration_min = Column(Float)  # длительность обслуживания, мин (close - open)
+
+
+class OrderPayment(Base):
+    """Оплата заказа по способу (нормализация `orders.pay_type`): один заказ — одна
+    или несколько строк (сплит-оплата). `amount` — сумма по этому способу (OLAP
+    делит корректно). Для аналитики структуры выручки нал/карта/агрегатор.
+    """
+
+    __tablename__ = "order_payments"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    date = Column(Date, index=True)
+    order_num = Column(String)
+    pay_type = Column(String)
+    amount = Column(Float, default=0)
 
 
 class SyncLog(Base):
@@ -315,13 +343,21 @@ class DaypartPlan(Base):
 
 
 def init_db():
-    # До-миграция производной таблицы `orders`: create_all не добавляет колонки в
-    # существующую таблицу. orders — денормализованный снимок (пересобирается
-    # бэкафиллом из order_items), поэтому при дрейфе схемы безопасно пересоздать.
+    # До-миграция ПРОИЗВОДНЫХ таблиц (order_items/dish_detail/orders): create_all не
+    # добавляет колонки в существующую таблицу. Эти таблицы — снимок из iiko
+    # (пересобираются бэкафиллом), поэтому при дрейфе схемы безопасно пересоздать —
+    # данные не теряются (косты/ТТК/поставщики в других таблицах не трогаются).
+    # Сентинел-колонка на таблицу: её отсутствие = старая схема → DROP.
+    derived_sentinels = {
+        "order_items": "dish_type",
+        "orders": "pay_type",
+    }
     insp = inspect(engine)
-    if "orders" in insp.get_table_names():
-        cols = {c["name"] for c in insp.get_columns("orders")}
-        if "is_delivery" not in cols:  # старая схема без обогащения
-            with engine.begin() as conn:
-                conn.execute(text("DROP TABLE orders"))
+    existing = set(insp.get_table_names())
+    with engine.begin() as conn:
+        for table, sentinel in derived_sentinels.items():
+            if table in existing:
+                cols = {c["name"] for c in insp.get_columns(table)}
+                if sentinel not in cols:
+                    conn.execute(text(f"DROP TABLE {table}"))
     Base.metadata.create_all(bind=engine)

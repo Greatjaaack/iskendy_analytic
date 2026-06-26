@@ -10,7 +10,7 @@
 
 import logging
 from collections import defaultdict
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import func, select
@@ -19,14 +19,24 @@ from config import settings
 from constants import (
     CHANNEL_DINEIN,
     DAY_NAMES_EN,
+    OLAP_FIELD_CASHIER,
+    OLAP_FIELD_CLOSE_TIME,
+    OLAP_FIELD_COST,
     OLAP_FIELD_DISH_CATEGORY,
     OLAP_FIELD_DISH_NAME,
+    OLAP_FIELD_DISH_TYPE,
     OLAP_FIELD_GUESTS,
     OLAP_FIELD_HOUR,
+    OLAP_FIELD_NET,
     OLAP_FIELD_OPEN_DATE,
+    OLAP_FIELD_OPEN_TIME,
     OLAP_FIELD_ORDER_NUM,
+    OLAP_FIELD_PAYTYPES,
     OLAP_FIELD_QTY,
+    OLAP_FIELD_SECTION,
+    OLAP_FIELD_SESSION,
     OLAP_FIELD_SUM,
+    OLAP_FIELD_TABLE,
     ORDER_STATUS_CATEGORY,
     ORDER_STATUS_CHANNELS,
 )
@@ -35,12 +45,13 @@ from models import (
     DishDetail,
     Order,
     OrderItem,
+    OrderPayment,
     RevenueDaily,
     SessionLocal,
     SyncLog,
 )
 from services.daypart import hour_to_daypart
-from services.olap_parse import split_field_5
+from services.olap_parse import split_field
 from utils import is_delivery, today
 
 logger = logging.getLogger(__name__)
@@ -114,11 +125,41 @@ async def sync_revenue(days_back: int = 7):
 # ---------- Заказы (order_items / orders / dish_detail) ----------
 
 
+# группы/данные позиционного OLAP-запроса по позициям (имя — последним, может содержать «, »)
+_ITEM_GROUP = [
+    OLAP_FIELD_OPEN_DATE,
+    OLAP_FIELD_HOUR,
+    OLAP_FIELD_ORDER_NUM,
+    OLAP_FIELD_DISH_CATEGORY,
+    OLAP_FIELD_DISH_TYPE,
+    OLAP_FIELD_DISH_NAME,
+]
+_ITEM_DATA = [OLAP_FIELD_SUM, OLAP_FIELD_QTY, OLAP_FIELD_GUESTS, OLAP_FIELD_COST, OLAP_FIELD_NET]
+# заказ-уровневые атрибуты (отдельный запрос); free-text (зал/кассир) — в конце
+_ATTR_GROUP = [
+    OLAP_FIELD_OPEN_DATE,
+    OLAP_FIELD_ORDER_NUM,
+    OLAP_FIELD_OPEN_TIME,
+    OLAP_FIELD_CLOSE_TIME,
+    OLAP_FIELD_SESSION,
+    OLAP_FIELD_TABLE,
+    OLAP_FIELD_PAYTYPES,
+    OLAP_FIELD_SECTION,
+    OLAP_FIELD_CASHIER,
+]
+
+
+def _f(r: dict, i: int) -> float:
+    return float(r.get(f"field{i}", {}).get("value", 0) or 0)
+
+
 def _parse_order_rows(rows: list[dict]) -> list[dict]:
-    """OLAP-строки суперсета [дата, час, заказ, категория, имя]+[sum,qty,guests] → dict-и."""
+    """OLAP-позиции [дата,час,заказ,категория,тип,имя]+[sum,qty,guests,cost,net] → dict-и."""
     out = []
     for r in rows:
-        ds, hs, order_num, category, name = split_field_5(r.get("field0", {}).get("value", ""))
+        ds, hs, order_num, category, dish_type, name = split_field(
+            r.get("field0", {}).get("value", ""), 6
+        )
         if not ds:
             continue
         try:
@@ -135,21 +176,93 @@ def _parse_order_rows(rows: list[dict]) -> list[dict]:
                 "hour": hour,
                 "order_num": order_num,
                 "category": category,
+                "dish_type": dish_type,
                 "name": name,
-                "sum": float(r.get("field1", {}).get("value", 0) or 0),
-                "qty": float(r.get("field2", {}).get("value", 0) or 0),
-                "guests": float(r.get("field3", {}).get("value", 0) or 0),
+                "sum": _f(r, 1),
+                "qty": _f(r, 2),
+                "guests": _f(r, 3),
+                "cost": _f(r, 4),
+                "net": _f(r, 5),
             }
         )
     return out
 
 
-def _build_orders(items: list[dict]) -> list[dict]:
-    """Из позиций заказа собрать обогащённые чек-сущности.
+def _duration_min(open_t: str | None, close_t: str | None) -> float | None:
+    if not open_t or not close_t:
+        return None
+    try:
+        m = (datetime.fromisoformat(close_t) - datetime.fromisoformat(open_t)).total_seconds() / 60
+    except ValueError:
+        return None
+    return round(m, 1) if m >= 0 else None
+
+
+def _parse_order_attrs(rows: list[dict]) -> dict[tuple, dict]:
+    """Заказ-атрибуты (время/касса/зал/стол/оплата) → {(дата, заказ): {...}}.
+
+    Способ оплаты может быть сплитом (несколько строк на заказ) — собираем множеством.
+    """
+    out: dict[tuple, dict] = {}
+    for r in rows:
+        ds, onum, open_t, close_t, session, table, pay, section, cashier = split_field(
+            r.get("field0", {}).get("value", ""), 9
+        )
+        try:
+            d = date.fromisoformat(ds)
+        except ValueError:
+            continue
+        a = out.get((d, onum))
+        if a is None:
+            a = out[(d, onum)] = {
+                "open_time": open_t or None,
+                "close_time": close_t or None,
+                "session_num": session or None,
+                "table_num": table or None,
+                "section": section or None,
+                "cashier": cashier or None,
+                "_pays": set(),
+            }
+        if pay:
+            a["_pays"].add(pay)
+        if open_t and (a["open_time"] is None or open_t < a["open_time"]):
+            a["open_time"] = open_t
+        if close_t and (a["close_time"] is None or close_t > a["close_time"]):
+            a["close_time"] = close_t
+    return out
+
+
+def _build_payments(attr_rows: list[dict]) -> list[dict]:
+    """Из заказ-атрибутов собрать оплаты по способу: (дата, заказ, способ) → сумма.
+
+    Сплит-оплата даёт несколько строк на заказ; OLAP делит сумму по способу корректно
+    (проверено: Σ по (заказ, оплата) = выручке заказа).
+    """
+    agg: dict[tuple, float] = defaultdict(float)
+    for r in attr_rows:
+        ds, onum, _ot, _ct, _se, _tb, pay, _sc, _ca = split_field(
+            r.get("field0", {}).get("value", ""), 9
+        )
+        if not pay:
+            continue
+        try:
+            d = date.fromisoformat(ds)
+        except ValueError:
+            continue
+        agg[(d, onum, pay)] += _f(r, 1)
+    return [
+        {"date": d, "order_num": o, "pay_type": p, "amount": round(a, 2)}
+        for (d, o, p), a in agg.items()
+    ]
+
+
+def _build_orders(items: list[dict], attrs: dict[tuple, dict]) -> list[dict]:
+    """Из позиций заказа + заказ-атрибутов собрать обогащённые чек-сущности.
 
     Канал — из модификатора «Статус»; `is_delivery` — бизнес-правило доставки
-    (категория «Доставка» ИЛИ маркер `_д`, как на дашборде); `daypart`/`weekday` —
-    из часа/даты; `dish_count` — число разных товарных позиций.
+    (категория «Доставка» ИЛИ маркер `_д`); `daypart`/`weekday` — из часа/даты;
+    `dish_count` — число разных позиций; `cost_sum` — с/с iiko по позициям; время/
+    касса/зал/стол/оплата — из отдельного запроса (`attrs`), + длительность.
     """
     h2dp = hour_to_daypart()
     by_order: dict[tuple, list[dict]] = defaultdict(list)
@@ -161,6 +274,7 @@ def _build_orders(items: list[dict]) -> list[dict]:
         channel = CHANNEL_DINEIN
         guests = 0.0
         total = 0.0
+        cost = 0.0
         item_count = 0.0
         hour = None
         delivery = False
@@ -172,6 +286,7 @@ def _build_orders(items: list[dict]) -> list[dict]:
                     channel = ch
                 continue  # «Статус» — не товарная позиция
             total += it["sum"]
+            cost += it["cost"]
             item_count += it["qty"]
             guests = max(guests, it["guests"])
             names.add(it["name"])
@@ -179,6 +294,8 @@ def _build_orders(items: list[dict]) -> list[dict]:
                 delivery = True
             if it["hour"] is not None:
                 hour = it["hour"] if hour is None else min(hour, it["hour"])
+        a = attrs.get((d, onum), {})
+        pays = a.get("_pays") or set()
         orders.append(
             {
                 "date": d,
@@ -190,33 +307,47 @@ def _build_orders(items: list[dict]) -> list[dict]:
                 "is_delivery": delivery,
                 "guests": guests,
                 "total_sum": total,
+                "cost_sum": cost,
                 "item_count": item_count,
                 "dish_count": len(names),
+                "pay_type": ", ".join(sorted(pays)) or None,
+                "table_num": a.get("table_num"),
+                "section": a.get("section"),
+                "cashier": a.get("cashier"),
+                "session_num": a.get("session_num"),
+                "open_time": a.get("open_time"),
+                "close_time": a.get("close_time"),
+                "duration_min": _duration_min(a.get("open_time"), a.get("close_time")),
             }
         )
     return orders
 
 
 async def sync_orders_range(date_from: date, date_to: date):
-    """Заполнить `order_items`/`orders` за диапазон ОДНИМ OLAP-запросом (replace по дням)."""
-    rows = await iiko_web.olap_sales(
-        group_fields=[
-            OLAP_FIELD_OPEN_DATE,
-            OLAP_FIELD_HOUR,
-            OLAP_FIELD_ORDER_NUM,
-            OLAP_FIELD_DISH_CATEGORY,
-            OLAP_FIELD_DISH_NAME,
-        ],
-        data_fields=[OLAP_FIELD_SUM, OLAP_FIELD_QTY, OLAP_FIELD_GUESTS],
-        date_from=date_from.isoformat(),
-        date_to=date_to.isoformat(),
+    """Заполнить `order_items`/`orders` за диапазон (replace по дням).
+
+    Два OLAP-запроса: позиции (item-уровень) и заказ-атрибуты (order-уровень,
+    отдельно — чтобы сплит-оплата не дублировала позиции).
+    """
+    df, dt = date_from.isoformat(), date_to.isoformat()
+    item_rows = await iiko_web.olap_sales(
+        group_fields=_ITEM_GROUP, data_fields=_ITEM_DATA, date_from=df, date_to=dt
     )
-    items = _parse_order_rows(rows)
+    attr_rows = await iiko_web.olap_sales(
+        group_fields=_ATTR_GROUP, data_fields=[OLAP_FIELD_SUM], date_from=df, date_to=dt
+    )
+    items = _parse_order_rows(item_rows)
+    attrs = _parse_order_attrs(attr_rows)
+    payments = _build_payments(attr_rows)
     with SessionLocal() as db:
         db.query(OrderItem).filter(OrderItem.date >= date_from, OrderItem.date <= date_to).delete()
         db.query(Order).filter(Order.date >= date_from, Order.date <= date_to).delete()
+        db.query(OrderPayment).filter(
+            OrderPayment.date >= date_from, OrderPayment.date <= date_to
+        ).delete()
         db.bulk_save_objects([OrderItem(**it) for it in items])
-        db.bulk_save_objects([Order(**o) for o in _build_orders(items)])
+        db.bulk_save_objects([Order(**o) for o in _build_orders(items, attrs)])
+        db.bulk_save_objects([OrderPayment(**p) for p in payments])
         db.commit()
 
 
