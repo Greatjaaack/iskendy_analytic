@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
-import { login } from "../auth";
+import { login } from "../auth-api";
 import { COLORS } from "../constants";
 
 /** Экран входа: логин/пароль → JWT в localStorage → редирект на исходную страницу. */

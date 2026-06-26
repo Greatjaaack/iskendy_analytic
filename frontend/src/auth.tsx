@@ -1,25 +1,7 @@
-// Авторизация на фронте: вход (получение JWT), выход и guard для защищённых роутов.
+// Guard для защищённых роутов. Функции входа/выхода — в auth-api.ts.
 import { Navigate, useLocation } from "react-router-dom";
 
-import { api } from "./api";
-import { clearToken, getToken, setToken } from "./token";
-
-/** Войти: запросить токен и сохранить его. Бросает axios-ошибку при неверных данных. */
-export async function login(username: string, password: string): Promise<void> {
-  const { data } = await api.post<{ token: string; username: string }>("/api/auth/login", {
-    username,
-    password,
-  });
-  setToken(data.token);
-}
-
-/** Выйти: стереть токен и вернуться на экран входа. */
-export function logout(): void {
-  clearToken();
-  window.location.href = "/login";
-}
-
-export const isAuthed = (): boolean => !!getToken();
+import { isAuthed } from "./auth-api";
 
 /** Обёртка маршрутов: при отсутствии токена редиректит на /login. */
 export function RequireAuth({ children }: { children: React.ReactNode }) {
