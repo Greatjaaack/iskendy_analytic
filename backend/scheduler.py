@@ -39,8 +39,9 @@ from models import (
     SessionLocal,
     SyncLog,
 )
+from services.daypart import hour_to_daypart
 from services.olap_parse import split_field_5
-from utils import today
+from utils import is_delivery, today
 
 logger = logging.getLogger(__name__)
 
@@ -144,7 +145,13 @@ def _parse_order_rows(rows: list[dict]) -> list[dict]:
 
 
 def _build_orders(items: list[dict]) -> list[dict]:
-    """Из позиций заказа собрать чек-сущности (канал из «Статуса», гости, сумма, позиции)."""
+    """Из позиций заказа собрать обогащённые чек-сущности.
+
+    Канал — из модификатора «Статус»; `is_delivery` — бизнес-правило доставки
+    (категория «Доставка» ИЛИ маркер `_д`, как на дашборде); `daypart`/`weekday` —
+    из часа/даты; `dish_count` — число разных товарных позиций.
+    """
+    h2dp = hour_to_daypart()
     by_order: dict[tuple, list[dict]] = defaultdict(list)
     for it in items:
         by_order[(it["date"], it["order_num"])].append(it)
@@ -156,6 +163,8 @@ def _build_orders(items: list[dict]) -> list[dict]:
         total = 0.0
         item_count = 0.0
         hour = None
+        delivery = False
+        names: set[str] = set()
         for it in its:
             if it["category"] == ORDER_STATUS_CATEGORY:
                 ch = ORDER_STATUS_CHANNELS.get((it["name"] or "").strip().lower())
@@ -165,6 +174,9 @@ def _build_orders(items: list[dict]) -> list[dict]:
             total += it["sum"]
             item_count += it["qty"]
             guests = max(guests, it["guests"])
+            names.add(it["name"])
+            if is_delivery(it["category"], it["name"]):
+                delivery = True
             if it["hour"] is not None:
                 hour = it["hour"] if hour is None else min(hour, it["hour"])
         orders.append(
@@ -172,10 +184,14 @@ def _build_orders(items: list[dict]) -> list[dict]:
                 "date": d,
                 "order_num": onum,
                 "hour": hour,
+                "weekday": d.weekday(),
+                "daypart": h2dp.get(hour) if hour is not None else None,
                 "channel": channel,
+                "is_delivery": delivery,
                 "guests": guests,
                 "total_sum": total,
                 "item_count": item_count,
+                "dish_count": len(names),
             }
         )
     return orders

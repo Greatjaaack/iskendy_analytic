@@ -18,6 +18,8 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
     create_engine,
+    inspect,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, relationship, sessionmaker
 
@@ -113,10 +115,14 @@ class Order(Base):
     date = Column(Date, index=True)
     order_num = Column(String)  # номер чека (id заказа в iiko)
     hour = Column(Integer)  # час открытия (минимальный по позициям)
+    weekday = Column(Integer)  # день недели 0=Пн..6=Вс (для группировок)
+    daypart = Column(String)  # дейпарт по часу (Завтрак/Ланч/…), services.daypart
     channel = Column(String)  # канал из «Статуса»: в зале / с собой / доставка
+    is_delivery = Column(Boolean, default=False)  # бизнес-правило доставки (категория/_д)
     guests = Column(Float, default=0)  # GuestNum
     total_sum = Column(Float, default=0)  # сумма позиций заказа
     item_count = Column(Float, default=0)  # число позиций (сумма qty, без «Статуса»)
+    dish_count = Column(Integer, default=0)  # число РАЗНЫХ позиций (без «Статуса»)
 
 
 class SyncLog(Base):
@@ -309,4 +315,13 @@ class DaypartPlan(Base):
 
 
 def init_db():
+    # До-миграция производной таблицы `orders`: create_all не добавляет колонки в
+    # существующую таблицу. orders — денормализованный снимок (пересобирается
+    # бэкафиллом из order_items), поэтому при дрейфе схемы безопасно пересоздать.
+    insp = inspect(engine)
+    if "orders" in insp.get_table_names():
+        cols = {c["name"] for c in insp.get_columns("orders")}
+        if "is_delivery" not in cols:  # старая схема без обогащения
+            with engine.begin() as conn:
+                conn.execute(text("DROP TABLE orders"))
     Base.metadata.create_all(bind=engine)
