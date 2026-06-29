@@ -28,10 +28,11 @@ from constants import (
     OLAP_FIELD_SUM,
     ORDER_STATUS_CATEGORY,
     ORDER_STATUS_CHANNELS,
+    PAYMENT_GROUP_ORDER,
     WEEKDAY_TO_GROUP,
 )
 from iiko_web_client import iiko_web
-from models import DaypartPlan, RevenueDaily, SessionLocal
+from models import DaypartPlan, Order, OrderPayment, RevenueDaily, SessionLocal
 from routers.dishes import _dish_unit_cost
 from services.daypart import category_group, hour_to_daypart
 from services.delivery import delivery_buckets, exclude_delivery
@@ -44,7 +45,14 @@ from services.ops_aggregation import (
     plan_pct,
 )
 from services.order_store import order_rows
-from utils import is_delivery, normalize_name, period_range, prev_period_range, today
+from utils import (
+    is_delivery,
+    normalize_name,
+    payment_group,
+    period_range,
+    prev_period_range,
+    today,
+)
 from weather import get_weather
 
 CHANNELS = (CHANNEL_DINEIN, CHANNEL_TAKEAWAY, CHANNEL_DELIVERY)
@@ -804,4 +812,89 @@ async def get_kpi_by_channel(
         "date_from": df.isoformat(),
         "date_to": dt.isoformat(),
         **groups,
+    }
+
+
+@router.get("/by-payment")
+async def get_by_payment(
+    period: str = Query("week", enum=["day", "week", "month"]),
+    date_from: str | None = None,
+    date_to: str | None = None,
+    include_delivery: bool = True,
+):
+    """Структура выручки по способам оплаты (Карта/Наличные/Агрегатор) за период.
+
+    Источник — `order_payments` (нормализованные оплаты, сплит-чек разложен на строки,
+    Σ=выручке). Возвращает доли по выручке и чекам за период (`totals`) и стек по дням
+    (`daily`) для тренда структуры. При `include_delivery=false` исключаются оплаты
+    доставочных заказов (`orders.is_delivery`). Данные только из БД (для дат старше
+    начала сохранённой истории оплат нет — вернётся пусто).
+    """
+    df, dt = period_range(period, date_from, date_to)
+
+    with SessionLocal() as db:
+        excluded: set[tuple] = set()
+        if not include_delivery:
+            for d, on in db.query(Order.date, Order.order_num).filter(
+                Order.date >= df, Order.date <= dt, Order.is_delivery.is_(True)
+            ):
+                excluded.add((d, on))
+        pays = (
+            db.query(
+                OrderPayment.date,
+                OrderPayment.order_num,
+                OrderPayment.pay_type,
+                OrderPayment.amount,
+            )
+            .filter(OrderPayment.date >= df, OrderPayment.date <= dt)
+            .all()
+        )
+
+    # агрегаты: сумма+уникальные чеки на группу; стек по дням; общий счётчик чеков
+    group_amount: dict[str, float] = {}
+    group_orders: dict[str, set] = {}
+    daily: dict[str, dict[str, float]] = {}
+    all_orders: set[tuple] = set()
+    for d, on, pt, amt in pays:
+        if (d, on) in excluded:
+            continue
+        g = payment_group(pt)
+        a = float(amt or 0)
+        group_amount[g] = group_amount.get(g, 0.0) + a
+        group_orders.setdefault(g, set()).add((d, on))
+        daily.setdefault(d.isoformat(), {})[g] = daily.setdefault(d.isoformat(), {}).get(g, 0.0) + a
+        all_orders.add((d, on))
+
+    # только реально встретившиеся группы, в фиксированном порядке
+    groups = [g for g in PAYMENT_GROUP_ORDER if group_amount.get(g)]
+    total_amount = sum(group_amount.values())
+    total_checks = len(all_orders)
+
+    totals = [
+        {
+            "group": g,
+            "amount": round(group_amount[g], 2),
+            "share": round(group_amount[g] / total_amount * 100, 1) if total_amount else 0,
+            "checks": len(group_orders[g]),
+            "check_share": (
+                round(len(group_orders[g]) / total_checks * 100, 1) if total_checks else 0
+            ),
+        }
+        for g in groups
+    ]
+
+    daily_out = [
+        {"date": day, **{g: round(daily[day].get(g, 0.0), 2) for g in groups}}
+        for day in sorted(daily)
+    ]
+
+    return {
+        "period": "custom" if (date_from and date_to) else period,
+        "date_from": df.isoformat(),
+        "date_to": dt.isoformat(),
+        "groups": groups,
+        "totals": totals,
+        "total_amount": round(total_amount, 2),
+        "total_checks": total_checks,
+        "daily": daily_out,
     }

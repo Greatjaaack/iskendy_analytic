@@ -188,5 +188,25 @@ ORDER_STATUS_CHANNELS = {
     "доставка": CHANNEL_DELIVERY,
 }
 
+# Группировка способов оплаты (`order_payments.pay_type`) в укрупнённые группы для
+# виджета структуры выручки. Сопоставление по подстроке (регистронезависимо), чтобы
+# пережить вариации названий терминалов/агрегаторов. Неизвестное → «Прочее».
+PAYMENT_CARD = "Карта"
+PAYMENT_CASH = "Наличные"
+PAYMENT_AGGREGATOR = "Агрегатор"
+PAYMENT_OTHER = "Прочее"
+# (подстрока в pay_type, lower) → группа; первое совпадение выигрывает
+PAYMENT_GROUP_RULES = (
+    ("терминал", PAYMENT_CARD),
+    ("карт", PAYMENT_CARD),
+    ("наличн", PAYMENT_CASH),
+    ("яндекс", PAYMENT_AGGREGATOR),
+    ("деливери", PAYMENT_AGGREGATOR),
+    ("delivery", PAYMENT_AGGREGATOR),
+    ("достав", PAYMENT_AGGREGATOR),
+)
+# Порядок групп в выдаче/легенде
+PAYMENT_GROUP_ORDER = (PAYMENT_CARD, PAYMENT_CASH, PAYMENT_AGGREGATOR, PAYMENT_OTHER)
+
 # Поле-идентификатор заказа в OLAP SALES (для связи блюд заказа с его «Статусом»).
 OLAP_FIELD_ORDER_NUM = "OrderNum"

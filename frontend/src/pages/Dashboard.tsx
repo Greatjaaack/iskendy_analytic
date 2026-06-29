@@ -15,6 +15,7 @@ import { MenuEngineering } from "../components/MenuEngineering";
 import { MenuBasket } from "../components/MenuBasket";
 import { DishTable } from "../components/DishTable";
 import { ChecksDistribution } from "../components/ChecksDistribution";
+import { PaymentStructure } from "../components/PaymentStructure";
 import {
   COLORS, PERIODS, weatherInfo,
   AUTOSYNC_OPTIONS, AUTOSYNC_DAYS,
@@ -218,6 +219,9 @@ export function Dashboard() {
               </div>
               <div className="dash-full">
                 <ChecksDistribution range={sel} withDelivery={withDelivery} />
+              </div>
+              <div className="dash-full">
+                <PaymentStructure range={sel} withDelivery={withDelivery} />
               </div>
             </div>
           )}

@@ -230,6 +230,29 @@ export interface RevenueByChannel {
   data: ChannelDay[];
 }
 
+// Структура выручки по способам оплаты (Карта/Наличные/Агрегатор): доли за период + тренд.
+export interface PaymentTotal {
+  group: string;
+  amount: number;
+  share: number;
+  checks: number;
+  check_share: number;
+}
+export interface PaymentDay {
+  date: string;
+  [group: string]: string | number;
+}
+export interface PaymentStructure {
+  period: Period | "custom";
+  date_from: string;
+  date_to: string;
+  groups: string[];
+  totals: PaymentTotal[];
+  total_amount: number;
+  total_checks: number;
+  daily: PaymentDay[];
+}
+
 // Состав чека (#5): средняя доля категорий в чеке (по кол-ву и выручке), период + часы.
 export interface CompositionShare {
   qty: number;
