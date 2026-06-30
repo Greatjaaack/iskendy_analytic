@@ -3,17 +3,8 @@
 /* ─── Темы ──────────────────────────────────────────────────────────────────
    Структурные цвета — CSS-переменные, которые читает COLORS (constants.ts).
    Тему переключает ThemeProvider, выставляя атрибут data-theme на <html>.
-   По умолчанию (без атрибута) — тёмная. */
+   По умолчанию (без атрибута) — светлая. */
 :root,
-:root[data-theme="dark"] {
-  --bg: #13131f;
-  --card: #1e1e2e;
-  --grid: #2e2e3e;
-  --muted: #8b8ba7;
-  --text: #ffffff;
-  color-scheme: dark;
-}
-
 :root[data-theme="light"] {
   --bg: #f4f6fb;
   --card: #ffffff;
@@ -21,6 +12,15 @@
   --muted: #6b6b80;
   --text: #16182a;
   color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --bg: #13131f;
+  --card: #1e1e2e;
+  --grid: #2e2e3e;
+  --muted: #8b8ba7;
+  --text: #ffffff;
+  color-scheme: dark;
 }
 
 html, body {

@@ -11,7 +11,7 @@ const apply = (mode: ThemeMode) => {
 };
 
 const stored = (): ThemeMode =>
-  (localStorage.getItem(STORAGE_KEY) as ThemeMode) || "dark";
+  (localStorage.getItem(STORAGE_KEY) as ThemeMode) || "light";
 
 /** Хук темы: текущий режим + переключатель (сохраняется в localStorage). */
 export function useTheme() {

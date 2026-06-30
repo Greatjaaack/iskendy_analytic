@@ -7,8 +7,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Искенди — аналитика</title>
 
+    <!-- Тему ставим до отрисовки, чтобы не мигало дефолтом при перезагрузке. -->
+    <script>
+      (function () {
+        try {
+          document.documentElement.dataset.theme =
+            localStorage.getItem("iskendy-theme") || "light";
+        } catch (e) {}
+      })();
+    </script>
+
     <link rel="manifest" href="/manifest.json" />
-    <meta name="theme-color" content="#13131f" />
+    <meta name="theme-color" content="#f4f6fb" />
 
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
