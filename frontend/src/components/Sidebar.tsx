@@ -50,10 +50,26 @@ export function Sidebar() {
           top: 0,
         }}
       >
-        <div style={{ padding: "0 12px 20px", fontSize: 18, fontWeight: 700, color: "var(--text)" }}>
-          Искенди
-          <div style={{ fontSize: 11, fontWeight: 400, color: "var(--muted)", marginTop: 2 }}>
-            Analytics
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            padding: "0 12px 20px",
+          }}
+        >
+          <img
+            src="/favicon.png"
+            alt="Искенди"
+            width={36}
+            height={36}
+            style={{ borderRadius: 8, flexShrink: 0 }}
+          />
+          <div style={{ fontSize: 18, fontWeight: 700, color: "var(--text)", lineHeight: 1.1 }}>
+            Искенди
+            <div style={{ fontSize: 11, fontWeight: 400, color: "var(--muted)", marginTop: 2 }}>
+              Analytics
+            </div>
           </div>
         </div>
         <nav style={{ display: "flex", flexDirection: "column", gap: 4 }}>

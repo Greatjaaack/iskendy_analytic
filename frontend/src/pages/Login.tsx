@@ -44,9 +44,18 @@ export function Login() {
           border: "1px solid var(--grid)", display: "flex", flexDirection: "column", gap: 14,
         }}
       >
-        <div>
-          <div style={{ fontSize: 20, fontWeight: 700, color: "var(--text)" }}>Искенди</div>
-          <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>Analytics · вход</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <img
+            src="/favicon.png"
+            alt="Искенди"
+            width={44}
+            height={44}
+            style={{ borderRadius: 10, flexShrink: 0 }}
+          />
+          <div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: "var(--text)" }}>Искенди</div>
+            <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>Analytics · вход</div>
+          </div>
         </div>
 
         <label style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 12, color: "var(--muted)" }}>
