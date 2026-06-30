@@ -4,8 +4,10 @@
 Используется для отображения погоды рядом с выручкой по дням (чтобы видеть связь
 выручки с погодой). Данные кэшируются по дате в памяти процесса.
 
-Замечание: исторический архив Open-Meteo покрывает прошлые даты; для будущих дат
-(или если API недоступен) возвращаются пустые значения — фронт показывает «—».
+Замечание: архивный API Open-Meteo отстаёт на ~5 дней (свежие даты он отдаёт с 400),
+поэтому для свежих дат (последняя неделя и сегодня) берём forecast-API, а для более
+старых — archive-API. Для дальнего будущего (или если API недоступен) возвращаются
+пустые значения — фронт показывает «—».
 """
 
 import logging
@@ -13,12 +15,18 @@ from datetime import date, timedelta
 
 import httpx
 
+from utils import today
+
 logger = logging.getLogger(__name__)
 
 # Координаты Москвы (центр)
 MOSCOW_LAT = 55.7558
 MOSCOW_LON = 37.6173
 ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
+FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
+# Архив отстаёт на ~5 дней; с запасом считаем «свежими» последние 7 дней и берём их
+# из forecast-API (он отдаёт прошлые дни через past_days и ближайший прогноз).
+RECENT_DAYS = 7
 
 # Кэш: ISO-дата → {"temp_max", "weather_code"}.
 # Храним только дневную температуру (temp_max) — ночная (temp_min) не нужна.
@@ -34,10 +42,17 @@ async def get_weather(date_from: str, date_to: str) -> dict[str, dict]:
     # какие даты ещё не в кэше — только их и запрашиваем
     missing = _missing_dates(date_from, date_to)
     if missing:
-        try:
-            await _fetch_range(min(missing), max(missing))
-        except Exception as error:  # погода не критична — не роняем дашборд, но логируем трейс
-            logger.warning("weather: запрос не удался", exc_info=error)
+        # граница «свежих» дат: их отдаёт forecast-API, старее — archive-API
+        cutoff = (today() - timedelta(days=RECENT_DAYS)).isoformat()
+        old = [d for d in missing if d < cutoff]
+        recent = [d for d in missing if d >= cutoff]
+        for url, dates in ((ARCHIVE_URL, old), (FORECAST_URL, recent)):
+            if not dates:
+                continue
+            try:
+                await _fetch_range(url, min(dates), max(dates))
+            except Exception as error:  # погода не критична — не роняем дашборд, но логируем трейс
+                logger.warning("weather: запрос не удался (%s)", url, exc_info=error)
 
     return {d: _cache[d] for d in _date_range(date_from, date_to) if d in _cache}
 
@@ -55,7 +70,7 @@ def _missing_dates(date_from: str, date_to: str) -> list[str]:
     return [d for d in _date_range(date_from, date_to) if d not in _cache]
 
 
-async def _fetch_range(date_from: str, date_to: str) -> None:
+async def _fetch_range(url: str, date_from: str, date_to: str) -> None:
     params = {
         "latitude": MOSCOW_LAT,
         "longitude": MOSCOW_LON,
@@ -65,7 +80,7 @@ async def _fetch_range(date_from: str, date_to: str) -> None:
         "timezone": "Europe/Moscow",
     }
     async with httpx.AsyncClient(timeout=15) as c:
-        r = await c.get(ARCHIVE_URL, params=params)
+        r = await c.get(url, params=params)
         r.raise_for_status()
         daily = r.json().get("daily", {})
 

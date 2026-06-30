@@ -22,6 +22,7 @@ import type {
   IngredientBrief,
   IngredientCard,
   KpiByChannel,
+  PaymentStructure,
   RangeSel,
   RevenueByChannel,
   RevenueResponse,
@@ -100,6 +101,14 @@ export const fetchRevenueByChannel = (
 
 export const fetchKpiByChannel = (range: RangeSel): Promise<KpiByChannel> =>
   api.get<KpiByChannel>(`/api/revenue/kpi-by-channel?${rangeQS(range)}`).then((r) => r.data);
+
+export const fetchPaymentStructure = (
+  range: RangeSel,
+  includeDelivery = true,
+): Promise<PaymentStructure> =>
+  api
+    .get<PaymentStructure>(`/api/revenue/by-payment?${rangeQS(range)}${deliveryQS(includeDelivery)}`)
+    .then((r) => r.data);
 
 export const fetchRevenueByWeekday = (
   range: RangeSel,

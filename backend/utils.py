@@ -5,7 +5,26 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from config import settings
-from constants import CATEGORY_DISPLAY, DELIVERY_CATEGORY, DELIVERY_NAME_MARKER
+from constants import (
+    CATEGORY_DISPLAY,
+    DELIVERY_CATEGORY,
+    DELIVERY_NAME_MARKER,
+    PAYMENT_GROUP_RULES,
+    PAYMENT_OTHER,
+)
+
+
+def payment_group(pay_type: str | None) -> str:
+    """Укрупнённая группа способа оплаты (Карта/Наличные/Агрегатор/Прочее).
+
+    Сопоставление по подстроке (см. PAYMENT_GROUP_RULES), регистронезависимо —
+    первое совпадение выигрывает; неизвестное → «Прочее».
+    """
+    low = str(pay_type or "").lower()
+    for needle, group in PAYMENT_GROUP_RULES:
+        if needle in low:
+            return group
+    return PAYMENT_OTHER
 
 
 def display_category(name: str | None) -> str:
