@@ -473,9 +473,24 @@ async def nightly():
     await backfill()
 
 
+async def keep_session_warm():
+    """Освежить cookie-сессию iiko, чтобы не релогиниться во время запроса дашборда.
+
+    `_ensure_session` пингует `/api/auth` (TTL сессии ~20 мин, скользящий) и поднимает
+    Playwright-логин только если сессия истекла. Дашборд для текущего дня ходит в iiko
+    вживую — без этого «тёплого» пинга релогин с headless-браузером мог бы случиться
+    прямо на запросе пользователя и давать секунды задержки на «Сегодня».
+    """
+    try:
+        await iiko_web._ensure_session()
+    except Exception:
+        logger.exception("keep_session_warm: не удалось освежить сессию iiko")
+
+
 def setup_scheduler():
     scheduler.add_job(sync_revenue, "interval", hours=1, args=[7], id="revenue_hourly")
     scheduler.add_job(sync_orders_recent, "interval", hours=1, args=[7], id="orders_hourly")
     scheduler.add_job(nightly, "cron", hour=0, minute=5, id="full_midnight")
+    scheduler.add_job(keep_session_warm, "interval", minutes=10, id="session_keepalive")
     scheduler.start()
     logger.info("Планировщик запущен")
