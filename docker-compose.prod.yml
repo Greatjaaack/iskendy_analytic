@@ -1,0 +1,54 @@
+# Продакшен-конфигурация (самодостаточная, НЕ overlay к docker-compose.yml).
+# Отличия от dev:
+#   - Caddy терминирует HTTPS (авто-сертификат Let's Encrypt по домену из $DOMAIN);
+#   - backend и frontend наружу НЕ публикуются (expose, не ports) — доступны только
+#     через Caddy по 443, пароль дашборда больше не летит открытым текстом;
+#   - том backend-data общий с dev-конфигом (имя проекта = имя папки), данные не теряются.
+#
+# Запуск:  docker compose -f docker-compose.prod.yml up -d --build
+# Нужен заполненный .env с DOMAIN=<ваш домен> (см. .env.example).
+services:
+  backend:
+    build: ./backend
+    env_file: .env
+    environment:
+      # БД в volume, а не в слое контейнера (переопределяет DATABASE_URL из .env).
+      DATABASE_URL: sqlite:////data/iskendi.db
+    volumes:
+      - backend-data:/data
+    expose:
+      - "8000"
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: ""
+    expose:
+      - "80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  # Реверс-прокси с автоматическим HTTPS. Проксирует всё на frontend:80,
+  # а тот уже раздаёт SPA и проксирует /api на backend (см. frontend/nginx.conf).
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?нужно задать DOMAIN в .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - frontend
+
+volumes:
+  backend-data:
+  caddy-data:
+  caddy-config:
