@@ -13,7 +13,7 @@ import logging
 
 import httpx
 
-from cache import cache_get, cache_set
+from cache import cached_or_call
 from config import settings
 from constants import (
     DATA_DETAILS,
@@ -161,29 +161,27 @@ class IikoWebClient:
             f"get-data:{data_type}:{date_from}:{date_to}:{int(with_decoration)}:"
             + ",".join(metric_codes)
         )
-        cached = cache_get(cache_key)
-        if cached is not None:
-            return cached
 
-        resp = await self._post(
-            "/api/kpi/dashboard/get-data",
-            {
-                "dateFrom": date_from,
-                "dateTo": date_to,
-                "metricCodes": metric_codes,
-                "storeIds": [self.store_id],
-                "dataType": data_type,
-            },
-        )
-        if resp.get("error"):
-            raise RuntimeError(f"iikoweb get-data error: {resp.get('errorMessage')}")
-        result = (
-            (resp.get("data", {}), resp.get("decoration", {}))
-            if with_decoration
-            else resp.get("data", {})
-        )
-        cache_set(cache_key, result)
-        return result
+        async def _fetch():
+            resp = await self._post(
+                "/api/kpi/dashboard/get-data",
+                {
+                    "dateFrom": date_from,
+                    "dateTo": date_to,
+                    "metricCodes": metric_codes,
+                    "storeIds": [self.store_id],
+                    "dataType": data_type,
+                },
+            )
+            if resp.get("error"):
+                raise RuntimeError(f"iikoweb get-data error: {resp.get('errorMessage')}")
+            return (
+                (resp.get("data", {}), resp.get("decoration", {}))
+                if with_decoration
+                else resp.get("data", {})
+            )
+
+        return await cached_or_call(cache_key, _fetch)
 
     async def revenue_by_day(self, date_from: str, date_to: str) -> dict:
         """Выручка/чеки/средний чек/скидки/возвраты/себестоимость по дням."""
@@ -269,49 +267,47 @@ class IikoWebClient:
         cache_key = (
             f"olap:{date_from}:{date_to}:" + ",".join(group_fields) + "|" + ",".join(data_fields)
         )
-        cached = cache_get(cache_key)
-        if cached is not None:
-            return cached
 
-        # ВАЖНО: фильтр date_range по OpenDate.Typed трактует dateTo ВКЛЮЧИТЕЛЬНО как
-        # целый день (живой API игнорирует includeRight=False). Поэтому dateTo передаём
-        # как есть (= date_to), без +1: иначе в выборку попадал бы лишний день после
-        # диапазона (для одного дня это удваивало все метрики).
-        req = {
-            "storeIds": [self.store_id],
-            "olapType": OLAP_TYPE_SALES,
-            "groupFields": group_fields,
-            "dataFields": data_fields,
-            "filters": [
-                {
-                    "filterType": "date_range",
-                    "field": OLAP_FILTER_DATE,
-                    "dateFrom": date_from,
-                    "dateTo": date_to,
-                    "includeLeft": True,
-                    "includeRight": True,
-                }
-            ],
-            "includeVoidTransactions": False,
-        }
-        init = await self._post("/api/olap/init", req)
-        h = init.get("data")
-        if not h:
-            raise RuntimeError("iikoweb olap: init не вернул hash")
+        async def _fetch():
+            # ВАЖНО: фильтр date_range по OpenDate.Typed трактует dateTo ВКЛЮЧИТЕЛЬНО как
+            # целый день (живой API игнорирует includeRight=False). Поэтому dateTo передаём
+            # как есть (= date_to), без +1: иначе в выборку попадал бы лишний день после
+            # диапазона (для одного дня это удваивало все метрики).
+            req = {
+                "storeIds": [self.store_id],
+                "olapType": OLAP_TYPE_SALES,
+                "groupFields": group_fields,
+                "dataFields": data_fields,
+                "filters": [
+                    {
+                        "filterType": "date_range",
+                        "field": OLAP_FILTER_DATE,
+                        "dateFrom": date_from,
+                        "dateTo": date_to,
+                        "includeLeft": True,
+                        "includeRight": True,
+                    }
+                ],
+                "includeVoidTransactions": False,
+            }
+            init = await self._post("/api/olap/init", req)
+            h = init.get("data")
+            if not h:
+                raise RuntimeError("iikoweb olap: init не вернул hash")
 
-        status = None
-        for _ in range(poll_attempts):
-            status = (await self._get(f"/api/olap/fetch-status/{h}")).get("data")
-            if status in (OLAP_STATUS_SUCCESS, OLAP_STATUS_ERROR):
-                break
-            await asyncio.sleep(1)
-        if status != OLAP_STATUS_SUCCESS:
-            raise RuntimeError(f"iikoweb olap: статус {status}")
+            status = None
+            for _ in range(poll_attempts):
+                status = (await self._get(f"/api/olap/fetch-status/{h}")).get("data")
+                if status in (OLAP_STATUS_SUCCESS, OLAP_STATUS_ERROR):
+                    break
+                await asyncio.sleep(1)
+            if status != OLAP_STATUS_SUCCESS:
+                raise RuntimeError(f"iikoweb olap: статус {status}")
 
-        resp = await self._post(f"/api/olap/fetch/{h}/{OLAP_VIEW_SIMPLE}", req)
-        rows = resp.get("result", {}).get("rows", [])
-        cache_set(cache_key, rows)
-        return rows
+            resp = await self._post(f"/api/olap/fetch/{h}/{OLAP_VIEW_SIMPLE}", req)
+            return resp.get("result", {}).get("rows", [])
+
+        return await cached_or_call(cache_key, _fetch)
 
     # Каталог всех метрик (408 шт) — справочник кодов/названий
     async def metrics_catalog(self) -> list[dict]:

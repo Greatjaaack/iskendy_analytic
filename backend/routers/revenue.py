@@ -167,19 +167,19 @@ async def _days_live(date_from: date, date_to: date) -> list[dict]:
 async def _load_days(df: date, dt: date, is_custom: bool) -> list[dict]:
     """Дни периода: произвольный диапазон → живой; пресет → из БД.
 
-    Текущий день в пресетах подменяем живым get-data: hourly-синк отстаёт до часа,
-    из-за чего показатели из БД расходились бы с живыми OLAP-виджетами на том же
-    дашборде. Используется и в `/api/revenue`, и в `/by-weekday` — чтобы они сходились.
+    Текущий день тоже отдаём из БД: его свежесть держит частый синк (`sync_today` в
+    планировщике, раз в несколько минут), а OLAP-виджеты дашборда читают заказы из той
+    же БД (`order_store`) — так revenue и OLAP-разрезы сходятся между собой лучше, чем
+    когда «сегодня» тянулся вживую. Живой добор оставлен лишь как страховка: если сегодня
+    ещё нет в БД (пробел сразу после полуночи, до первого синка нового дня).
     """
-    days = await _days_live(df, dt) if is_custom else _days_from_db(df, dt)
-    if not is_custom and dt >= today():
+    if is_custom:
+        return await _days_live(df, dt)
+    days = _days_from_db(df, dt)
+    if dt >= today() and not any(d["date"] == today().isoformat() for d in days):
         live_today = await _days_live(today(), today())
         if live_today:
-            td = live_today[0]["date"]
-            days = sorted(
-                [d for d in days if d["date"] != td] + live_today,
-                key=lambda d: d["date"],
-            )
+            days = sorted(days + live_today, key=lambda d: d["date"])
     return days
 
 
