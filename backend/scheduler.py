@@ -453,6 +453,17 @@ async def backfill():
     logger.info("backfill завершён")
 
 
+async def sync_today():
+    """Частый лёгкий синк текущего дня в БД — держит «сегодня» свежим для дашборда.
+
+    Дашборд отдаёт «сегодня» из БД (быстро, без живого запроса на пути запроса), а этот
+    job «прогревает» БД раз в `settings.today_sync_seconds`. Берём 2 дня, чтобы захватить
+    и вчера на стыке полуночи. Ошибки логируются внутри `sync_revenue`/`sync_orders_recent`.
+    """
+    await sync_revenue(days_back=2)
+    await sync_orders_recent(days_back=2)
+
+
 async def full_sync():
     """Полный синк свежих данных (кнопка «Синхронизировать», ночной job, старт).
 
@@ -492,5 +503,12 @@ def setup_scheduler():
     scheduler.add_job(sync_orders_recent, "interval", hours=1, args=[7], id="orders_hourly")
     scheduler.add_job(nightly, "cron", hour=0, minute=5, id="full_midnight")
     scheduler.add_job(keep_session_warm, "interval", minutes=10, id="session_keepalive")
+    if settings.today_sync_seconds > 0:
+        scheduler.add_job(
+            sync_today,
+            "interval",
+            seconds=settings.today_sync_seconds,
+            id="today_refresh",
+        )
     scheduler.start()
     logger.info("Планировщик запущен")
