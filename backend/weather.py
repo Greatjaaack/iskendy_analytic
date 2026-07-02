@@ -11,6 +11,7 @@
 """
 
 import logging
+import time
 from datetime import date, timedelta
 
 import httpx
@@ -27,21 +28,36 @@ FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 # Архив отстаёт на ~5 дней; с запасом считаем «свежими» последние 7 дней и берём их
 # из forecast-API (он отдаёт прошлые дни через past_days и ближайший прогноз).
 RECENT_DAYS = 7
+# Таймаут запроса к Open-Meteo, сек. Короткий — чтобы недоступный сервис погоды НЕ
+# держал ответ дашборда (погода не критична, при сбое покажем «—»).
+HTTP_TIMEOUT = 4
+# Не дёргать одну и ту же не-полученную дату каждый запрос: после неудачи (или пустого
+# ответа) ждём кулдаун перед повтором. Иначе при медленном/закрытом Open-Meteo каждый
+# заход на дашборд заново висел бы на таймауте (даты так и не попадают в кэш).
+RETRY_COOLDOWN = 600  # сек
 
-# Кэш: ISO-дата → {"temp_max", "weather_code"}.
+# Кэш успешных дат: ISO-дата → {"temp_max", "weather_code"} (прошлая погода неизменна).
 # Храним только дневную температуру (temp_max) — ночная (temp_min) не нужна.
 _cache: dict[str, dict] = {}
+# Негативный кэш: ISO-дата → monotonic-время последней попытки, которая НЕ дала данных.
+# Пока не истёк RETRY_COOLDOWN, дату повторно не запрашиваем.
+_attempted: dict[str, float] = {}
 
 
 async def get_weather(date_from: str, date_to: str) -> dict[str, dict]:
     """Погода по дням за диапазон. Возвращает {ISO-дата: {temp_max, weather_code}}.
 
-    Уже закэшированные даты не запрашиваются повторно. При ошибке сети возвращает
-    то, что есть в кэше (пустой dict в худшем случае) — вызов не падает.
+    Уже закэшированные даты не запрашиваются повторно; недавно неудачные — тоже (в
+    пределах `RETRY_COOLDOWN`), чтобы недоступный Open-Meteo не тормозил каждый запрос.
+    При ошибке сети возвращает то, что есть в кэше — вызов не падает.
     """
-    # какие даты ещё не в кэше — только их и запрашиваем
-    missing = _missing_dates(date_from, date_to)
+    missing = _fetchable_dates(date_from, date_to)
     if missing:
+        # запомним попытку сразу — чтобы параллельные запросы и ближайшие заходы не
+        # ломились повторно, даже если ответ придёт пустым/с ошибкой
+        now = time.monotonic()
+        for d in missing:
+            _attempted[d] = now
         # граница «свежих» дат: их отдаёт forecast-API, старее — archive-API
         cutoff = (today() - timedelta(days=RECENT_DAYS)).isoformat()
         old = [d for d in missing if d < cutoff]
@@ -57,6 +73,17 @@ async def get_weather(date_from: str, date_to: str) -> dict[str, dict]:
     return {d: _cache[d] for d in _date_range(date_from, date_to) if d in _cache}
 
 
+async def prewarm() -> None:
+    """Прогреть погоду за недавнее окно (месяц + прошлый месяц + запас) в фоне.
+
+    Дашборд читает погоду только из кэша; этот прогрев наполняет кэш, чтобы запрос
+    пользователя не ждал Open-Meteo. Вызывается на старте и по расписанию.
+    """
+    end = today()
+    start = end - timedelta(days=70)
+    await get_weather(start.isoformat(), end.isoformat())
+
+
 def _date_range(date_from: str, date_to: str) -> list[str]:
     d0, d1 = date.fromisoformat(date_from), date.fromisoformat(date_to)
     out, d = [], d0
@@ -66,8 +93,18 @@ def _date_range(date_from: str, date_to: str) -> list[str]:
     return out
 
 
-def _missing_dates(date_from: str, date_to: str) -> list[str]:
-    return [d for d in _date_range(date_from, date_to) if d not in _cache]
+def _fetchable_dates(date_from: str, date_to: str) -> list[str]:
+    """Даты, которые стоит запросить: нет в кэше И (не пробовали, либо кулдаун истёк)."""
+    now = time.monotonic()
+    out = []
+    for d in _date_range(date_from, date_to):
+        if d in _cache:
+            continue
+        last = _attempted.get(d)
+        if last is not None and now - last < RETRY_COOLDOWN:
+            continue
+        out.append(d)
+    return out
 
 
 async def _fetch_range(url: str, date_from: str, date_to: str) -> None:
@@ -79,7 +116,7 @@ async def _fetch_range(url: str, date_from: str, date_to: str) -> None:
         "daily": "temperature_2m_max,weather_code",
         "timezone": "Europe/Moscow",
     }
-    async with httpx.AsyncClient(timeout=15) as c:
+    async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as c:
         r = await c.get(url, params=params)
         r.raise_for_status()
         daily = r.json().get("daily", {})

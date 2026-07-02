@@ -15,6 +15,7 @@ from datetime import date, datetime, timedelta
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import func, select
 
+import weather
 from config import settings
 from constants import (
     CHANNEL_DINEIN,
@@ -474,7 +475,8 @@ async def full_sync():
 
 
 async def run_startup_sync():
-    """Фоновый стартовый синк: свежие заказы + бэкафилл всей истории."""
+    """Фоновый стартовый синк: прогрев погоды + свежие заказы + бэкафилл всей истории."""
+    await weather.prewarm()
     await sync_orders_recent(days_back=7)
     await backfill()
 
@@ -503,6 +505,7 @@ def setup_scheduler():
     scheduler.add_job(sync_orders_recent, "interval", hours=1, args=[7], id="orders_hourly")
     scheduler.add_job(nightly, "cron", hour=0, minute=5, id="full_midnight")
     scheduler.add_job(keep_session_warm, "interval", minutes=10, id="session_keepalive")
+    scheduler.add_job(weather.prewarm, "interval", hours=6, id="weather_prewarm")
     if settings.today_sync_seconds > 0:
         scheduler.add_job(
             sync_today,
