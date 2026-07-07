@@ -253,10 +253,24 @@ PNL_MANUAL_FIELDS = [
     ("contingency", "Непредвиденные"),
     ("cap_reserve", "Кап-резерв"),
 ]
+# Классификация затрат для маржинального анализа (contribution margin + безубыточность).
+# Переменные растут с продажами (food cost/упаковка/списания + авто налог и агрегатор),
+# постоянные — фикс на месяц (аренда/ФОТ/…), уже оплачены независимо от дневных продаж.
+PNL_VARIABLE_MANUAL = ["packaging", "writeoffs"]
+PNL_FIXED_MANUAL = [
+    "labor_op",
+    "labor_admin",
+    "rent",
+    "utilities",
+    "marketing",
+    "other_opex",
+    "contingency",
+    "cap_reserve",
+]
+
 # Ставки-% и конфиг PnlMonth (не аллоцируются, применяются к выручке / берутся как есть).
 PNL_RATE_FIELDS = [
     ("tax_pct", "Налог (УСН), %"),
     ("aggregator_pct", "Удержание агрегатора, %"),
-    ("motivation_pct", "Мотивация партнёра, %"),
     ("work_hours", "Рабочих часов в день"),
 ]

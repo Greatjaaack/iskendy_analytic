@@ -26,6 +26,7 @@ from constants import (
     OLAP_FIELD_ORDER_NUM,
     OLAP_FIELD_SUM,
     PNL_BENCHMARKS,
+    PNL_FIXED_MANUAL,
     PNL_MANUAL_FIELDS,
     PNL_RATE_FIELDS,
 )
@@ -198,13 +199,12 @@ async def get_pnl(
     rate_m = months.get((dt.year, dt.month)) or _default_month(dt.year, dt.month)
     tax_pct = rate_m["tax_pct"]
     aggregator_pct = rate_m["aggregator_pct"]
-    motivation_pct = rate_m["motivation_pct"]
     work_hours = rate_m["work_hours"] or 12
 
     def pct(x: float) -> float:
         return (x / revenue * 100) if revenue else 0.0
 
-    # ── COGS / себестоимость производства ──
+    # ── COGS / себестоимость производства (структура Excel-модели) ──
     writeoffs = manual["writeoffs"]
     packaging = manual["packaging"]
     cogs = food_cost_rub + writeoffs + packaging
@@ -230,7 +230,20 @@ async def get_pnl(
     all_expenses = production_cost + total_opex
     ebitda = revenue - all_expenses
     ebitda_margin = pct(ebitda)
-    motivation = max(0.0, ebitda) * motivation_pct / 100
+
+    # ── Маржинальный анализ: переменные растут с продажами, постоянные — фикс/мес ──
+    # Численно variable + fixed == all_expenses (тот же набор строк, другой разрез).
+    variable_total = food_cost_rub + writeoffs + packaging + tax + aggregator
+    contribution_margin = revenue - variable_total  # маржинальная прибыль
+    cm_ratio = (contribution_margin / revenue) if revenue else 0.0
+    fixed_alloc = sum(manual[f] for f in PNL_FIXED_MANUAL)  # постоянные за период
+
+    # ── Точка безубыточности: постоянные ПОЛНОГО месяца ÷ маржинальность ──
+    fixed_month = sum(rate_m[f] for f in PNL_FIXED_MANUAL)
+    dim_end = calendar.monthrange(dt.year, dt.month)[1]
+    breakeven_month = (fixed_month / cm_ratio) if cm_ratio > 0 else None
+    breakeven_day = (breakeven_month / dim_end) if breakeven_month else None
+    avg_rev_day = revenue / active_days
 
     # ── метрики загрузки ──
     avg_check = revenue / checks if checks else 0
@@ -251,14 +264,14 @@ async def get_pnl(
             "rating": _rate(key, p, rub) if rated else None,
         }
 
-    def metric(key: str, label: str, value: float, unit: str) -> dict:
+    def metric(key: str, label: str, value: float | None, unit: str) -> dict:
         return {
             "key": key,
             "label": label,
             "kind": "metric",
-            "value": round(value, 0 if unit != "num" else 1),
+            "value": None if value is None else round(value, 0 if unit != "num" else 1),
             "unit": unit,
-            "rating": _rate(key, value, value),
+            "rating": None if value is None else _rate(key, value, value),
         }
 
     sales = [
@@ -298,9 +311,29 @@ async def get_pnl(
         money("total_opex", "Итого OPEX", total_opex, rated=False),
     ]
 
+    # маржинальный разрез + безубыточность (переменные/постоянные — другой взгляд на те же расходы)
+    ebitda_line = {
+        "key": "ebitda",
+        "label": "EBITDA",
+        "kind": "money",
+        "rub": round(ebitda, 0),
+        "pct": round(ebitda_margin, 1),
+        "rating": _rate("ebitda_margin", ebitda_margin, ebitda_margin),
+    }
+    margin = [
+        money(
+            "variable_total", "Переменные затраты (растут с продажами)", variable_total, rated=False
+        ),
+        money("contribution_margin", "Маржинальная прибыль", contribution_margin, rated=False),
+        money("fixed_alloc", "Постоянные затраты за период", fixed_alloc, rated=False),
+        metric("breakeven_month", "Точка безубыточности, ₽/мес", breakeven_month, "rub"),
+        metric("breakeven_day", "Точка безубыточности, ₽/сутки", breakeven_day, "rub"),
+        metric("avg_rev_day", "Средняя выручка/сутки (факт)", avg_rev_day, "rub"),
+    ]
+
     profit = [
         money("all_expenses", "Все расходы", all_expenses),
-        money("motivation", f"Мотивация партнёра ({motivation_pct:g}%)", motivation, rated=False),
+        ebitda_line,
     ]
 
     return {
@@ -313,10 +346,18 @@ async def get_pnl(
         "ebitda": round(ebitda, 0),
         "ebitda_margin": round(ebitda_margin, 1),
         "ebitda_rating": _rate("ebitda_margin", ebitda_margin, ebitda_margin),
+        "breakeven": {
+            "cm_ratio": round(cm_ratio * 100, 1),
+            "fixed_month": round(fixed_month, 0),
+            "revenue_month": None if breakeven_month is None else round(breakeven_month, 0),
+            "revenue_day": None if breakeven_day is None else round(breakeven_day, 0),
+            "avg_rev_day": round(avg_rev_day, 0),
+        },
         "sections": [
             {"key": "sales", "label": "Продажи / загрузка", "lines": sales},
             {"key": "production", "label": "Себестоимость производства", "lines": production},
             {"key": "opex", "label": "Операционные расходы", "lines": opex},
+            {"key": "margin", "label": "Маржинальность и безубыточность", "lines": margin},
             {"key": "profit", "label": "Прибыль", "lines": profit},
         ],
     }

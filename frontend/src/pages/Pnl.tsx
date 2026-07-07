@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
-import type { Period, RangeSel, PnlLine, PnlRating } from "../api";
+import type { Period, RangeSel, PnlLine, PnlRating, PnlSection, PnlBreakeven } from "../api";
 import { fetchPnl, fetchPnlCosts, savePnlCosts, rangeKey } from "../api";
 import { fmtInt } from "../format";
 import { COLORS, PERIODS } from "../constants";
@@ -101,60 +101,104 @@ export function Pnl() {
             </div>
           )}
 
-          {/* Заголовок: EBITDA */}
-          <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 20 }}>
-            <div style={{ background: COLORS.card, borderRadius: 12, padding: "16px 20px", minWidth: 220, border: `1px solid ${COLORS.grid}` }}>
-              <div style={{ color: COLORS.muted, fontSize: 12 }}>EBITDA за период</div>
-              <div style={{ fontSize: 28, fontWeight: 700, color: data.ebitda >= 0 ? COLORS.good : COLORS.bad, marginTop: 4 }}>
-                {fmtRub(data.ebitda)}
-              </div>
-              <div style={{ fontSize: 13, color: rateColor(data.ebitda_rating) ?? COLORS.muted, marginTop: 2 }}>
-                Маржа {data.ebitda_margin}%
+          {/* Хедер: EBITDA + вердикт по безубыточности */}
+          <div style={{ display: "flex", gap: 24, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 16 }}>
+            <div>
+              <div style={{ color: COLORS.muted, fontSize: 12 }}>EBITDA за период · {data.date_from} — {data.date_to}</div>
+              <div style={{ fontSize: 30, fontWeight: 800, color: data.ebitda >= 0 ? COLORS.good : COLORS.bad, marginTop: 2 }}>
+                {fmtRub(data.ebitda)} <span style={{ fontSize: 16, fontWeight: 600, color: rateColor(data.ebitda_rating) ?? COLORS.muted }}>({data.ebitda_margin}%)</span>
               </div>
             </div>
-            <div style={{ background: COLORS.card, borderRadius: 12, padding: "16px 20px", minWidth: 180, border: `1px solid ${COLORS.grid}` }}>
-              <div style={{ color: COLORS.muted, fontSize: 12 }}>Выручка</div>
-              <div style={{ fontSize: 28, fontWeight: 700, marginTop: 4 }}>{fmtRub(data.revenue)}</div>
-              <div style={{ fontSize: 13, color: COLORS.muted, marginTop: 2 }}>
-                {data.active_days} акт. дн. · {data.date_from} — {data.date_to}
-              </div>
-            </div>
+            <BreakevenVerdict be={data.breakeven} />
           </div>
 
-          {/* Секции P&L */}
-          <div className="dash-grid">
-            {data.sections.map((s) => (
-              <div key={s.key} style={{ background: COLORS.card, borderRadius: 12, padding: 16, border: `1px solid ${COLORS.grid}` }}>
-                <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 10 }}>{s.label}</div>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-                  <tbody>
-                    {s.lines.map((l) => {
-                      const rc = rateColor(l.rating);
-                      const isMoney = l.kind === "money";
-                      const highlight = ["cogs", "prime_cost", "production_cost", "total_opex", "all_expenses", "revenue"].includes(l.key);
-                      return (
-                        <tr key={l.key} style={{ borderTop: `1px solid ${COLORS.grid}` }}>
-                          <td style={{ padding: "7px 4px", color: highlight ? "var(--text)" : COLORS.muted, fontWeight: highlight ? 600 : 400 }}>
-                            {l.label}
-                          </td>
-                          <td style={{ padding: "7px 4px", textAlign: "right", fontWeight: highlight ? 700 : 500, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
-                            {isMoney ? fmtRub(l.rub) : fmtMetric(l)}
-                          </td>
-                          <td style={{ padding: "7px 4px", textAlign: "right", width: 64, fontVariantNumeric: "tabular-nums", color: rc ?? COLORS.muted, fontWeight: rc ? 600 : 400, whiteSpace: "nowrap" }}>
-                            {isMoney ? `${l.pct}%` : ""}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            ))}
+          {/* Единая таблица P&L */}
+          <div style={{ background: COLORS.card, borderRadius: 12, border: `1px solid ${COLORS.grid}`, overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 420 }}>
+              <thead>
+                <tr style={{ color: COLORS.muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.4 }}>
+                  <th style={{ textAlign: "left", padding: "10px 14px", fontWeight: 500 }}>Показатель</th>
+                  <th style={{ textAlign: "right", padding: "10px 14px", fontWeight: 500 }}>₽</th>
+                  <th style={{ textAlign: "right", padding: "10px 14px", fontWeight: 500, width: 80 }}>% выр.</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.sections.map((s) => (
+                  <SectionRows key={s.key} section={s} />
+                ))}
+              </tbody>
+            </table>
           </div>
         </>
       )}
 
       {editing && <CostEditor onClose={() => setEditing(false)} />}
+    </div>
+  );
+}
+
+// Строки-подытоги (жирные, с рамкой) — ключевые агрегаты P&L.
+const SUBTOTAL = new Set([
+  "revenue", "cogs", "prime_cost", "production_cost", "total_opex",
+  "contribution_margin", "fixed_alloc", "all_expenses", "ebitda",
+]);
+
+/** Секция единой таблицы: строка-заголовок + строки показателей. */
+function SectionRows({ section }: { section: PnlSection }) {
+  return (
+    <>
+      <tr>
+        <td colSpan={3} style={{ padding: "9px 14px 5px", fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4, color: COLORS.indigoText, background: COLORS.bg, borderTop: `1px solid ${COLORS.grid}` }}>
+          {section.label}
+        </td>
+      </tr>
+      {section.lines.map((l) => {
+        const rc = rateColor(l.rating);
+        const isMoney = l.kind === "money";
+        const sub = SUBTOTAL.has(l.key);
+        const indent = l.label.startsWith("—");
+        return (
+          <tr key={l.key} style={{ borderTop: `1px solid ${COLORS.grid}`, background: sub ? "rgba(99,102,241,0.06)" : "transparent" }}>
+            <td style={{ padding: "7px 14px", paddingLeft: indent ? 26 : 14, color: sub ? "var(--text)" : COLORS.muted, fontWeight: sub ? 700 : 400 }}>
+              {l.label}
+            </td>
+            <td style={{ padding: "7px 14px", textAlign: "right", fontWeight: sub ? 800 : 500, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", color: isMoney ? "var(--text)" : (rc ?? "var(--text)") }}>
+              {isMoney ? fmtRub(l.rub) : fmtMetric(l)}
+            </td>
+            <td style={{ padding: "7px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums", color: rc ?? COLORS.muted, fontWeight: rc ? 700 : 400, whiteSpace: "nowrap" }}>
+              {isMoney ? `${l.pct}%` : ""}
+            </td>
+          </tr>
+        );
+      })}
+    </>
+  );
+}
+
+/** Вердикт по безубыточности рядом с EBITDA. */
+function BreakevenVerdict({ be }: { be: PnlBreakeven }) {
+  if (be.revenue_day == null) {
+    return (
+      <div style={{ fontSize: 13, color: COLORS.muted }}>
+        Точка безубыточности: <b>—</b>
+        <div style={{ fontSize: 12 }}>{be.cm_ratio <= 0 ? "маржинальность ≤ 0 — не окупается ни при каком объёме" : "введите постоянные затраты"}</div>
+      </div>
+    );
+  }
+  const gap = be.avg_rev_day - be.revenue_day; // + запас, − недобор
+  const ok = gap >= 0;
+  return (
+    <div style={{ fontSize: 13, color: COLORS.muted }}>
+      <div>
+        Точка безубыточности: <b style={{ color: "var(--text)" }}>{fmtRub(be.revenue_month ?? 0)}/мес</b> · {fmtRub(be.revenue_day)}/сутки
+        <span style={{ color: COLORS.muted }}> (маржинальность {be.cm_ratio}%)</span>
+      </div>
+      <div style={{ marginTop: 2 }}>
+        Средний день делает <b style={{ color: "var(--text)" }}>{fmtRub(be.avg_rev_day)}</b> →{" "}
+        <b style={{ color: ok ? COLORS.good : COLORS.bad }}>
+          {ok ? `запас +${fmtRub(gap)}/сутки` : `недобор ${fmtRub(gap)}/сутки`}
+        </b>
+      </div>
     </div>
   );
 }

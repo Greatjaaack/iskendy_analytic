@@ -494,7 +494,7 @@ export interface PnlLine {
   kind: "money" | "metric";
   rub?: number;
   pct?: number;
-  value?: number;
+  value?: number | null;
   unit?: "rub" | "num" | "pct";
   rating: PnlRating;
 }
@@ -503,6 +503,14 @@ export interface PnlSection {
   key: string;
   label: string;
   lines: PnlLine[];
+}
+
+export interface PnlBreakeven {
+  cm_ratio: number;
+  fixed_month: number;
+  revenue_month: number | null;
+  revenue_day: number | null;
+  avg_rev_day: number;
 }
 
 export interface PnlReport {
@@ -515,6 +523,7 @@ export interface PnlReport {
   ebitda: number;
   ebitda_margin: number;
   ebitda_rating: PnlRating;
+  breakeven: PnlBreakeven;
   sections: PnlSection[];
 }
 
