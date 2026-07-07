@@ -380,6 +380,44 @@ class PnlMonth(Base):
     __table_args__ = (UniqueConstraint("year", "month", name="uq_pnl_year_month"),)
 
 
+class Employee(Base):
+    """Сотрудник для расчёта ФОТ из графика смен.
+
+    `labor_group` разводит ФОТ на операционный (кухня/касса) и административный
+    (управляющий) — как в P&L-модели. `pay_type`: «shift» (фикс за выход, стоимость
+    периода = число смен × rate) или «month» (оклад, аллоцируется ÷ дней месяца).
+    ФОТ дня/периода в P&L собирается из этих ставок и графика (`Shift`), заменяя
+    ручной ввод ФОТ. `create_all` добавляет таблицу без потери данных.
+    """
+
+    __tablename__ = "employees"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String, nullable=False)
+    role = Column(String, default="")  # роль (Повар/Кассир/Управляющий…)
+    labor_group = Column(String, default="operational")  # operational | admin
+    pay_type = Column(String, default="shift")  # shift | month
+    rate = Column(Float, default=0.0)  # ₽ за смену (shift) или ₽/мес (month)
+    active = Column(Boolean, default=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class Shift(Base):
+    """Смена: сотрудник (с pay_type=shift) вышел в конкретный день. Один выход = строка.
+
+    Оклад-сотрудники (pay_type=month) смен не имеют — их ФОТ аллоцируется по месяцу.
+    """
+
+    __tablename__ = "shifts"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    employee_id = Column(Integer, ForeignKey("employees.id"), index=True)
+    date = Column(Date, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (UniqueConstraint("employee_id", "date", name="uq_shift_emp_date"),)
+
+
 def init_db():
     # До-миграция ПРОИЗВОДНЫХ таблиц (order_items/dish_detail/orders): create_all не
     # добавляет колонки в существующую таблицу. Эти таблицы — снимок из iiko

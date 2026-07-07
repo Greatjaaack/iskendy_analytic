@@ -532,3 +532,30 @@ export interface PnlCostsResponse {
   manual_fields: { key: string; label: string }[];
   rate_fields: { key: string; label: string }[];
 }
+
+// ─── График и ФОТ ────────────────────────────────────────────────────────────
+export type LaborGroup = "operational" | "admin";
+export type PayType = "shift" | "month";
+
+export interface Employee {
+  id: number;
+  name: string;
+  role: string;
+  labor_group: LaborGroup;
+  pay_type: PayType;
+  rate: number;
+  active: boolean;
+}
+
+export interface ShiftEntry {
+  employee_id: number;
+  date: string;
+}
+
+export interface LaborSummary {
+  year: number;
+  month: number;
+  operational: number;
+  admin: number;
+  total: number;
+}

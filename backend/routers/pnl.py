@@ -32,6 +32,7 @@ from constants import (
 )
 from models import PnlMonth, SessionLocal
 from routers.revenue import _channel_revenue, _load_days
+from routers.schedule import labor_for_period
 from utils import period_range
 
 router = APIRouter(prefix="/api/pnl", tags=["pnl"])
@@ -208,8 +209,10 @@ async def get_pnl(
     writeoffs = manual["writeoffs"]
     packaging = manual["packaging"]
     cogs = food_cost_rub + writeoffs + packaging
-    labor_op = manual["labor_op"]
-    labor_admin = manual["labor_admin"]
+    # ФОТ — из графика смен (не ручной ввод): смены×ставка + оклады ÷ дней
+    labor = labor_for_period(df, dt)
+    labor_op = labor["operational"]
+    labor_admin = labor["admin"]
     prime_cost = cogs + labor_op
     all_labor = labor_op + labor_admin
     production_cost = cogs + all_labor
@@ -236,11 +239,17 @@ async def get_pnl(
     variable_total = food_cost_rub + writeoffs + packaging + tax + aggregator
     contribution_margin = revenue - variable_total  # маржинальная прибыль
     cm_ratio = (contribution_margin / revenue) if revenue else 0.0
-    fixed_alloc = sum(manual[f] for f in PNL_FIXED_MANUAL)  # постоянные за период
+    # постоянные за период = ручной фикс + ФОТ из графика (оба фикс/мес)
+    fixed_alloc = sum(manual[f] for f in PNL_FIXED_MANUAL) + all_labor
 
     # ── Точка безубыточности: постоянные ПОЛНОГО месяца ÷ маржинальность ──
-    fixed_month = sum(rate_m[f] for f in PNL_FIXED_MANUAL)
     dim_end = calendar.monthrange(dt.year, dt.month)[1]
+    month_start = dt.replace(day=1)
+    month_end = dt.replace(day=dim_end)
+    labor_month = labor_for_period(month_start, month_end)
+    fixed_month = sum(rate_m[f] for f in PNL_FIXED_MANUAL) + (
+        labor_month["operational"] + labor_month["admin"]
+    )
     breakeven_month = (fixed_month / cm_ratio) if cm_ratio > 0 else None
     breakeven_day = (breakeven_month / dim_end) if breakeven_month else None
     avg_rev_day = revenue / active_days
