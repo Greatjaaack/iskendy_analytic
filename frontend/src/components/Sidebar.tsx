@@ -7,8 +7,6 @@ import { COLORS } from "../constants";
 const items: { to: string; label: string; disabled?: boolean }[] = [
   { to: "/", label: "Дашборд" },
   { to: "/delivery", label: "🛵 Доставка" },
-  { to: "/suppliers", label: "Поставщики" },
-  { to: "/nomenclature", label: "Номенклатура ↔ ТТК" },
   { to: "/invoices", label: "Накладные", disabled: true },
   { to: "/orders", label: "Автозаказ", disabled: true },
 ];
