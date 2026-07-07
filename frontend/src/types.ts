@@ -484,3 +484,42 @@ export interface DishMapping {
   ttk_name: string | null;
   cost_full: number | null;
 }
+
+// ─── P&L дня ─────────────────────────────────────────────────────────────────
+export type PnlRating = "green" | "yellow" | "red" | null;
+
+export interface PnlLine {
+  key: string;
+  label: string;
+  kind: "money" | "metric";
+  rub?: number;
+  pct?: number;
+  value?: number;
+  unit?: "rub" | "num" | "pct";
+  rating: PnlRating;
+}
+
+export interface PnlSection {
+  key: string;
+  label: string;
+  lines: PnlLine[];
+}
+
+export interface PnlReport {
+  period: string;
+  date_from: string;
+  date_to: string;
+  active_days: number;
+  has_costs: boolean;
+  revenue: number;
+  ebitda: number;
+  ebitda_margin: number;
+  ebitda_rating: PnlRating;
+  sections: PnlSection[];
+}
+
+export interface PnlCostsResponse {
+  values: Record<string, number>;
+  manual_fields: { key: string; label: string }[];
+  rate_fields: { key: string; label: string }[];
+}

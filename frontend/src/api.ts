@@ -23,6 +23,8 @@ import type {
   IngredientCard,
   KpiByChannel,
   PaymentStructure,
+  PnlCostsResponse,
+  PnlReport,
   RangeSel,
   RevenueByChannel,
   RevenueResponse,
@@ -141,6 +143,15 @@ export const savePlan = (cells: Record<string, PlanCell>): Promise<{ ok: boolean
 
 export const seedPlanFromHistory = (months = 2): Promise<{ ok: boolean; segments: number }> =>
   api.post<{ ok: boolean; segments: number }>(`/api/plan/seed-from-history?months=${months}`).then((r) => r.data);
+
+export const fetchPnl = (range: RangeSel): Promise<PnlReport> =>
+  api.get<PnlReport>(`/api/pnl?${rangeQS(range)}`).then((r) => r.data);
+
+export const fetchPnlCosts = (year: number, month: number): Promise<PnlCostsResponse> =>
+  api.get<PnlCostsResponse>(`/api/pnl/costs?year=${year}&month=${month}`).then((r) => r.data);
+
+export const savePnlCosts = (payload: Record<string, number>): Promise<{ ok: boolean }> =>
+  api.put<{ ok: boolean }>("/api/pnl/costs", payload).then((r) => r.data);
 
 /** Запустить синхронизацию. `days>0` — лёгкий синк за последние N дней (автосинхронизация),
  *  без аргумента — полный синк (кнопка «Синхронизировать»). */

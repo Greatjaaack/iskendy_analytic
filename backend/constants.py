@@ -210,3 +210,53 @@ PAYMENT_GROUP_ORDER = (PAYMENT_CARD, PAYMENT_CASH, PAYMENT_AGGREGATOR, PAYMENT_O
 
 # Поле-идентификатор заказа в OLAP SALES (для связи блюд заказа с его «Статусом»).
 OLAP_FIELD_ORDER_NUM = "OrderNum"
+
+# ── P&L дня ────────────────────────────────────────────────────────────────
+# Бенчмарки строк P&L из финансовой модели ресторана (Google Sheet). Для каждой
+# строки: dir — «low» (меньше = лучше) или «high» (больше = лучше), good/warn —
+# границы зелёного/жёлтого (иначе красный), unit — «pct» (доля выручки) или «rub».
+# Раскраска: dir=low → ≤good зелёный, ≤warn жёлтый, иначе красный; dir=high наоборот.
+PNL_DIR_LOW = "low"
+PNL_DIR_HIGH = "high"
+PNL_BENCHMARKS = {
+    "avg_check": {"dir": PNL_DIR_HIGH, "good": 600, "warn": 500, "unit": "rub"},
+    "checks_per_day": {"dir": PNL_DIR_HIGH, "good": 110, "warn": 90, "unit": "num"},
+    "checks_per_hour": {"dir": PNL_DIR_HIGH, "good": 10, "warn": 7, "unit": "num"},
+    "writeoffs": {"dir": PNL_DIR_LOW, "good": 3, "warn": 5, "unit": "pct"},
+    "food_cost": {"dir": PNL_DIR_LOW, "good": 27, "warn": 32, "unit": "pct"},
+    "packaging": {"dir": PNL_DIR_LOW, "good": 2, "warn": 3, "unit": "pct"},
+    "cogs": {"dir": PNL_DIR_LOW, "good": 27, "warn": 32, "unit": "pct"},
+    "labor_op": {"dir": PNL_DIR_LOW, "good": 23, "warn": 27, "unit": "pct"},
+    "labor_admin": {"dir": PNL_DIR_LOW, "good": 6, "warn": 7, "unit": "pct"},
+    "prime_cost": {"dir": PNL_DIR_LOW, "good": 48, "warn": 53, "unit": "pct"},
+    "all_labor": {"dir": PNL_DIR_LOW, "good": 24, "warn": 30, "unit": "pct"},
+    "production_cost": {"dir": PNL_DIR_LOW, "good": 60, "warn": 65, "unit": "pct"},
+    "rent": {"dir": PNL_DIR_LOW, "good": 8, "warn": 12, "unit": "pct"},
+    "utilities": {"dir": PNL_DIR_LOW, "good": 4, "warn": 6, "unit": "pct"},
+    "marketing": {"dir": PNL_DIR_LOW, "good": 5, "warn": 7, "unit": "pct"},
+    "other_opex": {"dir": PNL_DIR_LOW, "good": 6, "warn": 8, "unit": "pct"},
+    "contingency": {"dir": PNL_DIR_LOW, "good": 2, "warn": 3, "unit": "pct"},
+    "all_expenses": {"dir": PNL_DIR_LOW, "good": 80, "warn": 90, "unit": "pct"},
+    "ebitda_margin": {"dir": PNL_DIR_HIGH, "good": 18, "warn": 10, "unit": "pct"},
+}
+
+# Ручные ₽-поля PnlMonth (месячная сумма, аллоцируется на день) и их подписи.
+PNL_MANUAL_FIELDS = [
+    ("labor_op", "Операционный ФОТ"),
+    ("labor_admin", "Административный ФОТ"),
+    ("rent", "Аренда"),
+    ("utilities", "Коммуналка"),
+    ("marketing", "Маркетинг"),
+    ("other_opex", "Прочие (IT/ОФД/эквайринг/аморт.)"),
+    ("packaging", "Упаковка"),
+    ("writeoffs", "Списания"),
+    ("contingency", "Непредвиденные"),
+    ("cap_reserve", "Кап-резерв"),
+]
+# Ставки-% и конфиг PnlMonth (не аллоцируются, применяются к выручке / берутся как есть).
+PNL_RATE_FIELDS = [
+    ("tax_pct", "Налог (УСН), %"),
+    ("aggregator_pct", "Удержание агрегатора, %"),
+    ("motivation_pct", "Мотивация партнёра, %"),
+    ("work_hours", "Рабочих часов в день"),
+]

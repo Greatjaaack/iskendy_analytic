@@ -16,7 +16,7 @@ import storage
 from auth import require_auth
 from cache import cache_clear
 from models import SessionLocal, SyncLog, init_db
-from routers import auth, dishes, imports, nomenclature, plan, revenue, suppliers
+from routers import auth, dishes, imports, nomenclature, plan, pnl, revenue, suppliers
 from scheduler import (
     full_sync,
     run_startup_sync,
@@ -59,6 +59,7 @@ app.include_router(suppliers.router, dependencies=protected)
 app.include_router(nomenclature.router, dependencies=protected)
 app.include_router(imports.router, dependencies=protected)
 app.include_router(plan.router, dependencies=protected)
+app.include_router(pnl.router, dependencies=protected)
 
 
 @app.get("/api/health")

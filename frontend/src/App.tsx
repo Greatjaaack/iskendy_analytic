@@ -4,6 +4,7 @@ import { RequireAuth } from "./auth";
 import { Sidebar } from "./components/Sidebar";
 import { Dashboard } from "./pages/Dashboard";
 import { Delivery } from "./pages/Delivery";
+import { Pnl } from "./pages/Pnl";
 import { Login } from "./pages/Login";
 import { QUERY_RETRY, STALE_TIME_MS } from "./constants";
 
@@ -37,6 +38,7 @@ export default function App() {
           >
             <Route path="/" element={<Dashboard />} />
             <Route path="/delivery" element={<Delivery />} />
+            <Route path="/pnl" element={<Pnl />} />
           </Route>
         </Routes>
       </BrowserRouter>
