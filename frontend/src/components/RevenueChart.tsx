@@ -8,7 +8,7 @@ import { fetchRevenueByChannel, rangeKey, type PrevDay, type RangeSel, type Reve
 import {
   CHART_HEIGHT, COLORS,
   WEEKDAY_GROUPS, WEEKDAYS_ALL, WEEKDAYS_WEEKEND, WEEKDAYS_WORK,
-  weatherInfo, weekdayGroup,
+  weekdayGroup,
 } from "../constants";
 import { fmtInt } from "../format";
 
@@ -71,17 +71,15 @@ export function RevenueChart({ data, prevData, range, withDelivery = true }: Pro
 
   // погода под датой на оси X (структурно: иконка / температура / дельта к тому же дню
   // прошлого периода) — чтобы на оси было ясно, что есть что
-  interface Wx { icon: string; temp: number | null; delta: number | null }
+  interface Wx { temp: number | null; delta: number | null }
   const weatherByLabel: Record<string, Wx> = {};
   data.forEach((d, i) => {
-    const info = d.weather ? weatherInfo(d.weather.weather_code) : null;
-    if (!info) return;
     const t = d.weather?.temp_max;
+    if (t == null) return;
     const pt = prevData[i]?.temp_max;
     weatherByLabel[dayLabel(d)] = {
-      icon: info.icon,
-      temp: t != null ? Math.round(t) : null,
-      delta: t != null && pt != null ? Math.round(t - pt) : null,
+      temp: Math.round(t),
+      delta: pt != null ? Math.round(t - pt) : null,
     };
   });
   // дельта теплее → тёплый цвет (warn), холоднее → холодный (accent), без изменения — приглушённо
@@ -94,8 +92,7 @@ export function RevenueChart({ data, prevData, range, withDelivery = true }: Pro
         <text x={0} y={0} dy={12} textAnchor="middle" fill="var(--muted)" fontSize={12}>{label}</text>
         {w && (
           <text x={0} y={0} dy={28} textAnchor="middle" fontSize={12}>
-            <tspan fill="var(--muted)">{w.icon}</tspan>
-            {w.temp != null && <tspan dx={5} fill="var(--text)" fontWeight={600}>{w.temp}°</tspan>}
+            {w.temp != null && <tspan fill="var(--text)" fontWeight={600}>{w.temp}°</tspan>}
             {w.delta != null && (
               <tspan dx={5} fill={deltaColor(w.delta)}>
                 ({w.delta >= 0 ? "+" : ""}{w.delta}°)

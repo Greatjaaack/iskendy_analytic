@@ -111,7 +111,7 @@ export function Dashboard() {
               );
             })}
             <button onClick={() => setShowCustom((v) => !v)} style={tabBtn(isCustom)}>
-              📅 Период
+              Период
             </button>
           </div>
           <label
@@ -300,7 +300,7 @@ function TodayBanner({ day }: { day: RevenueDay }) {
       </div>
       {w && (
         <div style={{ fontSize: 16, color: "var(--text)" }}>
-          {info.icon} {info.label}
+          {info.label}
           {w.temp_max != null ? `, ${Math.round(w.temp_max)}°` : ""}
         </div>
       )}

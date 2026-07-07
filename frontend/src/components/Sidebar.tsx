@@ -6,9 +6,9 @@ import { COLORS } from "../constants";
 
 const items: { to: string; label: string; disabled?: boolean }[] = [
   { to: "/", label: "Дашборд" },
-  { to: "/delivery", label: "🛵 Доставка" },
-  { to: "/pnl", label: "💰 P&L дня" },
-  { to: "/schedule", label: "👥 График и ФОТ" },
+  { to: "/delivery", label: "Доставка" },
+  { to: "/pnl", label: "P&L дня" },
+  { to: "/schedule", label: "График и ФОТ" },
   { to: "/invoices", label: "Накладные", disabled: true },
   { to: "/orders", label: "Автозаказ", disabled: true },
 ];
@@ -118,7 +118,7 @@ export function Sidebar() {
             color: "var(--muted)", fontSize: 13, cursor: "pointer", textAlign: "left",
           }}
         >
-          {mode === "dark" ? "☀️ Светлая тема" : "🌙 Тёмная тема"}
+          {mode === "dark" ? "Светлая тема" : "Тёмная тема"}
         </button>
 
         <button
@@ -129,7 +129,7 @@ export function Sidebar() {
             color: "var(--muted)", fontSize: 13, cursor: "pointer", textAlign: "left",
           }}
         >
-          🚪 Выйти
+          Выйти
         </button>
       </div>
     </>

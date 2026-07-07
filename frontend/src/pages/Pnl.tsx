@@ -65,11 +65,11 @@ export function Pnl() {
               );
             })}
             <button onClick={() => setShowCustom((v) => !v)} style={tabBtn(isCustom)}>
-              📅 Период
+              Период
             </button>
           </div>
           <button onClick={() => setEditing(true)} style={{ ...tabBtn(false), border: `1px solid ${COLORS.grid}` }}>
-            ⚙ Затраты
+            Затраты
           </button>
         </div>
       </div>
@@ -97,7 +97,7 @@ export function Pnl() {
         <>
           {!data.has_costs && (
             <div style={{ background: COLORS.card, border: `1px solid ${COLORS.warn}`, borderRadius: 8, padding: "10px 14px", color: COLORS.warn, fontSize: 13, marginBottom: 16 }}>
-              Затраты за этот период ещё не введены — заполните их через «⚙ Затраты», иначе видно только выручку и food cost.
+              Затраты за этот период ещё не введены — заполните их через «Затраты», иначе видно только выручку и food cost.
             </div>
           )}
 

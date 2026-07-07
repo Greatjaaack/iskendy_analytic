@@ -23,10 +23,10 @@ interface Props {
 
 // Квадранты меню-инжиниринга: популярность × маржинальность.
 const QUAD = {
-  star: { label: "⭐ Звёзды", color: COLORS.good, hint: "двигать, держать качество" },
-  plow: { label: "🐴 Рабочие лошадки", color: COLORS.warn, hint: "поднять цену / снизить с/с" },
-  puzzle: { label: "❓ Загадки", color: COLORS.accent, hint: "продвигать, переставить в меню" },
-  dog: { label: "🐕 Собаки", color: COLORS.bad, hint: "переделать или вывести" },
+  star: { label: "Звёзды", color: COLORS.good, hint: "двигать, держать качество" },
+  plow: { label: "Рабочие лошадки", color: COLORS.warn, hint: "поднять цену / снизить с/с" },
+  puzzle: { label: "Загадки", color: COLORS.accent, hint: "продвигать, переставить в меню" },
+  dog: { label: "Собаки", color: COLORS.bad, hint: "переделать или вывести" },
 } as const;
 type Quad = keyof typeof QUAD;
 

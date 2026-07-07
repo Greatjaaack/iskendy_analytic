@@ -64,7 +64,7 @@ export function Schedule() {
     <div className="page" style={{ minHeight: "100vh", background: COLORS.bg, color: "var(--text)" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, marginBottom: 20 }}>
         <div>
-          <div style={{ fontSize: 22, fontWeight: 700 }}>👥 График и ФОТ</div>
+          <div style={{ fontSize: 22, fontWeight: 700 }}>График и ФОТ</div>
           <div style={{ color: COLORS.muted, fontSize: 13, marginTop: 2 }}>
             Сотрудники, ставки и смены. ФОТ отсюда автоматически идёт в «P&L дня».
           </div>
@@ -256,7 +256,7 @@ function EmployeeRow({ emp, onChanged }: { emp: Employee; onChanged: () => void 
         {dirty && (
           <button onClick={() => saveMut.mutate()} style={{ ...miniBtn, background: COLORS.good, color: "#fff", border: "none", marginRight: 4 }}>✓</button>
         )}
-        <button onClick={() => delMut.mutate()} title="Удалить" style={{ ...miniBtn, color: COLORS.bad }}>🗑</button>
+        <button onClick={() => delMut.mutate()} title="Удалить" style={{ ...miniBtn, color: COLORS.bad }}>✕</button>
       </td>
     </tr>
   );

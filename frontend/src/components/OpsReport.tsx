@@ -99,7 +99,7 @@ export function OpsReport({ range, withDelivery = true }: Props) {
             onClick={() => setPlanOpen(true)}
             style={{ background: "transparent", color: "var(--text)", border: "1px solid var(--grid)", borderRadius: 6, padding: "4px 12px", fontSize: 12, cursor: "pointer" }}
           >
-            ⚙ План
+            План
           </button>
         </div>
       </div>
