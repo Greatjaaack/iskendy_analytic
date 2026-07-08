@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
-import type { Employee, LaborGroup, PayType } from "../api";
+import type { Employee } from "../api";
 import {
   fetchEmployees,
   createEmployee,
@@ -12,7 +12,7 @@ import {
   fetchLabor,
 } from "../api";
 import { fmtInt } from "../format";
-import { COLORS } from "../constants";
+import { COLORS, EMPLOYEE_ROLES } from "../constants";
 
 const fmtRub = (n: number) => `${fmtInt(n)} ₽`;
 const MONTHS = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
@@ -20,6 +20,9 @@ const WD = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
 
 const now = new Date();
 
+/** График и ФОТ — сотрудники, ставки и смены. Таблица только для поваров:
+ *  группа ФОТ всегда операционная, оплата всегда за смену (решение пользователя —
+ *  административный ФОТ считается отдельно, вручную, как постоянные расходы в P&L). */
 export function Schedule() {
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth() + 1);
@@ -54,9 +57,7 @@ export function Schedule() {
     [shiftsQ.data],
   );
 
-  const emps = empsQ.data ?? [];
-  const shiftEmps = emps.filter((e) => e.active && e.pay_type === "shift");
-  const salaryEmps = emps.filter((e) => e.active && e.pay_type === "month");
+  const emps = (empsQ.data ?? []).filter((e) => e.active);
 
   const shiftCount = (id: number) => days.filter((d) => shiftSet.has(`${id}|${dstr(d)}`)).length;
 
@@ -66,7 +67,7 @@ export function Schedule() {
         <div>
           <div style={{ fontSize: 22, fontWeight: 700 }}>График и ФОТ</div>
           <div style={{ color: COLORS.muted, fontSize: 13, marginTop: 2 }}>
-            Сотрудники, ставки и смены. ФОТ отсюда автоматически идёт в «P&L дня».
+            Повара, ставки и смены. ФОТ отсюда автоматически идёт в «P&L дня».
           </div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
@@ -79,12 +80,9 @@ export function Schedule() {
         </div>
       </div>
 
-      {/* Сводка ФОТ за месяц */}
       {laborQ.data && (
-        <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 20 }}>
+        <div style={{ marginBottom: 20 }}>
           <LaborCard label="ФОТ за месяц" value={laborQ.data.total} big />
-          <LaborCard label="Операционный" value={laborQ.data.operational} />
-          <LaborCard label="Административный" value={laborQ.data.admin} />
         </div>
       )}
 
@@ -92,13 +90,11 @@ export function Schedule() {
       <div style={{ background: COLORS.card, borderRadius: 12, border: `1px solid ${COLORS.grid}`, padding: 16, marginBottom: 20 }}>
         <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 12 }}>Сотрудники</div>
         <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 640 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, minWidth: 420 }}>
             <thead>
               <tr style={{ color: COLORS.muted, fontSize: 11, textTransform: "uppercase" }}>
                 <th style={thL}>Имя</th>
-                <th style={thL}>Роль</th>
-                <th style={thL}>Группа ФОТ</th>
-                <th style={thL}>Оплата</th>
+                <th style={thL}>Должность</th>
                 <th style={thR}>Ставка</th>
                 <th style={{ width: 90 }}></th>
               </tr>
@@ -119,8 +115,8 @@ export function Schedule() {
         <div style={{ fontSize: 12, color: COLORS.muted, marginBottom: 12 }}>
           Клик по клетке — отметить/снять выход. Стоимость смены = ставка сотрудника.
         </div>
-        {shiftEmps.length === 0 ? (
-          <div style={{ color: COLORS.muted, fontSize: 13 }}>Добавьте сотрудников с оплатой «За смену», чтобы вести график.</div>
+        {emps.length === 0 ? (
+          <div style={{ color: COLORS.muted, fontSize: 13 }}>Добавьте сотрудников, чтобы вести график.</div>
         ) : (
           <div style={{ overflowX: "auto" }}>
             <table style={{ borderCollapse: "collapse", fontSize: 12 }}>
@@ -141,7 +137,7 @@ export function Schedule() {
                 </tr>
               </thead>
               <tbody>
-                {shiftEmps.map((e) => {
+                {emps.map((e) => {
                   const cnt = shiftCount(e.id);
                   return (
                     <tr key={e.id}>
@@ -175,13 +171,6 @@ export function Schedule() {
             </table>
           </div>
         )}
-
-        {salaryEmps.length > 0 && (
-          <div style={{ marginTop: 16, fontSize: 13, color: COLORS.muted }}>
-            <b style={{ color: "var(--text)" }}>Оклады (без смен):</b>{" "}
-            {salaryEmps.map((e) => `${e.name} — ${fmtRub(e.rate)}/мес`).join(" · ")}
-          </div>
-        )}
       </div>
     </div>
   );
@@ -196,7 +185,8 @@ function LaborCard({ label, value, big }: { label: string; value: number; big?: 
   );
 }
 
-const emptyDraft = { name: "", role: "", labor_group: "operational" as LaborGroup, pay_type: "shift" as PayType, rate: 0 };
+// Группа ФОТ и оплата у поваров фиксированы (операционный / за смену) — не выбираются в UI.
+const emptyDraft = { name: "", role: EMPLOYEE_ROLES[0] as string, labor_group: "operational" as const, pay_type: "shift" as const, rate: 0 };
 
 function AddEmployeeRow({ onAdded }: { onAdded: () => void }) {
   const [d, setD] = useState({ ...emptyDraft });
@@ -207,17 +197,9 @@ function AddEmployeeRow({ onAdded }: { onAdded: () => void }) {
   return (
     <tr style={{ borderTop: `1px solid ${COLORS.grid}`, background: "rgba(99,102,241,0.05)" }}>
       <td style={td}><input placeholder="Имя" value={d.name} onChange={(e) => setD({ ...d, name: e.target.value })} style={cellInp} /></td>
-      <td style={td}><input placeholder="Роль" value={d.role} onChange={(e) => setD({ ...d, role: e.target.value })} style={cellInp} /></td>
       <td style={td}>
-        <select value={d.labor_group} onChange={(e) => setD({ ...d, labor_group: e.target.value as LaborGroup })} style={cellInp}>
-          <option value="operational">Операционный</option>
-          <option value="admin">Административный</option>
-        </select>
-      </td>
-      <td style={td}>
-        <select value={d.pay_type} onChange={(e) => setD({ ...d, pay_type: e.target.value as PayType })} style={cellInp}>
-          <option value="shift">За смену</option>
-          <option value="month">Оклад/мес</option>
+        <select value={d.role} onChange={(e) => setD({ ...d, role: e.target.value })} style={cellInp}>
+          {EMPLOYEE_ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
         </select>
       </td>
       <td style={td}><input type="number" value={d.rate} onChange={(e) => setD({ ...d, rate: Number(e.target.value) || 0 })} style={{ ...cellInp, textAlign: "right" }} /></td>
@@ -232,23 +214,15 @@ function AddEmployeeRow({ onAdded }: { onAdded: () => void }) {
 
 function EmployeeRow({ emp, onChanged }: { emp: Employee; onChanged: () => void }) {
   const [d, setD] = useState<Employee>(emp);
-  const dirty = d.name !== emp.name || d.role !== emp.role || d.labor_group !== emp.labor_group || d.pay_type !== emp.pay_type || d.rate !== emp.rate;
+  const dirty = d.name !== emp.name || d.role !== emp.role || d.rate !== emp.rate;
   const saveMut = useMutation({ mutationFn: () => updateEmployee(emp.id, d), onSuccess: onChanged });
   const delMut = useMutation({ mutationFn: () => deleteEmployee(emp.id), onSuccess: onChanged });
   return (
     <tr style={{ borderTop: `1px solid ${COLORS.grid}` }}>
       <td style={td}><input value={d.name} onChange={(e) => setD({ ...d, name: e.target.value })} style={cellInp} /></td>
-      <td style={td}><input value={d.role} onChange={(e) => setD({ ...d, role: e.target.value })} style={cellInp} /></td>
       <td style={td}>
-        <select value={d.labor_group} onChange={(e) => setD({ ...d, labor_group: e.target.value as LaborGroup })} style={cellInp}>
-          <option value="operational">Операционный</option>
-          <option value="admin">Административный</option>
-        </select>
-      </td>
-      <td style={td}>
-        <select value={d.pay_type} onChange={(e) => setD({ ...d, pay_type: e.target.value as PayType })} style={cellInp}>
-          <option value="shift">За смену</option>
-          <option value="month">Оклад/мес</option>
+        <select value={d.role} onChange={(e) => setD({ ...d, role: e.target.value })} style={cellInp}>
+          {EMPLOYEE_ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
         </select>
       </td>
       <td style={td}><input type="number" value={d.rate} onChange={(e) => setD({ ...d, rate: Number(e.target.value) || 0 })} style={{ ...cellInp, textAlign: "right" }} /></td>

@@ -1,20 +1,28 @@
 import { useState } from "react";
 import { NavLink } from "react-router-dom";
-import { logout } from "../auth-api";
-import { useTheme } from "../theme";
 import { COLORS } from "../constants";
 
+// «Доставка» пока не вынесена в отдельный пункт навигации — на дашборде есть
+// галка «С доставкой», её достаточно (решение пользователя).
 const items: { to: string; label: string; disabled?: boolean }[] = [
   { to: "/", label: "Дашборд" },
-  { to: "/delivery", label: "Доставка" },
   { to: "/pnl", label: "P&L дня" },
   { to: "/schedule", label: "График и ФОТ" },
   { to: "/invoices", label: "Накладные", disabled: true },
   { to: "/orders", label: "Автозаказ", disabled: true },
 ];
 
+const linkStyle = (isActive: boolean): React.CSSProperties => ({
+  padding: "9px 12px",
+  borderRadius: 8,
+  fontSize: 14,
+  textDecoration: "none",
+  color: isActive ? "var(--text)" : "var(--muted)",
+  background: isActive ? COLORS.primary : "transparent",
+  fontWeight: isActive ? 600 : 400,
+});
+
 export function Sidebar() {
-  const { mode, toggle } = useTheme();
   // На телефоне сайдбар — выезжающий drawer; open управляет его видимостью.
   // На десктопе класс .sidebar-open игнорируется (drawer-стили в media-query ≤768px).
   const [open, setOpen] = useState(false);
@@ -94,43 +102,13 @@ export function Sidebar() {
                 to={it.to}
                 end={it.to === "/"}
                 onClick={close}
-                style={({ isActive }) => ({
-                  padding: "9px 12px",
-                  borderRadius: 8,
-                  fontSize: 14,
-                  textDecoration: "none",
-                  color: isActive ? "var(--text)" : "var(--muted)",
-                  background: isActive ? COLORS.primary : "transparent",
-                  fontWeight: isActive ? 600 : 400,
-                })}
+                style={({ isActive }) => linkStyle(isActive)}
               >
                 {it.label}
               </NavLink>
             )
           )}
         </nav>
-
-        <button
-          onClick={toggle}
-          style={{
-            marginTop: 16, width: "100%", padding: "9px 12px", borderRadius: 8,
-            border: "1px solid var(--grid)", background: "transparent",
-            color: "var(--muted)", fontSize: 13, cursor: "pointer", textAlign: "left",
-          }}
-        >
-          {mode === "dark" ? "Светлая тема" : "Тёмная тема"}
-        </button>
-
-        <button
-          onClick={logout}
-          style={{
-            marginTop: 8, width: "100%", padding: "9px 12px", borderRadius: 8,
-            border: "1px solid var(--grid)", background: "transparent",
-            color: "var(--muted)", fontSize: 13, cursor: "pointer", textAlign: "left",
-          }}
-        >
-          Выйти
-        </button>
       </div>
     </>
   );

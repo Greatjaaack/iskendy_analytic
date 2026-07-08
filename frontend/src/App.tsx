@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Outlet } from "react-router-dom";
 import { RequireAuth } from "./auth";
 import { Sidebar } from "./components/Sidebar";
+import { TopBar } from "./components/TopBar";
 import { Dashboard } from "./pages/Dashboard";
 import { Delivery } from "./pages/Delivery";
 import { Pnl } from "./pages/Pnl";
@@ -17,6 +18,7 @@ function Layout() {
   return (
     <div className="app-shell">
       <Sidebar />
+      <TopBar />
       <div className="app-main">
         <Outlet />
       </div>

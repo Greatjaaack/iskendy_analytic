@@ -67,6 +67,38 @@ def labor_for_period(df: date, dt: date) -> dict[str, float]:
     return {k: round(v, 2) for k, v in out.items()}
 
 
+def labor_by_day(df: date, dt: date) -> dict[date, dict[str, float]]:
+    """ФОТ по дням за период (для подневной матрицы P&L): {дата: {'operational':₽,'admin':₽}}.
+
+    Та же логика, что `labor_for_period`, но без агрегации — нужна, чтобы посчитать
+    P&L на каждый день диапазона (неделя/месяц), а не только суммарно.
+    """
+    out: dict[date, dict[str, float]] = {}
+    d = df
+    while d <= dt:
+        out[d] = {"operational": 0.0, "admin": 0.0}
+        d += timedelta(days=1)
+    with SessionLocal() as db:
+        emps = {e.id: e for e in db.execute(select(Employee)).scalars() if e.active}
+        rows = db.execute(
+            select(Shift.employee_id, Shift.date).where(Shift.date >= df, Shift.date <= dt)
+        )
+        for eid, sdate in rows:
+            e = emps.get(eid)
+            if e and e.pay_type == "shift" and sdate in out:
+                grp = e.labor_group if e.labor_group in out[sdate] else "operational"
+                out[sdate][grp] += float(e.rate or 0)
+        month_emps = [e for e in emps.values() if e.pay_type == "month"]
+        d = df
+        while d <= dt:
+            dim = calendar.monthrange(d.year, d.month)[1]
+            for e in month_emps:
+                grp = e.labor_group if e.labor_group in out[d] else "operational"
+                out[d][grp] += float(e.rate or 0) / dim
+            d += timedelta(days=1)
+    return {k: {kk: round(vv, 2) for kk, vv in v.items()} for k, v in out.items()}
+
+
 @router.get("/employees")
 def list_employees():
     with SessionLocal() as db:
@@ -158,7 +190,12 @@ def toggle_shift(payload: dict):
 
 @router.get("/labor")
 def labor_summary(year: int = Query(...), month: int = Query(..., ge=1, le=12)):
-    """Сводка ФОТ за месяц (для страницы графика): операционный/админ/итого + смены."""
+    """Сводка ФОТ за месяц (для страницы графика): операционный/админ/итого + смены.
+
+    `total` — это ФОТ, который уходит в P&L (только операционный). Административный
+    ФОТ в P&L не идёт — он уже учтён как постоянные расходы (ручное поле в «Затраты»),
+    поэтому в `total` не суммируется (решение пользователя, во избежание задвоения).
+    """
     df = date(year, month, 1)
     dt = date(year, month, calendar.monthrange(year, month)[1])
     labor = labor_for_period(df, dt)
@@ -167,5 +204,5 @@ def labor_summary(year: int = Query(...), month: int = Query(..., ge=1, le=12)):
         "month": month,
         "operational": labor["operational"],
         "admin": labor["admin"],
-        "total": round(labor["operational"] + labor["admin"], 2),
+        "total": round(labor["operational"], 2),
     }
