@@ -27,6 +27,8 @@ import type {
   KpiByChannel,
   PaymentStructure,
   PnlCostsResponse,
+  PnlDayCostRow,
+  PnlDayCostsResponse,
   PnlReport,
   RangeSel,
   RevenueByChannel,
@@ -155,6 +157,21 @@ export const fetchPnlCosts = (year: number, month: number): Promise<PnlCostsResp
 
 export const savePnlCosts = (payload: Record<string, number>): Promise<{ ok: boolean }> =>
   api.put<{ ok: boolean }>("/api/pnl/costs", payload).then((r) => r.data);
+
+export const fetchPnlDayCosts = (dateFrom: string, dateTo: string): Promise<PnlDayCostsResponse> =>
+  api.get<PnlDayCostsResponse>(`/api/pnl/day-costs?date_from=${dateFrom}&date_to=${dateTo}`).then((r) => r.data);
+
+export const savePnlDayCosts = (days: PnlDayCostRow[]): Promise<{ ok: boolean }> =>
+  api.put<{ ok: boolean }>("/api/pnl/day-costs", { days }).then((r) => r.data);
+
+export interface PnlImportResult {
+  months: number;
+  imported: { year: number; month: number }[];
+  skipped: { year: number; month: number }[];
+}
+
+export const importPnlSheet = (): Promise<PnlImportResult> =>
+  api.post<PnlImportResult>("/api/pnl/import-sheet").then((r) => r.data);
 
 // ─── График и ФОТ ────────────────────────────────────────────────────────────
 export const fetchEmployees = (): Promise<Employee[]> =>

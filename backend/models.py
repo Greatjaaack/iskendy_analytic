@@ -380,6 +380,28 @@ class PnlMonth(Base):
     __table_args__ = (UniqueConstraint("year", "month", name="uq_pnl_year_month"),)
 
 
+class PnlDayCost(Base):
+    """Дневной слой затрат P&L: суммы переменных статей по конкретным дням.
+
+    Одна строка на дату. В отличие от `PnlMonth` (помесячная сумма, поделённая
+    поровну на дни), сюда вводятся ФАКТИЧЕСКИЕ суммы за день — чтобы ловить
+    всплески («списаний дохера в этот день», «упаковки улетело в космос»). Статьи:
+    списания / упаковка / химия-моющие / расходники (салфетки-перчатки). Если строки
+    за день нет — отчёт откатывается к помесячной аллокации `PnlMonth` (packaging/
+    writeoffs), а химия/расходники считаются нулём. `create_all` добавляет таблицу
+    без потери данных.
+    """
+
+    __tablename__ = "pnl_day_cost"
+
+    date = Column(String, primary_key=True)  # ISO YYYY-MM-DD
+    writeoffs = Column(Float, default=0.0)  # списания ₽ за день
+    packaging = Column(Float, default=0.0)  # упаковка ₽ за день
+    chemicals = Column(Float, default=0.0)  # химия / моющие ₽ за день
+    supplies = Column(Float, default=0.0)  # расходники (салфетки/перчатки) ₽ за день
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class Employee(Base):
     """Сотрудник для расчёта ФОТ из графика смен.
 

@@ -513,6 +513,79 @@ export interface PnlBreakeven {
   avg_rev_day: number;
 }
 
+/** Метрики одного дня подневной матрицы P&L — все статьи ₽ отдельными ключами
+ *  (зал/доставка не смешиваются). Долю от выручки дня фронт считает сам. */
+export interface PnlDay {
+  date: string;
+  day_of_week: string;
+  revenue: number;
+  revenue_hall: number;
+  revenue_delivery: number;
+  checks: number;
+  checks_hall: number;
+  checks_delivery: number;
+  agg_revenue: number;
+  food_cost: number;
+  writeoffs: number;
+  packaging: number;
+  chemicals: number;
+  supplies: number;
+  cogs: number;
+  labor: number;
+  rent: number;
+  utilities: number;
+  marketing: number;
+  admin_fot: number;
+  other_opex: number;
+  contingency: number;
+  cap_reserve: number;
+  tax: number;
+  aggregator: number;
+  total_expenses: number;
+  ebitda: number;
+  ebitda_margin: number;
+  food_cost_pct: number;
+  /** Сопоставимый день пред. периода — тот же день недели (пн↔пн, чт↔чт…). */
+  prev: PnlDay | null;
+}
+
+/** Ключ статьи-строки подневной матрицы — совпадает с ключом ₽ в PnlDay. */
+export type PnlDayKey =
+  | "revenue" | "revenue_hall" | "revenue_delivery" | "agg_revenue"
+  | "food_cost" | "writeoffs" | "packaging" | "cogs"
+  | "labor" | "chemicals" | "supplies"
+  | "rent" | "utilities" | "admin_fot" | "other_opex" | "contingency" | "cap_reserve"
+  | "tax" | "aggregator" | "total_expenses" | "ebitda";
+
+// ─── Дневные затраты (редактор «Затраты по дням») ─────────────────────────────
+export interface PnlDayCostRow {
+  date: string;
+  day_of_week: string;
+  has_row: boolean;
+  writeoffs: number;
+  packaging: number;
+  chemicals: number;
+  supplies: number;
+}
+
+export interface PnlDayCostsResponse {
+  date_from: string;
+  date_to: string;
+  fields: { key: string; label: string }[];
+  days: PnlDayCostRow[];
+}
+
+export interface PnlPrevSummary {
+  date_from: string;
+  date_to: string;
+  revenue: number;
+  revenue_hall: number;
+  revenue_delivery: number;
+  checks: number;
+  ebitda: number;
+  ebitda_margin: number;
+}
+
 export interface PnlReport {
   period: string;
   date_from: string;
@@ -524,6 +597,8 @@ export interface PnlReport {
   ebitda_margin: number;
   ebitda_rating: PnlRating;
   breakeven: PnlBreakeven;
+  prev_summary: PnlPrevSummary | null;
+  daily: PnlDay[];
   sections: PnlSection[];
 }
 

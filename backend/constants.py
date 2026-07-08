@@ -225,11 +225,12 @@ PNL_BENCHMARKS = {
     "writeoffs": {"dir": PNL_DIR_LOW, "good": 3, "warn": 5, "unit": "pct"},
     "food_cost": {"dir": PNL_DIR_LOW, "good": 27, "warn": 32, "unit": "pct"},
     "packaging": {"dir": PNL_DIR_LOW, "good": 2, "warn": 3, "unit": "pct"},
+    "chemicals": {"dir": PNL_DIR_LOW, "good": 1, "warn": 2, "unit": "pct"},
+    "supplies": {"dir": PNL_DIR_LOW, "good": 1, "warn": 2, "unit": "pct"},
     "cogs": {"dir": PNL_DIR_LOW, "good": 27, "warn": 32, "unit": "pct"},
     "labor_op": {"dir": PNL_DIR_LOW, "good": 23, "warn": 27, "unit": "pct"},
     "labor_admin": {"dir": PNL_DIR_LOW, "good": 6, "warn": 7, "unit": "pct"},
     "prime_cost": {"dir": PNL_DIR_LOW, "good": 48, "warn": 53, "unit": "pct"},
-    "all_labor": {"dir": PNL_DIR_LOW, "good": 24, "warn": 30, "unit": "pct"},
     "production_cost": {"dir": PNL_DIR_LOW, "good": 60, "warn": 65, "unit": "pct"},
     "rent": {"dir": PNL_DIR_LOW, "good": 8, "warn": 12, "unit": "pct"},
     "utilities": {"dir": PNL_DIR_LOW, "good": 4, "warn": 6, "unit": "pct"},
@@ -241,11 +242,14 @@ PNL_BENCHMARKS = {
 }
 
 # Ручные ₽-поля PnlMonth (месячная сумма, аллоцируется на день) и их подписи.
-# ФОТ здесь НЕТ — он собирается из графика смен (`routers/schedule.py`).
+# Операционный ФОТ здесь НЕТ — он из графика смен (`routers/schedule.py`).
+# АДМИН-ФОТ (`labor_admin`) — постоянный расход, вводится/импортируется отдельной
+# строкой (управляющий), отделён от «Прочие».
 PNL_MANUAL_FIELDS = [
     ("rent", "Аренда"),
     ("utilities", "Коммуналка"),
     ("marketing", "Маркетинг"),
+    ("labor_admin", "Админ. ФОТ (управляющий)"),
     ("other_opex", "Прочие (IT/ОФД/эквайринг/аморт.)"),
     ("packaging", "Упаковка"),
     ("writeoffs", "Списания"),
@@ -256,11 +260,22 @@ PNL_MANUAL_FIELDS = [
 # Переменные растут с продажами (food cost/упаковка/списания + авто налог и агрегатор),
 # постоянные — фикс на месяц (аренда + ФОТ из графика/…), уже оплачены независимо от
 # дневных продаж. ФОТ добавляется к постоянным отдельно (из графика, не из PnlMonth).
+# Дневные переменные статьи (вводятся по дням в `PnlDayCost`, а не помесячно).
+# packaging/writeoffs имеют помесячный резерв в `PnlMonth` (если за день нет строки),
+# chemicals/supplies — чисто дневные (помесячного поля нет, при отсутствии дня = 0).
+PNL_DAY_COST_FIELDS = [
+    ("writeoffs", "Списания"),
+    ("packaging", "Упаковка"),
+    ("chemicals", "Химия / моющие"),
+    ("supplies", "Расходники (салфетки/перчатки)"),
+]
+
 PNL_VARIABLE_MANUAL = ["packaging", "writeoffs"]
 PNL_FIXED_MANUAL = [
     "rent",
     "utilities",
     "marketing",
+    "labor_admin",
     "other_opex",
     "contingency",
     "cap_reserve",

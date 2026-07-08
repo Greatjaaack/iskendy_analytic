@@ -51,5 +51,10 @@ class Settings(BaseSettings):
     # определяется автоматически (probe по выручке: первая дата с продажами).
     history_start_date: date | None = None
 
+    # Google-таблица финансовой модели P&L (помесячные затраты/ставки). Импортируется
+    # кнопкой «Обновить из таблицы» — бэкенд тянет публичный xlsx-экспорт (таблица
+    # открыта «по ссылке»), парсит и заполняет `PnlMonth`. `pnl_sheet_id` — id документа.
+    pnl_sheet_id: str = "1RltnlXXNkskwYLoZocUJils_4oydj2iNj0M1jK2b9SY"
+
 
 settings = Settings()
