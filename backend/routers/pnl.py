@@ -728,6 +728,8 @@ async def get_pnl(
             }
 
         prev_rows = []
+        prev_marketing = 0.0  # маркетинг прош. периода — в дневной EBITDA его нет, а в
+        # KPI-дельте сравниваем с ИТОГОВОЙ (с маркетингом), поэтому вычтем отдельно
         for day in daily:
             pd_date = prev_map[day["date"]]
             row = prev_by_date.get(pd_date.isoformat())
@@ -741,6 +743,12 @@ async def get_pnl(
                     prev_day_costs,
                     prev_agg_by_day.get(row["date"], 0.0),
                 )
+                pm = prev_months.get((pd_date.year, pd_date.month)) or _default_month(
+                    pd_date.year, pd_date.month
+                )
+                prev_marketing += (
+                    pm["marketing"] / calendar.monthrange(pd_date.year, pd_date.month)[1]
+                )
                 day["prev"] = p
                 prev_rows.append(p)
             else:
@@ -748,6 +756,8 @@ async def get_pnl(
 
         if prev_rows:
             prev_revenue = sum(p["revenue"] for p in prev_rows)
+            # с маркетингом — сопоставимо с итоговой EBITDA текущего периода (хедер)
+            prev_ebitda = sum(p["ebitda"] for p in prev_rows) - prev_marketing
             prev_summary = {
                 "date_from": prange_from.isoformat(),
                 "date_to": prange_to.isoformat(),
@@ -755,11 +765,9 @@ async def get_pnl(
                 "revenue_hall": sum(p["revenue_hall"] for p in prev_rows),
                 "revenue_delivery": sum(p["revenue_delivery"] for p in prev_rows),
                 "checks": sum(p["checks"] for p in prev_rows),
-                "ebitda": sum(p["ebitda"] for p in prev_rows),
+                "ebitda": round(prev_ebitda, 0),
                 "ebitda_margin": (
-                    round(sum(p["ebitda"] for p in prev_rows) / prev_revenue * 100, 1)
-                    if prev_revenue
-                    else 0.0
+                    round(prev_ebitda / prev_revenue * 100, 1) if prev_revenue else 0.0
                 ),
             }
     else:

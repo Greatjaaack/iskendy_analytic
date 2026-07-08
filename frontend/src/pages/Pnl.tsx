@@ -23,9 +23,12 @@ function fmtMetric(l: PnlLine): string {
   return String(v);
 }
 
-/** Дельта в % между текущим и сопоставимым значением пред. периода (тот же день недели). */
+/** Дельта в % между текущим и сопоставимым значением пред. периода (тот же день недели).
+ *  Знаменатель — |prev|: направление берём по (cur − prev), иначе при отрицательной базе
+ *  (EBITDA у точки отрицательна каждый месяц) знак стрелки инвертируется — рост убытка
+ *  показывался бы зелёной ▲. Теперь cur > prev → «+» (лучше), cur < prev → «−» (хуже). */
 const delta = (cur: number, prev: number | null | undefined): number | null =>
-  prev == null || prev === 0 ? null : Math.round(((cur - prev) / prev) * 1000) / 10;
+  prev == null || prev === 0 ? null : Math.round(((cur - prev) / Math.abs(prev)) * 1000) / 10;
 
 function DeltaBadge({ d }: { d: number | null }) {
   if (d == null) return null;
