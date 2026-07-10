@@ -64,7 +64,7 @@ export function Delivery() {
     <div className="page" style={{ minHeight: "100vh", background: COLORS.bg, color: "var(--text)" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, marginBottom: 24 }}>
         <div>
-          <div style={{ fontSize: 22, fontWeight: 700 }}>🛵 Доставка</div>
+          <div style={{ fontSize: 22, fontWeight: 700 }}>Доставка</div>
           <div style={{ color: COLORS.muted, fontSize: 13, marginTop: 2 }}>
             Выручка, чеки и доля доставки в продажах
           </div>
@@ -79,7 +79,7 @@ export function Delivery() {
             );
           })}
           <button onClick={() => setShowCustom((v) => !v)} style={tabBtn(isCustom)}>
-            📅 Период
+            Период
           </button>
         </div>
       </div>

@@ -342,6 +342,104 @@ class DaypartPlan(Base):
     __table_args__ = (UniqueConstraint("daypart_key", "weekday_group", name="uq_daypart_group"),)
 
 
+class PnlMonth(Base):
+    """Ручной слой P&L: помесячные затраты и ставки для дашборда «P&L дня».
+
+    Одна строка на (год, месяц). Выручка/чеки/food-cost считаются автоматом из БД,
+    а сюда вводятся руками затраты, которые iiko не знает (аренда, ФОТ, маркетинг…).
+    В отчёте месячные ₽-суммы аллоцируются на день (÷ календарных дней месяца), поэтому
+    P&L честен для любого периода (день/неделя/MTD/диапазон). Ставки-% (налог, комиссия
+    агрегатора, мотивация) применяются к выручке. Структура и пороги — из P&L-модели
+    ресторана (Google Sheet). `create_all` добавляет таблицу без потери данных.
+    """
+
+    __tablename__ = "pnl_month"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    year = Column(Integer, index=True)
+    month = Column(Integer, index=True)  # 1..12
+    # ручные ₽-затраты за месяц
+    labor_op = Column(Float, default=0.0)  # операционный ФОТ
+    labor_admin = Column(Float, default=0.0)  # административный ФОТ
+    rent = Column(Float, default=0.0)  # аренда
+    utilities = Column(Float, default=0.0)  # коммуналка
+    marketing = Column(Float, default=0.0)  # маркетинг
+    other_opex = Column(Float, default=0.0)  # прочие (IT/ОФД/эквайринг/аморт.)
+    packaging = Column(Float, default=0.0)  # упаковка
+    writeoffs = Column(Float, default=0.0)  # списания ₽
+    contingency = Column(Float, default=0.0)  # непредвиденные
+    cap_reserve = Column(Float, default=0.0)  # кап-резерв
+    # ставки-% (от выручки / выручки доставки)
+    tax_pct = Column(Float, default=6.0)  # УСН
+    aggregator_pct = Column(Float, default=0.0)  # удержание агрегатора от выручки доставки
+    motivation_pct = Column(Float, default=15.0)  # мотивация управляющего-партнёра
+    # конфиг загрузки (для метрик выручка/час, чеков/час)
+    work_hours = Column(Integer, default=12)  # рабочих часов в день
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (UniqueConstraint("year", "month", name="uq_pnl_year_month"),)
+
+
+class PnlDayCost(Base):
+    """Дневной слой затрат P&L: суммы переменных статей по конкретным дням.
+
+    Одна строка на дату. В отличие от `PnlMonth` (помесячная сумма, поделённая
+    поровну на дни), сюда вводятся ФАКТИЧЕСКИЕ суммы за день — чтобы ловить
+    всплески («списаний дохера в этот день», «упаковки улетело в космос»). Статьи:
+    списания / упаковка / химия-моющие / расходники (салфетки-перчатки). Если строки
+    за день нет — отчёт откатывается к помесячной аллокации `PnlMonth` (packaging/
+    writeoffs), а химия/расходники считаются нулём. `create_all` добавляет таблицу
+    без потери данных.
+    """
+
+    __tablename__ = "pnl_day_cost"
+
+    date = Column(String, primary_key=True)  # ISO YYYY-MM-DD
+    writeoffs = Column(Float, default=0.0)  # списания ₽ за день
+    packaging = Column(Float, default=0.0)  # упаковка ₽ за день
+    chemicals = Column(Float, default=0.0)  # химия / моющие ₽ за день
+    supplies = Column(Float, default=0.0)  # расходники (салфетки/перчатки) ₽ за день
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class Employee(Base):
+    """Сотрудник для расчёта ФОТ из графика смен.
+
+    `labor_group` разводит ФОТ на операционный (кухня/касса) и административный
+    (управляющий) — как в P&L-модели. `pay_type`: «shift» (фикс за выход, стоимость
+    периода = число смен × rate) или «month» (оклад, аллоцируется ÷ дней месяца).
+    ФОТ дня/периода в P&L собирается из этих ставок и графика (`Shift`), заменяя
+    ручной ввод ФОТ. `create_all` добавляет таблицу без потери данных.
+    """
+
+    __tablename__ = "employees"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String, nullable=False)
+    role = Column(String, default="")  # роль (Повар/Кассир/Управляющий…)
+    labor_group = Column(String, default="operational")  # operational | admin
+    pay_type = Column(String, default="shift")  # shift | month
+    rate = Column(Float, default=0.0)  # ₽ за смену (shift) или ₽/мес (month)
+    active = Column(Boolean, default=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class Shift(Base):
+    """Смена: сотрудник (с pay_type=shift) вышел в конкретный день. Один выход = строка.
+
+    Оклад-сотрудники (pay_type=month) смен не имеют — их ФОТ аллоцируется по месяцу.
+    """
+
+    __tablename__ = "shifts"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    employee_id = Column(Integer, ForeignKey("employees.id"), index=True)
+    date = Column(Date, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (UniqueConstraint("employee_id", "date", name="uq_shift_emp_date"),)
+
+
 def init_db():
     # До-миграция ПРОИЗВОДНЫХ таблиц (order_items/dish_detail/orders): create_all не
     # добавляет колонки в существующую таблицу. Эти таблицы — снимок из iiko

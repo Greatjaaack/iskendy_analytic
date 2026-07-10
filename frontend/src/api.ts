@@ -14,6 +14,9 @@ import type {
   DishGroupBy,
   DishMapping,
   DishResponse,
+  Employee,
+  LaborSummary,
+  ShiftEntry,
   HourlyBreakdown,
   HourlyResponse,
   OpsReport,
@@ -23,6 +26,10 @@ import type {
   IngredientCard,
   KpiByChannel,
   PaymentStructure,
+  PnlCostsResponse,
+  PnlDayCostRow,
+  PnlDayCostsResponse,
+  PnlReport,
   RangeSel,
   RevenueByChannel,
   RevenueResponse,
@@ -141,6 +148,52 @@ export const savePlan = (cells: Record<string, PlanCell>): Promise<{ ok: boolean
 
 export const seedPlanFromHistory = (months = 2): Promise<{ ok: boolean; segments: number }> =>
   api.post<{ ok: boolean; segments: number }>(`/api/plan/seed-from-history?months=${months}`).then((r) => r.data);
+
+export const fetchPnl = (range: RangeSel): Promise<PnlReport> =>
+  api.get<PnlReport>(`/api/pnl?${rangeQS(range)}`).then((r) => r.data);
+
+export const fetchPnlCosts = (year: number, month: number): Promise<PnlCostsResponse> =>
+  api.get<PnlCostsResponse>(`/api/pnl/costs?year=${year}&month=${month}`).then((r) => r.data);
+
+export const savePnlCosts = (payload: Record<string, number>): Promise<{ ok: boolean }> =>
+  api.put<{ ok: boolean }>("/api/pnl/costs", payload).then((r) => r.data);
+
+export const fetchPnlDayCosts = (dateFrom: string, dateTo: string): Promise<PnlDayCostsResponse> =>
+  api.get<PnlDayCostsResponse>(`/api/pnl/day-costs?date_from=${dateFrom}&date_to=${dateTo}`).then((r) => r.data);
+
+export const savePnlDayCosts = (days: PnlDayCostRow[]): Promise<{ ok: boolean }> =>
+  api.put<{ ok: boolean }>("/api/pnl/day-costs", { days }).then((r) => r.data);
+
+export interface PnlImportResult {
+  months: number;
+  imported: { year: number; month: number }[];
+  skipped: { year: number; month: number }[];
+}
+
+export const importPnlSheet = (): Promise<PnlImportResult> =>
+  api.post<PnlImportResult>("/api/pnl/import-sheet").then((r) => r.data);
+
+// ─── График и ФОТ ────────────────────────────────────────────────────────────
+export const fetchEmployees = (): Promise<Employee[]> =>
+  api.get<Employee[]>("/api/schedule/employees").then((r) => r.data);
+
+export const createEmployee = (p: Partial<Employee>): Promise<Employee> =>
+  api.post<Employee>("/api/schedule/employees", p).then((r) => r.data);
+
+export const updateEmployee = (id: number, p: Partial<Employee>): Promise<Employee> =>
+  api.put<Employee>(`/api/schedule/employees/${id}`, p).then((r) => r.data);
+
+export const deleteEmployee = (id: number): Promise<{ ok: boolean }> =>
+  api.delete(`/api/schedule/employees/${id}`).then((r) => r.data);
+
+export const fetchShifts = (year: number, month: number): Promise<ShiftEntry[]> =>
+  api.get<ShiftEntry[]>(`/api/schedule/shifts?year=${year}&month=${month}`).then((r) => r.data);
+
+export const toggleShift = (employee_id: number, date: string): Promise<{ on: boolean }> =>
+  api.post<{ on: boolean }>("/api/schedule/shifts/toggle", { employee_id, date }).then((r) => r.data);
+
+export const fetchLabor = (year: number, month: number): Promise<LaborSummary> =>
+  api.get<LaborSummary>(`/api/schedule/labor?year=${year}&month=${month}`).then((r) => r.data);
 
 /** Запустить синхронизацию. `days>0` — лёгкий синк за последние N дней (автосинхронизация),
  *  без аргумента — полный синк (кнопка «Синхронизировать»). */

@@ -78,12 +78,35 @@ html, body {
 .app-main {
   flex: 1;
   min-width: 0;
+  /* Отступ сверху под фиксированную полосу иконок темы/выхода (.top-actions),
+     чтобы она не перекрывала собственные контролы страниц в правом верхнем углу. */
+  padding-top: 34px;
 }
 .menu-btn {
   display: none;
 }
 .sidebar-backdrop {
   display: none;
+}
+
+/* Иконки темы/выхода — фиксированы в правом верхнем углу, без рамок/фона */
+.top-actions {
+  position: fixed;
+  top: max(14px, env(safe-area-inset-top));
+  right: 16px;
+  z-index: 55;
+  display: flex;
+  gap: 14px;
+}
+.top-actions span {
+  cursor: pointer;
+  font-size: 19px;
+  line-height: 1;
+  opacity: 0.85;
+  user-select: none;
+}
+.top-actions span:hover {
+  opacity: 1;
 }
 
 @media (max-width: 768px) {

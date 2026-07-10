@@ -2,14 +2,12 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Outlet } from "react-router-dom";
 import { RequireAuth } from "./auth";
 import { Sidebar } from "./components/Sidebar";
+import { TopBar } from "./components/TopBar";
 import { Dashboard } from "./pages/Dashboard";
 import { Delivery } from "./pages/Delivery";
+import { Pnl } from "./pages/Pnl";
+import { Schedule } from "./pages/Schedule";
 import { Login } from "./pages/Login";
-import { Suppliers } from "./pages/Suppliers";
-import { SupplierCard } from "./pages/SupplierCard";
-import { NewSupplier } from "./pages/NewSupplier";
-import { Nomenclature } from "./pages/Nomenclature";
-import { TtkCard } from "./pages/TtkCard";
 import { QUERY_RETRY, STALE_TIME_MS } from "./constants";
 
 const queryClient = new QueryClient({
@@ -20,6 +18,7 @@ function Layout() {
   return (
     <div className="app-shell">
       <Sidebar />
+      <TopBar />
       <div className="app-main">
         <Outlet />
       </div>
@@ -42,11 +41,8 @@ export default function App() {
           >
             <Route path="/" element={<Dashboard />} />
             <Route path="/delivery" element={<Delivery />} />
-            <Route path="/suppliers" element={<Suppliers />} />
-            <Route path="/suppliers/new" element={<NewSupplier />} />
-            <Route path="/suppliers/:id" element={<SupplierCard />} />
-            <Route path="/nomenclature" element={<Nomenclature />} />
-            <Route path="/ttk/:id" element={<TtkCard />} />
+            <Route path="/pnl" element={<Pnl />} />
+            <Route path="/schedule" element={<Schedule />} />
           </Route>
         </Routes>
       </BrowserRouter>

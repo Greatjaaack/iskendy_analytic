@@ -210,3 +210,83 @@ PAYMENT_GROUP_ORDER = (PAYMENT_CARD, PAYMENT_CASH, PAYMENT_AGGREGATOR, PAYMENT_O
 
 # Поле-идентификатор заказа в OLAP SALES (для связи блюд заказа с его «Статусом»).
 OLAP_FIELD_ORDER_NUM = "OrderNum"
+
+# ── P&L дня ────────────────────────────────────────────────────────────────
+# Бенчмарки строк P&L из финансовой модели ресторана (Google Sheet). Для каждой
+# строки: dir — «low» (меньше = лучше) или «high» (больше = лучше), good/warn —
+# границы зелёного/жёлтого (иначе красный), unit — «pct» (доля выручки) или «rub».
+# Раскраска: dir=low → ≤good зелёный, ≤warn жёлтый, иначе красный; dir=high наоборот.
+PNL_DIR_LOW = "low"
+PNL_DIR_HIGH = "high"
+PNL_BENCHMARKS = {
+    "avg_check": {"dir": PNL_DIR_HIGH, "good": 600, "warn": 500, "unit": "rub"},
+    "checks_per_day": {"dir": PNL_DIR_HIGH, "good": 110, "warn": 90, "unit": "num"},
+    "checks_per_hour": {"dir": PNL_DIR_HIGH, "good": 10, "warn": 7, "unit": "num"},
+    "writeoffs": {"dir": PNL_DIR_LOW, "good": 3, "warn": 5, "unit": "pct"},
+    "food_cost": {"dir": PNL_DIR_LOW, "good": 27, "warn": 32, "unit": "pct"},
+    "packaging": {"dir": PNL_DIR_LOW, "good": 2, "warn": 3, "unit": "pct"},
+    "chemicals": {"dir": PNL_DIR_LOW, "good": 1, "warn": 2, "unit": "pct"},
+    "supplies": {"dir": PNL_DIR_LOW, "good": 1, "warn": 2, "unit": "pct"},
+    "cogs": {"dir": PNL_DIR_LOW, "good": 27, "warn": 32, "unit": "pct"},
+    "labor_op": {"dir": PNL_DIR_LOW, "good": 23, "warn": 27, "unit": "pct"},
+    "labor_admin": {"dir": PNL_DIR_LOW, "good": 6, "warn": 7, "unit": "pct"},
+    "prime_cost": {"dir": PNL_DIR_LOW, "good": 48, "warn": 53, "unit": "pct"},
+    "production_cost": {"dir": PNL_DIR_LOW, "good": 60, "warn": 65, "unit": "pct"},
+    "rent": {"dir": PNL_DIR_LOW, "good": 8, "warn": 12, "unit": "pct"},
+    "utilities": {"dir": PNL_DIR_LOW, "good": 4, "warn": 6, "unit": "pct"},
+    "marketing": {"dir": PNL_DIR_LOW, "good": 5, "warn": 7, "unit": "pct"},
+    "other_opex": {"dir": PNL_DIR_LOW, "good": 6, "warn": 8, "unit": "pct"},
+    "contingency": {"dir": PNL_DIR_LOW, "good": 2, "warn": 3, "unit": "pct"},
+    "all_expenses": {"dir": PNL_DIR_LOW, "good": 80, "warn": 90, "unit": "pct"},
+    "ebitda_margin": {"dir": PNL_DIR_HIGH, "good": 18, "warn": 10, "unit": "pct"},
+    # чистая маржа (после налога УСН и кап-резерва) — ниже EBITDA-порога: типичная
+    # чистая рентабельность общепита 5–10 %
+    "net_margin": {"dir": PNL_DIR_HIGH, "good": 10, "warn": 5, "unit": "pct"},
+}
+
+# Ручные ₽-поля PnlMonth (месячная сумма, аллоцируется на день) и их подписи.
+# Операционный ФОТ здесь НЕТ — он из графика смен (`routers/schedule.py`).
+# АДМИН-ФОТ (`labor_admin`) — постоянный расход, вводится/импортируется отдельной
+# строкой (управляющий), отделён от «Прочие».
+PNL_MANUAL_FIELDS = [
+    ("rent", "Аренда"),
+    ("utilities", "Коммуналка"),
+    ("marketing", "Маркетинг"),
+    ("labor_admin", "Админ. ФОТ (управляющий)"),
+    ("other_opex", "Прочие (IT/ОФД/эквайринг/аморт.)"),
+    ("packaging", "Упаковка"),
+    ("writeoffs", "Списания"),
+    ("contingency", "Непредвиденные"),
+    ("cap_reserve", "Кап-резерв"),
+]
+# Классификация затрат для маржинального анализа (contribution margin + безубыточность).
+# Переменные растут с продажами (food cost/упаковка/списания + авто налог и агрегатор),
+# постоянные — фикс на месяц (аренда + ФОТ из графика/…), уже оплачены независимо от
+# дневных продаж. ФОТ добавляется к постоянным отдельно (из графика, не из PnlMonth).
+# Дневные переменные статьи (вводятся по дням в `PnlDayCost`, а не помесячно).
+# packaging/writeoffs имеют помесячный резерв в `PnlMonth` (если за день нет строки),
+# chemicals/supplies — чисто дневные (помесячного поля нет, при отсутствии дня = 0).
+PNL_DAY_COST_FIELDS = [
+    ("writeoffs", "Списания"),
+    ("packaging", "Упаковка"),
+    ("chemicals", "Химия / моющие"),
+    ("supplies", "Расходники (салфетки/перчатки)"),
+]
+
+PNL_VARIABLE_MANUAL = ["packaging", "writeoffs"]
+PNL_FIXED_MANUAL = [
+    "rent",
+    "utilities",
+    "marketing",
+    "labor_admin",
+    "other_opex",
+    "contingency",
+    "cap_reserve",
+]
+
+# Ставки-% и конфиг PnlMonth (не аллоцируются, применяются к выручке / берутся как есть).
+PNL_RATE_FIELDS = [
+    ("tax_pct", "Налог (УСН), %"),
+    ("aggregator_pct", "Удержание агрегатора, %"),
+    ("work_hours", "Рабочих часов в день"),
+]

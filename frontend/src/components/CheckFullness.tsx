@@ -92,7 +92,7 @@ export function CheckFullness({ range, withDelivery = true }: Props) {
 
           {singleShare > 0 && (
             <div style={{ color: "var(--text)", fontSize: 12, marginTop: 8, padding: "8px 12px", background: "var(--bg)", borderRadius: 8, borderLeft: `3px solid ${COLORS.accent}` }}>
-              💡 Чеки на 1 позицию — <b>{singleShare}%</b> от всех
+              Чеки на 1 позицию — <b>{singleShare}%</b> от всех
               {peak && <> · пик в <b>{peak.label}</b> ({Math.round(peak.sh * 100)}%)</>}. Часы с одиночными чеками — потенциал апсейла.
             </div>
           )}

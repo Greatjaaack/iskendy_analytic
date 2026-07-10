@@ -484,3 +484,159 @@ export interface DishMapping {
   ttk_name: string | null;
   cost_full: number | null;
 }
+
+// ─── P&L дня ─────────────────────────────────────────────────────────────────
+export type PnlRating = "green" | "yellow" | "red" | null;
+
+export interface PnlLine {
+  key: string;
+  label: string;
+  kind: "money" | "metric";
+  rub?: number;
+  pct?: number;
+  value?: number | null;
+  unit?: "rub" | "num" | "pct";
+  rating: PnlRating;
+}
+
+export interface PnlSection {
+  key: string;
+  label: string;
+  lines: PnlLine[];
+}
+
+export interface PnlBreakeven {
+  cm_ratio: number;
+  fixed_month: number;
+  revenue_month: number | null;
+  revenue_day: number | null;
+  avg_rev_day: number;
+}
+
+/** Метрики одного дня подневной матрицы P&L — все статьи ₽ отдельными ключами
+ *  (зал/доставка не смешиваются). Долю от выручки дня фронт считает сам. */
+export interface PnlDay {
+  date: string;
+  day_of_week: string;
+  revenue: number;
+  revenue_hall: number;
+  revenue_delivery: number;
+  checks: number;
+  checks_hall: number;
+  checks_delivery: number;
+  agg_revenue: number;
+  food_cost: number;
+  writeoffs: number;
+  packaging: number;
+  chemicals: number;
+  supplies: number;
+  cogs: number;
+  labor: number;
+  rent: number;
+  utilities: number;
+  marketing: number;
+  admin_fot: number;
+  other_opex: number;
+  contingency: number;
+  cap_reserve: number;
+  tax: number;
+  aggregator: number;
+  total_expenses: number;
+  ebitda: number;
+  net_profit: number;
+  ebitda_margin: number;
+  food_cost_pct: number;
+  /** Сопоставимый день пред. периода — тот же день недели (пн↔пн, чт↔чт…). */
+  prev: PnlDay | null;
+}
+
+/** Ключ статьи-строки подневной матрицы — совпадает с ключом ₽ в PnlDay. */
+export type PnlDayKey =
+  | "revenue" | "revenue_hall" | "revenue_delivery" | "agg_revenue"
+  | "food_cost" | "writeoffs" | "packaging" | "cogs"
+  | "labor" | "chemicals" | "supplies"
+  | "rent" | "utilities" | "admin_fot" | "other_opex" | "contingency" | "cap_reserve"
+  | "tax" | "aggregator" | "total_expenses" | "ebitda" | "net_profit";
+
+// ─── Дневные затраты (редактор «Затраты по дням») ─────────────────────────────
+export interface PnlDayCostRow {
+  date: string;
+  day_of_week: string;
+  has_row: boolean;
+  writeoffs: number;
+  packaging: number;
+  chemicals: number;
+  supplies: number;
+}
+
+export interface PnlDayCostsResponse {
+  date_from: string;
+  date_to: string;
+  fields: { key: string; label: string }[];
+  days: PnlDayCostRow[];
+}
+
+export interface PnlPrevSummary {
+  date_from: string;
+  date_to: string;
+  revenue: number;
+  revenue_hall: number;
+  revenue_delivery: number;
+  checks: number;
+  ebitda: number;
+  ebitda_margin: number;
+  net_profit: number;
+  net_margin: number;
+}
+
+export interface PnlReport {
+  period: string;
+  date_from: string;
+  date_to: string;
+  active_days: number;
+  has_costs: boolean;
+  revenue: number;
+  ebitda: number;
+  ebitda_margin: number;
+  ebitda_rating: PnlRating;
+  net_profit: number;
+  net_margin: number;
+  net_rating: PnlRating;
+  breakeven: PnlBreakeven;
+  prev_summary: PnlPrevSummary | null;
+  daily: PnlDay[];
+  sections: PnlSection[];
+}
+
+export interface PnlCostsResponse {
+  values: Record<string, number>;
+  manual_fields: { key: string; label: string }[];
+  rate_fields: { key: string; label: string }[];
+}
+
+// ─── График и ФОТ ────────────────────────────────────────────────────────────
+export type LaborGroup = "operational" | "admin";
+export type PayType = "shift" | "month";
+
+export interface Employee {
+  id: number;
+  name: string;
+  role: string;
+  labor_group: LaborGroup;
+  pay_type: PayType;
+  rate: number;
+  active: boolean;
+}
+
+export interface ShiftEntry {
+  employee_id: number;
+  date: string;
+}
+
+export interface LaborSummary {
+  year: number;
+  month: number;
+  operational: number;
+  admin: number;
+  total: number;
+}
