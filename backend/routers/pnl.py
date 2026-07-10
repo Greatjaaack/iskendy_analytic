@@ -60,7 +60,7 @@ from constants import (
 )
 from models import PnlDayCost, PnlMonth, SessionLocal
 from routers.revenue import _days_from_db, _days_live, _load_days
-from routers.schedule import labor_by_day, labor_for_period
+from routers.schedule import labor_by_day, labor_for_period, operational_shifts
 from services.delivery import delivery_buckets
 from utils import period_range
 
@@ -290,17 +290,39 @@ def save_day_costs(payload: dict):
     return {"ok": True}
 
 
-async def _total_guests(df: date, dt: date) -> float:
-    """Всего гостей за период (гости — атрибут заказа, MAX на заказ в order_store)."""
+async def _hall_guests(df: date, dt: date) -> float:
+    """Гостей ЗАЛА за период (гости — атрибут заказа, MAX на заказ).
+
+    Считаем только по заказам зала: у доставки поле «гости» недостоверно (часто 0/1),
+    поэтому «средний чек на гостя» имеет смысл лишь для зала. Доставочные заказы
+    (хотя бы одна позиция с `is_delivery`) исключаем целиком.
+    """
+    from constants import OLAP_FIELD_DISH_CATEGORY, OLAP_FIELD_DISH_NAME
+    from services.olap_parse import split_field_4
     from services.order_store import order_rows
+    from utils import is_delivery
 
     rows = await order_rows(
-        group_fields=[OLAP_FIELD_OPEN_DATE, OLAP_FIELD_ORDER_NUM],
+        group_fields=[
+            OLAP_FIELD_OPEN_DATE,
+            OLAP_FIELD_ORDER_NUM,
+            OLAP_FIELD_DISH_CATEGORY,
+            OLAP_FIELD_DISH_NAME,
+        ],
         data_fields=[OLAP_FIELD_GUESTS],
         date_from=df.isoformat(),
         date_to=dt.isoformat(),
     )
-    return sum(float(r.get("field1", {}).get("value", 0) or 0) for r in rows)
+    order_guests: dict[tuple[str, str], float] = {}
+    order_is_delivery: dict[tuple[str, str], bool] = {}
+    for r in rows:
+        d_str, ordernum, category, name = split_field_4(r.get("field0", {}).get("value", ""))
+        okey = (d_str, ordernum)
+        g = float(r.get("field1", {}).get("value", 0) or 0)
+        order_guests[okey] = max(order_guests.get(okey, 0.0), g)
+        if is_delivery(category, name):
+            order_is_delivery[okey] = True
+    return sum(g for k, g in order_guests.items() if not order_is_delivery.get(k))
 
 
 def _channel_totals(days: list[dict], del_buckets: dict[str, dict]) -> dict[str, dict]:
@@ -456,7 +478,7 @@ async def get_pnl(
     food_cost_rub = sum(d["cost_sum"] for d in days)
     active_days = sum(1 for d in days if d["total_sum"] > 0) or 1
 
-    guests = await _total_guests(df, dt)
+    hall_guests = await _hall_guests(df, dt)
     del_buckets = await delivery_buckets(df, dt, OLAP_FIELD_OPEN_DATE)
     channels = _channel_totals(days, del_buckets)
     hall_rub, delivery_rub = channels["hall"]["revenue"], channels["delivery"]["revenue"]
@@ -593,11 +615,19 @@ async def get_pnl(
     breakeven_day = breakeven_month / op_days_month if (breakeven_month and op_days_month) else None
     avg_rev_day = revenue / active_days
 
+    # ── производительность труда (Sales per Labor Hour) ──
+    # человеко-часы ≈ операционные смены × часов в смене (rate_m["work_hours"]).
+    op_shifts = operational_shifts(df, dt)
+    labor_hours = op_shifts * work_hours
+    sales_per_labor_hour = revenue / labor_hours if labor_hours else 0
+    all_labor = labor_op + labor_admin_rub  # весь ФОТ (операц. + админ)
+
     # ── метрики загрузки — зал и доставка раздельно, нигде не смешиваем (#5) ──
     avg_check = revenue / checks if checks else 0
     avg_check_hall = hall_rub / checks_hall if checks_hall else 0
     avg_check_delivery = delivery_rub / checks_delivery if checks_delivery else 0
-    avg_check_guest = revenue / guests if guests else 0
+    # средний чек на гостя — только зал (у доставки «гости» недостоверны, см. _hall_guests)
+    avg_check_guest = hall_rub / hall_guests if hall_guests else 0
     checks_per_day = checks / active_days
     checks_per_day_hall = checks_hall / active_days
     checks_per_day_delivery = checks_delivery / active_days
@@ -643,19 +673,25 @@ async def get_pnl(
         metric("avg_check", "Средний чек", avg_check, "rub"),
         metric("avg_check_hall", "— Зал", avg_check_hall, "rub"),
         metric("avg_check_delivery", "— Доставка", avg_check_delivery, "rub"),
-        metric("avg_check_guest", "Средний чек на гостя", avg_check_guest, "rub"),
+        metric("avg_check_guest", "Средний чек на гостя (зал)", avg_check_guest, "rub"),
         metric("checks_per_day", "Чеков / день", checks_per_day, "num"),
         metric("checks_per_day_hall", "— Зал", checks_per_day_hall, "num"),
         metric("checks_per_day_delivery", "— Доставка", checks_per_day_delivery, "num"),
-        metric("checks_per_hour", "Чеков / час", checks_per_hour, "num"),
+        metric("checks_per_hour", "Чеков / час (средн.)", checks_per_hour, "num"),
         metric("checks_per_hour_hall", "— Зал", checks_per_hour_hall, "num"),
         metric("checks_per_hour_delivery", "— Доставка", checks_per_hour_delivery, "num"),
         metric("revenue_per_day", "Выручка / день", revenue_per_day, "rub"),
         metric("revenue_per_day_hall", "— Зал", revenue_per_day_hall, "rub"),
         metric("revenue_per_day_delivery", "— Доставка", revenue_per_day_delivery, "rub"),
-        metric("revenue_per_hour", "Выручка / час", revenue_per_hour, "rub"),
+        metric("revenue_per_hour", "Выручка / час (средн.)", revenue_per_hour, "rub"),
         metric("revenue_per_hour_hall", "— Зал", revenue_per_hour_hall, "rub"),
         metric("revenue_per_hour_delivery", "— Доставка", revenue_per_hour_delivery, "rub"),
+        metric(
+            "sales_per_labor_hour",
+            f"Выручка на человеко-час ({op_shifts} смен × {work_hours} ч)",
+            sales_per_labor_hour if labor_hours else None,
+            "rub",
+        ),
     ]
 
     production = [
@@ -664,8 +700,9 @@ async def get_pnl(
         money("packaging", "Упаковка", packaging),
         money("cogs", "COGS (себестоимость товара)", cogs),
         money("labor_op", "ФОТ (операционный)", labor_op),
-        money("prime_cost", "Prime cost (COGS + операц. ФОТ)", prime_cost),
         money("labor_admin", "— в т.ч. админ. ФОТ (в OPEX)", labor_admin_rub, rated=False),
+        money("all_labor", "Весь ФОТ (операц. + админ)", all_labor),
+        money("prime_cost", "Prime cost (COGS + операц. ФОТ)", prime_cost),
         money("production_cost", "Себестоимость производства (COGS + весь ФОТ)", production_cost),
     ]
 

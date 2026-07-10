@@ -38,9 +38,10 @@ function WarnBox({ children }: { children: React.ReactNode }) {
 const rateColor = (r: PnlRating): string | null =>
   r === "green" ? COLORS.good : r === "yellow" ? COLORS.warn : r === "red" ? COLORS.bad : null;
 
-/** Значение метрики (не-денежной строки) в человекочитаемом виде. */
+/** Значение метрики (не-денежной строки) в человекочитаемом виде. «—» если нет данных. */
 function fmtMetric(l: PnlLine): string {
-  const v = l.value ?? 0;
+  if (l.value == null) return "—"; // нет данных (напр. безубыточность без затрат, SPLH без смен)
+  const v = l.value;
   if (l.unit === "rub") return fmtRub(v);
   if (l.unit === "num") return new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 1 }).format(v);
   return String(v);
