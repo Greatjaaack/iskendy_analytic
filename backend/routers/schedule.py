@@ -105,6 +105,26 @@ def labor_by_day(df: date, dt: date) -> dict[date, dict[str, float]]:
     return {k: {kk: round(vv, 2) for kk, vv in v.items()} for k, v in out.items()}
 
 
+def operational_shifts(df: date, dt: date) -> int:
+    """Число ОПЕРАЦИОННЫХ смен (человеко-дней) в периоде — для производительности труда.
+
+    Считает выходы сотрудников с оплатой «за смену» и группой operational (кухня/касса).
+    Каждая смена ≈ рабочий день одного человека; человеко-часы = смены × часов в смене.
+    Окладники (управляющий) сюда не входят — производительность меряем по операционке.
+    """
+    with SessionLocal() as db:
+        emps = {e.id: e for e in db.execute(select(Employee)).scalars()}
+        rows = db.execute(
+            select(Shift.employee_id).where(Shift.date >= df, Shift.date <= dt)
+        ).scalars()
+        n = 0
+        for eid in rows:
+            e = emps.get(eid)
+            if e and e.pay_type == "shift" and (e.labor_group or "operational") == "operational":
+                n += 1
+        return n
+
+
 @router.get("/employees")
 def list_employees():
     with SessionLocal() as db:

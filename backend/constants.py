@@ -230,6 +230,8 @@ PNL_BENCHMARKS = {
     "cogs": {"dir": PNL_DIR_LOW, "good": 27, "warn": 32, "unit": "pct"},
     "labor_op": {"dir": PNL_DIR_LOW, "good": 23, "warn": 27, "unit": "pct"},
     "labor_admin": {"dir": PNL_DIR_LOW, "good": 6, "warn": 7, "unit": "pct"},
+    # весь ФОТ (операц. + админ) % от выручки — метрика «All Labor» из модели
+    "all_labor": {"dir": PNL_DIR_LOW, "good": 24, "warn": 29, "unit": "pct"},
     "prime_cost": {"dir": PNL_DIR_LOW, "good": 48, "warn": 53, "unit": "pct"},
     "production_cost": {"dir": PNL_DIR_LOW, "good": 60, "warn": 65, "unit": "pct"},
     "rent": {"dir": PNL_DIR_LOW, "good": 8, "warn": 12, "unit": "pct"},
