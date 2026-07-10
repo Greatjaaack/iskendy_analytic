@@ -40,7 +40,11 @@ def labor_for_period(df: date, dt: date) -> dict[str, float]:
     """
     out = {"operational": 0.0, "admin": 0.0}
     with SessionLocal() as db:
-        emps = {e.id: e for e in db.execute(select(Employee)).scalars() if e.active}
+        # ВСЕ сотрудники (в т.ч. неактивные): смена — это факт, её отработали и оплатили,
+        # поэтому сменный ФОТ считаем по всем, у кого есть смены в периоде. Иначе пометка
+        # «неактивен» задним числом стирала бы их ФОТ из ПРОШЛЫХ периодов (EBITDA скакала
+        # бы вверх). `active` ограничивает только окладников (см. ниже).
+        emps = {e.id: e for e in db.execute(select(Employee)).scalars()}
         # shift: считаем смены в диапазоне
         rows = db.execute(
             select(Shift.employee_id).where(Shift.date >= df, Shift.date <= dt)
@@ -54,8 +58,8 @@ def labor_for_period(df: date, dt: date) -> dict[str, float]:
                 out[e.labor_group if e.labor_group in out else "operational"] += cnt * float(
                     e.rate or 0
                 )
-        # month (оклад): аллоцируем по дням периода
-        month_emps = [e for e in emps.values() if e.pay_type == "month"]
+        # month (оклад): только активные — уволенный окладник больше не начисляется
+        month_emps = [e for e in emps.values() if e.pay_type == "month" and e.active]
         if month_emps:
             d = df
             while d <= dt:
@@ -79,7 +83,9 @@ def labor_by_day(df: date, dt: date) -> dict[date, dict[str, float]]:
         out[d] = {"operational": 0.0, "admin": 0.0}
         d += timedelta(days=1)
     with SessionLocal() as db:
-        emps = {e.id: e for e in db.execute(select(Employee)).scalars() if e.active}
+        # ВСЕ сотрудники (в т.ч. неактивные) — сменный ФОТ по факту смен (см.
+        # labor_for_period); `active` ограничивает только окладников.
+        emps = {e.id: e for e in db.execute(select(Employee)).scalars()}
         rows = db.execute(
             select(Shift.employee_id, Shift.date).where(Shift.date >= df, Shift.date <= dt)
         )
@@ -88,7 +94,7 @@ def labor_by_day(df: date, dt: date) -> dict[date, dict[str, float]]:
             if e and e.pay_type == "shift" and sdate in out:
                 grp = e.labor_group if e.labor_group in out[sdate] else "operational"
                 out[sdate][grp] += float(e.rate or 0)
-        month_emps = [e for e in emps.values() if e.pay_type == "month"]
+        month_emps = [e for e in emps.values() if e.pay_type == "month" and e.active]
         d = df
         while d <= dt:
             dim = calendar.monthrange(d.year, d.month)[1]
