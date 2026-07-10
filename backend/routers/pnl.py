@@ -817,12 +817,27 @@ async def get_pnl(
         for day in daily:
             day["prev"] = None
 
+    # ── Диагностика неполных данных (чтобы отчёт не врал в плюс молча) ──
+    # ФОТ берётся из графика смен: день с выручкой, но без единой смены → labor=0 и
+    # EBITDA завышена. Считаем такие дни, чтобы фронт показал предупреждение.
+    labor_missing_days = sum(1 for d in daily if d["revenue"] > 0 and d["labor"] == 0)
+    # Постоянные затраты (PnlMonth) заданы помесячно: месяцы периода без строки дают
+    # нулевые аренду/коммуналку/… — недооценка расходов. Собираем непокрытые месяцы.
+    period_months = set()
+    d = df
+    while d <= dt:
+        period_months.add((d.year, d.month))
+        d += timedelta(days=1)
+    costs_missing_months = [f"{y:04d}-{m:02d}" for (y, m) in sorted(period_months - set(months))]
+
     return {
         "period": "custom" if is_custom else period,
         "date_from": df.isoformat(),
         "date_to": dt.isoformat(),
         "active_days": active_days,
         "has_costs": bool(months) or bool(day_costs),
+        "labor_missing_days": labor_missing_days,
+        "costs_missing_months": costs_missing_months,
         "aggregator_estimated": agg_estimated,
         "revenue": round(revenue, 0),
         "ebitda": round(ebitda, 0),

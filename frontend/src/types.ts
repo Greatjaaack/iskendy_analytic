@@ -595,6 +595,8 @@ export interface PnlReport {
   date_to: string;
   active_days: number;
   has_costs: boolean;
+  labor_missing_days: number; // дней с выручкой, но без заведённого ФОТ (график смен)
+  costs_missing_months: string[]; // «YYYY-MM» месяцев периода без постоянных затрат
   revenue: number;
   ebitda: number;
   ebitda_margin: number;
