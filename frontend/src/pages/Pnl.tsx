@@ -11,6 +11,29 @@ import { COLORS, PERIODS, weekdayGroup } from "../constants";
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const fmtRub = (n: number | undefined) => `${fmtInt(n ?? 0)} ₽`;
 
+const MONTHS_RU = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
+/** «2026-07» → «июл 2026». */
+const ymRu = (ym: string): string => {
+  const [y, m] = ym.split("-");
+  return `${MONTHS_RU[Number(m) - 1] ?? m} ${y}`;
+};
+/** Русское склонение существительного по числу (день/дня/дней). */
+const plur = (n: number, one: string, few: string, many: string): string => {
+  const m10 = n % 10, m100 = n % 100;
+  if (m10 === 1 && m100 !== 11) return one;
+  if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return few;
+  return many;
+};
+
+/** Жёлтый бейдж-предупреждение о неполных данных P&L. */
+function WarnBox({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{ background: COLORS.card, border: `1px solid ${COLORS.warn}`, borderRadius: 8, padding: "10px 14px", color: COLORS.warn, fontSize: 13, marginBottom: 16 }}>
+      {children}
+    </div>
+  );
+}
+
 /** Цвет бенчмарка строки. */
 const rateColor = (r: PnlRating): string | null =>
   r === "green" ? COLORS.good : r === "yellow" ? COLORS.warn : r === "red" ? COLORS.bad : null;
@@ -151,6 +174,18 @@ export function Pnl() {
             <div style={{ background: COLORS.card, border: `1px solid ${COLORS.warn}`, borderRadius: 8, padding: "10px 14px", color: COLORS.warn, fontSize: 13, marginBottom: 16 }}>
               Затраты за этот период ещё не введены — заполните их через «Затраты за месяц» (аренда, ФОТ…) и «Затраты по дням» (списания, упаковка, химия), иначе видно только выручку и food cost.
             </div>
+          )}
+
+          {/* Предупреждения о неполных данных — иначе EBITDA завышена молча */}
+          {data.labor_missing_days > 0 && (
+            <WarnBox>
+              ФОТ не заведён за <b>{data.labor_missing_days}</b> {plur(data.labor_missing_days, "день", "дня", "дней")} с выручкой — за эти дни зарплата считается нулём, поэтому EBITDA и чистая прибыль <b>завышены</b>. Отметьте смены в разделе «График и ФОТ».
+            </WarnBox>
+          )}
+          {data.has_costs && data.costs_missing_months.length > 0 && (
+            <WarnBox>
+              Постоянные затраты (аренда, коммуналка, админ-ФОТ…) не заданы за: <b>{data.costs_missing_months.map(ymRu).join(", ")}</b> — за эти месяцы расходы недооценены, прибыль завышена. Заполните «Затраты за месяц» или «Обновить из таблицы».
+            </WarnBox>
           )}
 
           {/* Хедер: EBITDA → Чистая прибыль + вердикт по безубыточности */}
