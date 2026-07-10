@@ -239,6 +239,9 @@ PNL_BENCHMARKS = {
     "contingency": {"dir": PNL_DIR_LOW, "good": 2, "warn": 3, "unit": "pct"},
     "all_expenses": {"dir": PNL_DIR_LOW, "good": 80, "warn": 90, "unit": "pct"},
     "ebitda_margin": {"dir": PNL_DIR_HIGH, "good": 18, "warn": 10, "unit": "pct"},
+    # чистая маржа (после налога УСН и кап-резерва) — ниже EBITDA-порога: типичная
+    # чистая рентабельность общепита 5–10 %
+    "net_margin": {"dir": PNL_DIR_HIGH, "good": 10, "warn": 5, "unit": "pct"},
 }
 
 # Ручные ₽-поля PnlMonth (месячная сумма, аллоцируется на день) и их подписи.

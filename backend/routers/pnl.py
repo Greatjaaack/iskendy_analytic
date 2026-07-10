@@ -7,6 +7,15 @@
 MTD/диапазона). Ставки-% (налог УСН, комиссия агрегатора, мотивация) применяются к
 выручке. Каждая строка раскрашивается по бенчмаркам `PNL_BENCHMARKS`.
 
+**Лесенка прибыли** (корректная трактовка EBITDA): EBITDA = выручка − себестоимость
+производства (COGS + операционный ФОТ) − операционный OPEX (аренда/коммуналка/админ-ФОТ/
+маркетинг/прочие/непредвиденные/химия/расходники/комиссия агрегатора) — то есть ДО
+налога УСН и кап-резерва. Ниже: `EBITDA − Налог (УСН) − Кап-резерв = Чистая прибыль`
+(`net_profit`/`net_margin`, бенчмарк `net_margin`). **Амортизация** отдельной строкой не
+выделена — в исходной модели она зашита в «Прочие» (`other_opex`) и остаётся над EBITDA
+(нет отдельной цифры, чтобы её вычесть; добавить строку «Амортизация ₽» в таблицу — и
+можно будет разнести). Налог/кап-резерв — единственное, что отделено под EBITDA.
+
 Переменные статьи (списания/упаковка/химия/расходники) вводятся ПО ДНЯМ
 (`PnlDayCost`, редактор «Затраты по дням») — чтобы ловить дневные всплески; при
 отсутствии дневной строки packaging/writeoffs откатываются к помесячному резерву
@@ -390,20 +399,13 @@ def _day_pnl(
     cap_reserve = m["cap_reserve"] / dim
     tax = revenue * m["tax_pct"] / 100
     aggregator = agg_rev * m["aggregator_pct"] / 100
+    # операционный OPEX дня (над EBITDA) — БЕЗ налога, кап-резерва и маркетинга
     opex = (
-        chemicals
-        + supplies
-        + rent
-        + utilities
-        + admin_fot
-        + other_opex
-        + contingency
-        + cap_reserve
-        + tax
-        + aggregator
+        chemicals + supplies + rent + utilities + admin_fot + other_opex + contingency + aggregator
     )
-    total_expenses = cogs + labor_op + opex
-    ebitda = revenue - total_expenses
+    ebitda = revenue - cogs - labor_op - opex  # EBITDA до налога/кап-резерва (и без марк.)
+    net_profit = ebitda - tax - cap_reserve  # чистая прибыль дня (без марк.)
+    total_expenses = cogs + labor_op + opex + tax + cap_reserve  # без маркетинга
 
     return {
         "date": d_str,
@@ -433,6 +435,7 @@ def _day_pnl(
         "aggregator": round(aggregator, 0),
         "total_expenses": round(total_expenses, 0),
         "ebitda": round(ebitda, 0),
+        "net_profit": round(net_profit, 0),
         "ebitda_margin": round(ebitda / revenue * 100, 1) if revenue else 0.0,
         "food_cost_pct": round(cost_sum / revenue * 100, 1) if revenue else 0.0,
     }
@@ -523,16 +526,23 @@ async def get_pnl(
     chemicals = var_sum["chemicals"]
     supplies = var_sum["supplies"]
     cogs = food_cost_rub + writeoffs + packaging
-    # ФОТ — из графика смен (не ручной ввод): смены×ставка + оклады ÷ дней.
-    # Административный ФОТ сюда НЕ входит (см. докстринг модуля) — только операционный.
+    # ФОТ: операционный — из графика смен (смены×ставка + оклады ÷ дней); админ-ФОТ —
+    # из PnlMonth (`manual["labor_admin"]`), он же отдельной строкой OPEX (не задваиваем).
     labor = labor_for_period(df, dt)
     labor_op = labor["operational"]
+    labor_admin_rub = manual["labor_admin"]
+    # Аналитические показатели модели (только для отображения, НЕ для арифметики EBITDA):
+    #   Prime cost               = COGS + операционный ФОТ
+    #   Себестоимость производства = COGS + ВЕСЬ ФОТ (операционный + админ) = «All Labor»
+    # Различаются ровно на админ-ФОТ (у них разные бенчмарки: 48–53 % против 60–65 %).
     prime_cost = cogs + labor_op
-    production_cost = cogs + labor_op
+    production_cost = cogs + labor_op + labor_admin_rub
 
     # ── OPEX ── (tax/aggregator посчитаны выше суммой по дням — #4)
     # маркетинг учитывается в ИТОГЕ за период (EBITDA/безубыточность), но НЕ в подневной
-    # матрице (решение пользователя — лумповый месячный расход не размазываем по дням)
+    # матрице (решение пользователя — лумповый месячный расход не размазываем по дням).
+    # ОПЕРАЦИОННЫЙ OPEX — всё, что НАД EBITDA: налог УСН и кап-резерв сюда НЕ входят,
+    # они вычитаются ниже, в лесенке EBITDA → Чистая прибыль (см. `profit`).
     opex_manual = (
         manual["rent"]
         + manual["utilities"]
@@ -540,15 +550,25 @@ async def get_pnl(
         + manual["marketing"]
         + manual["other_opex"]
         + manual["contingency"]
-        + manual["cap_reserve"]
     )
     # химия/расходники — переменные дневные статьи, идут в OPEX сверх постоянных ручных
     day_var_opex = chemicals + supplies
-    total_opex = opex_manual + day_var_opex + tax + aggregator
+    # операционный OPEX (над EBITDA): постоянные ручные + дневные + комиссия агрегатора
+    total_opex = opex_manual + day_var_opex + aggregator
+    cap_reserve_rub = manual["cap_reserve"]
 
-    all_expenses = production_cost + total_opex
-    ebitda = revenue - all_expenses
+    # ── Лесенка прибыли ──
+    # EBITDA = выручка − (COGS + операционный ФОТ) − операционный OPEX (ДО налога УСН,
+    # кап-резерва). Берём именно COGS+операц.ФОТ, а НЕ production_cost: админ-ФОТ уже сидит
+    # в total_opex (`manual["labor_admin"]`), иначе он задвоился бы. production_cost —
+    # аналитический показатель для отображения, в арифметике не участвует.
+    # Амортизация не выделена отдельной строкой — в модели она зашита в «Прочие»
+    # (other_opex) и остаётся над EBITDA (нет исходной цифры, чтобы вычесть).
+    ebitda = revenue - (cogs + labor_op) - total_opex
     ebitda_margin = pct(ebitda)
+    # Чистая прибыль = EBITDA − налог УСН − кап-резерв
+    net_profit = ebitda - tax - cap_reserve_rub
+    net_margin = pct(net_profit)
 
     # ── Маржинальный анализ: переменные растут с продажами, постоянные — фикс/мес ──
     variable_total = food_cost_rub + writeoffs + packaging + chemicals + supplies + tax + aggregator
@@ -564,7 +584,13 @@ async def get_pnl(
     labor_month = labor_for_period(month_start, month_end)
     fixed_month = sum(rate_m[f] for f in PNL_FIXED_MANUAL) + labor_month["operational"]
     breakeven_month = (fixed_month / cm_ratio) if cm_ratio > 0 else None
-    breakeven_day = (breakeven_month / dim_end) if breakeven_month else None
+    # #4: порог/сутки — на РАБОЧИЙ день, не календарный (иначе несопоставим с фактической
+    # средней выручкой на активный день — точка работает не каждый календарный день).
+    # Ожидаемое число рабочих дней месяца оцениваем по доле активных дней в периоде:
+    # так и порог, и факт (`avg_rev_day`) считаются на один и тот же операционный день.
+    period_days = (dt - df).days + 1
+    op_days_month = dim_end * (active_days / period_days) if period_days else dim_end
+    breakeven_day = breakeven_month / op_days_month if (breakeven_month and op_days_month) else None
     avg_rev_day = revenue / active_days
 
     # ── метрики загрузки — зал и доставка раздельно, нигде не смешиваем (#5) ──
@@ -637,9 +663,10 @@ async def get_pnl(
         money("writeoffs", "Списания", writeoffs),
         money("packaging", "Упаковка", packaging),
         money("cogs", "COGS (себестоимость товара)", cogs),
-        money("labor_op", "ФОТ", labor_op),
-        money("prime_cost", "Prime cost (COGS + ФОТ)", prime_cost),
-        money("production_cost", "Себестоимость производства", production_cost),
+        money("labor_op", "ФОТ (операционный)", labor_op),
+        money("prime_cost", "Prime cost (COGS + операц. ФОТ)", prime_cost),
+        money("labor_admin", "— в т.ч. админ. ФОТ (в OPEX)", labor_admin_rub, rated=False),
+        money("production_cost", "Себестоимость производства (COGS + весь ФОТ)", production_cost),
     ]
 
     agg_base_note = " · оценка от доставки" if agg_estimated else ""
@@ -660,19 +687,25 @@ async def get_pnl(
         money("labor_admin", "Админ. ФОТ (управляющий)", manual["labor_admin"]),
         money("marketing", "Маркетинг", manual["marketing"]),
         money("other_opex", "Прочие (IT/ОФД/эквайринг/аморт.)", manual["other_opex"]),
-        money("tax", f"Налог (УСН {tax_pct:g}%)", tax, rated=False),
         money("contingency", "Непредвиденные", manual["contingency"]),
-        money("cap_reserve", "Кап-резерв", manual["cap_reserve"], rated=False),
-        money("total_opex", "Итого OPEX", total_opex, rated=False),
+        money("total_opex", "Итого OPEX (операционные)", total_opex, rated=False),
     ]
 
     ebitda_line = {
         "key": "ebitda",
-        "label": "EBITDA",
+        "label": "EBITDA (до налога и кап-резерва)",
         "kind": "money",
         "rub": round(ebitda, 0),
         "pct": round(ebitda_margin, 1),
         "rating": _rate("ebitda_margin", ebitda_margin, ebitda_margin),
+    }
+    net_profit_line = {
+        "key": "net_profit",
+        "label": "Чистая прибыль",
+        "kind": "money",
+        "rub": round(net_profit, 0),
+        "pct": round(net_margin, 1),
+        "rating": _rate("net_margin", net_margin, net_margin),
     }
     margin = [
         money(
@@ -681,13 +714,15 @@ async def get_pnl(
         money("contribution_margin", "Маржинальная прибыль", contribution_margin, rated=False),
         money("fixed_alloc", "Постоянные затраты за период", fixed_alloc, rated=False),
         metric("breakeven_month", "Точка безубыточности, ₽/мес", breakeven_month, "rub"),
-        metric("breakeven_day", "Точка безубыточности, ₽/сутки", breakeven_day, "rub"),
-        metric("avg_rev_day", "Средняя выручка/сутки (факт)", avg_rev_day, "rub"),
+        metric("breakeven_day", "Точка безубыточности, ₽/раб. день", breakeven_day, "rub"),
+        metric("avg_rev_day", "Средняя выручка/раб. день (факт)", avg_rev_day, "rub"),
     ]
 
     profit = [
-        money("all_expenses", "Все расходы", all_expenses),
         ebitda_line,
+        money("tax", f"− Налог (УСН {tax_pct:g}%)", tax, rated=False),
+        money("cap_reserve", "− Кап-резерв", cap_reserve_rub, rated=False),
+        net_profit_line,
     ]
 
     # ── Подневная матрица + сравнение с пред. периодом день-в-день (#1, #4) ──
@@ -758,6 +793,12 @@ async def get_pnl(
             prev_revenue = sum(p["revenue"] for p in prev_rows)
             # с маркетингом — сопоставимо с итоговой EBITDA текущего периода (хедер)
             prev_ebitda = sum(p["ebitda"] for p in prev_rows) - prev_marketing
+            # чистая прибыль прош. периода = EBITDA(с марк.) − налог − кап-резерв
+            prev_net = (
+                prev_ebitda
+                - sum(p["tax"] for p in prev_rows)
+                - sum(p["cap_reserve"] for p in prev_rows)
+            )
             prev_summary = {
                 "date_from": prange_from.isoformat(),
                 "date_to": prange_to.isoformat(),
@@ -769,6 +810,8 @@ async def get_pnl(
                 "ebitda_margin": (
                     round(prev_ebitda / prev_revenue * 100, 1) if prev_revenue else 0.0
                 ),
+                "net_profit": round(prev_net, 0),
+                "net_margin": (round(prev_net / prev_revenue * 100, 1) if prev_revenue else 0.0),
             }
     else:
         for day in daily:
@@ -785,6 +828,9 @@ async def get_pnl(
         "ebitda": round(ebitda, 0),
         "ebitda_margin": round(ebitda_margin, 1),
         "ebitda_rating": _rate("ebitda_margin", ebitda_margin, ebitda_margin),
+        "net_profit": round(net_profit, 0),
+        "net_margin": round(net_margin, 1),
+        "net_rating": _rate("net_margin", net_margin, net_margin),
         "breakeven": {
             "cm_ratio": round(cm_ratio * 100, 1),
             "fixed_month": round(fixed_month, 0),

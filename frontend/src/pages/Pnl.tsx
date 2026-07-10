@@ -153,7 +153,7 @@ export function Pnl() {
             </div>
           )}
 
-          {/* Хедер: EBITDA + вердикт по безубыточности */}
+          {/* Хедер: EBITDA → Чистая прибыль + вердикт по безубыточности */}
           <div style={{ display: "flex", gap: 24, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 16 }}>
             <div>
               <div style={{ color: COLORS.muted, fontSize: 12 }}>EBITDA за период · {data.date_from} — {data.date_to}</div>
@@ -161,11 +161,15 @@ export function Pnl() {
                 {fmtRub(data.ebitda)} <span style={{ fontSize: 16, fontWeight: 600, color: rateColor(data.ebitda_rating) ?? COLORS.muted }}>({data.ebitda_margin}%)</span>
                 {ps && <DeltaBadge d={delta(data.ebitda, ps.ebitda)} />}
               </div>
-              {ps && (
-                <div style={{ fontSize: 11, color: COLORS.muted, marginTop: 2 }}>
-                  vs {ps.date_from} — {ps.date_to} (тот же день недели): {fmtRub(ps.ebitda)}
-                </div>
-              )}
+              <div style={{ fontSize: 11, color: COLORS.muted, marginTop: 2 }}>до налога УСН и кап-резерва</div>
+            </div>
+            <div>
+              <div style={{ color: COLORS.muted, fontSize: 12 }}>Чистая прибыль</div>
+              <div style={{ fontSize: 24, fontWeight: 800, color: data.net_profit >= 0 ? COLORS.good : COLORS.bad, marginTop: 2 }}>
+                {fmtRub(data.net_profit)} <span style={{ fontSize: 14, fontWeight: 600, color: rateColor(data.net_rating) ?? COLORS.muted }}>({data.net_margin}%)</span>
+                {ps && ps.net_profit != null && <DeltaBadge d={delta(data.net_profit, ps.net_profit)} />}
+              </div>
+              <div style={{ fontSize: 11, color: COLORS.muted, marginTop: 2 }}>EBITDA − налог − кап-резерв</div>
             </div>
             <BreakevenVerdict be={data.breakeven} />
           </div>
@@ -205,7 +209,7 @@ export function Pnl() {
 // Строки-подытоги (жирные, с рамкой) — ключевые агрегаты P&L.
 const SUBTOTAL = new Set([
   "revenue", "cogs", "prime_cost", "production_cost", "total_opex",
-  "contribution_margin", "fixed_alloc", "all_expenses", "ebitda",
+  "contribution_margin", "fixed_alloc", "all_expenses", "ebitda", "net_profit",
 ]);
 
 /** Секция единой таблицы: сворачиваемый заголовок + строки показателей. */
@@ -266,13 +270,13 @@ function BreakevenVerdict({ be }: { be: PnlBreakeven }) {
   return (
     <div style={{ fontSize: 13, color: COLORS.muted }}>
       <div>
-        Точка безубыточности: <b style={{ color: "var(--text)" }}>{fmtRub(be.revenue_month ?? 0)}/мес</b> · {fmtRub(be.revenue_day)}/сутки
+        Точка безубыточности: <b style={{ color: "var(--text)" }}>{fmtRub(be.revenue_month ?? 0)}/мес</b> · {fmtRub(be.revenue_day)}/раб. день
         <span style={{ color: COLORS.muted }}> (маржинальность {be.cm_ratio}%)</span>
       </div>
       <div style={{ marginTop: 2 }}>
-        Средний день делает <b style={{ color: "var(--text)" }}>{fmtRub(be.avg_rev_day)}</b> →{" "}
+        Средний рабочий день делает <b style={{ color: "var(--text)" }}>{fmtRub(be.avg_rev_day)}</b> →{" "}
         <b style={{ color: ok ? COLORS.good : COLORS.bad }}>
-          {ok ? `запас +${fmtRub(gap)}/сутки` : `недобор ${fmtRub(gap)}/сутки`}
+          {ok ? `запас +${fmtRub(gap)}/раб. день` : `недобор ${fmtRub(gap)}/раб. день`}
         </b>
       </div>
     </div>
@@ -307,20 +311,20 @@ const MATRIX: MatrixGroup[] = [
     { key: "labor", label: "ФОТ (операционный)" },
     { key: "admin_fot", label: "Админ. ФОТ (управляющий)" },
   ] },
-  { title: "Операционные расходы", rows: [
+  { title: "Операционные расходы (над EBITDA)", rows: [
     { key: "chemicals", label: "Химия / моющие", variable: true },
     { key: "supplies", label: "Расходники", variable: true },
     { key: "rent", label: "Аренда" },
     { key: "utilities", label: "Коммуналка" },
     { key: "other_opex", label: "Прочие (IT/ОФД/эквайр/аморт)" },
     { key: "contingency", label: "Непредвиденные" },
-    { key: "cap_reserve", label: "Кап-резерв" },
-    { key: "tax", label: "Налог (УСН)" },
     { key: "aggregator", label: "Агрегатор" },
   ] },
   { title: "Результат", rows: [
-    { key: "total_expenses", label: "Все расходы (без марк.)", strong: true },
     { key: "ebitda", label: "EBITDA (без маркетинга)", strong: true, profit: true },
+    { key: "tax", label: "− Налог (УСН)" },
+    { key: "cap_reserve", label: "− Кап-резерв" },
+    { key: "net_profit", label: "Чистая прибыль (без марк.)", strong: true, profit: true },
   ] },
 ];
 
@@ -370,7 +374,7 @@ function DailyMatrix({ days }: { days: PnlDay[] }) {
       </div>
       <div style={{ color: COLORS.muted, fontSize: 12, marginBottom: 14 }}>
         Дни по горизонтали, статьи расходов по вертикали. В клетке — <b style={{ color: "var(--text)" }}>₽ за день</b> и <b style={{ color: "var(--text)" }}>доля от выручки дня</b>; тумблер «Крупно» выбирает, что крупнее и цветом. Справа — Факт за период, Среднее на активный день и доля от выручки.
-        Переменные статьи (списания, упаковка, химия, расходники) вводятся по дням — <b style={{ color: COLORS.warn }}>всплеск</b> выше нормы подсвечен. Маркетинг не разносится по дням (учтён в EBITDA за период сверху), поэтому EBITDA в матрице — «без маркетинга» и выше итоговой ровно на сумму маркетинга. Комиссия агрегатора — от фактической выручки через агрегатора.
+        Переменные статьи (списания, упаковка, химия, расходники) вводятся по дням — <b style={{ color: COLORS.warn }}>всплеск</b> выше нормы подсвечен. <b style={{ color: "var(--text)" }}>EBITDA</b> — до налога УСН и кап-резерва; ниже них — <b style={{ color: "var(--text)" }}>чистая прибыль</b>. Маркетинг не разносится по дням (учтён в EBITDA за период сверху), поэтому EBITDA/чистая прибыль в матрице — «без маркетинга» и выше итоговых ровно на сумму маркетинга. Комиссия агрегатора — от фактической выручки через агрегатора.
       </div>
       <div style={{ overflowX: "auto" }}>
         <table style={{ borderCollapse: "collapse", minWidth: "100%", fontVariantNumeric: "tabular-nums" }}>

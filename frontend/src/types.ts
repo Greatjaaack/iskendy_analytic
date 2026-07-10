@@ -543,6 +543,7 @@ export interface PnlDay {
   aggregator: number;
   total_expenses: number;
   ebitda: number;
+  net_profit: number;
   ebitda_margin: number;
   food_cost_pct: number;
   /** Сопоставимый день пред. периода — тот же день недели (пн↔пн, чт↔чт…). */
@@ -555,7 +556,7 @@ export type PnlDayKey =
   | "food_cost" | "writeoffs" | "packaging" | "cogs"
   | "labor" | "chemicals" | "supplies"
   | "rent" | "utilities" | "admin_fot" | "other_opex" | "contingency" | "cap_reserve"
-  | "tax" | "aggregator" | "total_expenses" | "ebitda";
+  | "tax" | "aggregator" | "total_expenses" | "ebitda" | "net_profit";
 
 // ─── Дневные затраты (редактор «Затраты по дням») ─────────────────────────────
 export interface PnlDayCostRow {
@@ -584,6 +585,8 @@ export interface PnlPrevSummary {
   checks: number;
   ebitda: number;
   ebitda_margin: number;
+  net_profit: number;
+  net_margin: number;
 }
 
 export interface PnlReport {
@@ -596,6 +599,9 @@ export interface PnlReport {
   ebitda: number;
   ebitda_margin: number;
   ebitda_rating: PnlRating;
+  net_profit: number;
+  net_margin: number;
+  net_rating: PnlRating;
   breakeven: PnlBreakeven;
   prev_summary: PnlPrevSummary | null;
   daily: PnlDay[];
