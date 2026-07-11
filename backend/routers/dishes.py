@@ -4,7 +4,6 @@ from collections import Counter, defaultdict
 from itertools import combinations
 
 from fastapi import APIRouter, Query
-from sqlalchemy import select
 
 from constants import (
     CHANNEL_DELIVERY,
@@ -12,6 +11,7 @@ from constants import (
     CHANNEL_TAKEAWAY,
     DELIVERY_CATEGORY,
     NON_PRODUCT_CATEGORIES,
+    OLAP_FIELD_COST,
     OLAP_FIELD_DISH_CATEGORY,
     OLAP_FIELD_DISH_NAME,
     OLAP_FIELD_HOUR,
@@ -24,7 +24,6 @@ from constants import (
     PRODUCT_TYPE_MODIFIER,
 )
 from iiko_web_client import iiko_web
-from models import DishMapping, SessionLocal, Ttk
 from services.olap_parse import split_field_3
 from services.order_store import dish_detail_rows, order_rows
 from utils import (
@@ -38,40 +37,36 @@ from utils import (
 router = APIRouter(prefix="/api/dishes", tags=["dishes"])
 
 
-def _ttk_portion_cost(t: Ttk) -> float | None:
-    """С/с ОДНОЙ ПОРЦИИ блюда: только `cost_full` (порционная «Итого с/с»).
+async def _iiko_unit_cost_by_name(date_from: str, date_to: str) -> dict[str, float]:
+    """С/с ОДНОЙ порции по нормализованному имени = iiko-с/с позиций (`ProductCostBase`)
+    ÷ проданное количество за период.
 
-    `cost_total` сознательно НЕ используется как запасной вариант: это с/с за весь
-    выход карты (батч), а не за порцию (напр. чай — 4800 мл ≈ 24 чашки), и умножение
-    его на проданное количество завышает с/с в разы.
+    Единый источник food cost для всех экранов — позиции заказов (`order_items.cost`),
+    как их отдаёт iiko. Легаси-костинг по ТТК-файлу (`cost_full`/`DishMapping`) больше
+    не используется. Возвращаем УДЕЛЬНУЮ с/с (а не суммарную): одному нормализованному
+    имени в списке блюд может соответствовать несколько позиций номенклатуры (dish_id) —
+    суммарная с/с задвоилась бы на каждой из них, а удельная × qty блюда корректна.
     """
-    return t.cost_full or None
-
-
-def _dish_unit_cost() -> dict[str, float]:
-    """С/с одной ПОРЦИИ блюда по нормализованному имени продажи.
-
-    Приоритет: ручная привязка `DishMapping` (продажа→ТТК) → авто-совпадение имени с ТТК.
-    Источник с/с — порция из «Сводной» (`cost_full`); метрика iiko относит расход к
-    ингредиентам, а не к блюду, поэтому для с/с не годится.
-    """
-    out: dict[str, float] = {}
-    with SessionLocal() as db:
-        # авто: по совпадению нормализованного имени блюда с НЕ-полуфабрикатной ТТК.
-        # П/ф исключаем: их не продают напрямую, а их имя часто совпадает с блюдом
-        # («Чечевичный суп» — и блюдо-порция, и п/ф-котёл) — иначе подставилась бы
-        # батч-себестоимость п/ф вместо порционной.
-        for n, c in db.execute(
-            select(Ttk.name_norm, Ttk.cost_full).where(Ttk.is_semi.is_(False))
-        ).all():
-            if c:
-                out[n] = c
-        # ручные привязки имеют приоритет (перезаписывают авто)
-        for m in db.query(DishMapping).all():
-            cost = _ttk_portion_cost(m.ttk) if m.ttk else None
-            if cost:
-                out[m.sale_name_norm] = cost
-    return out
+    rows = await order_rows(
+        group_fields=[OLAP_FIELD_DISH_NAME],
+        data_fields=[OLAP_FIELD_COST, OLAP_FIELD_QTY],
+        date_from=date_from,
+        date_to=date_to,
+    )
+    agg: dict[str, list[float]] = {}
+    for r in rows:
+        name = r.get("field0", {}).get("value", "")
+        if not name:
+            continue
+        cost = float(r.get("field1", {}).get("value", 0) or 0)
+        qty = float(r.get("field2", {}).get("value", 0) or 0)
+        a = agg.setdefault(normalize_name(name), [0.0, 0.0])
+        a[0] += cost
+        a[1] += qty
+    # только реально прокостованные имена: у части позиций (доставочные дубли
+    # «…доставка»/«_д») iiko не проставляет ProductCostBase → с/с 0. Такие блюда должны
+    # показывать «—» (has_cost=False), а не мнимые 0% food cost / 100% маржу.
+    return {k: c / q for k, (c, q) in agg.items() if c > 0 and q > 0}
 
 
 async def _modifier_filters(date_from_iso: str, date_to_iso: str) -> tuple[set[str], set[str]]:
@@ -125,17 +120,18 @@ async def get_dishes(
     # MODIFIER (Доставка/В зале/С собой и платные добавки) — не блюда, в список не берём
     rows = [r for r in rows if r.get("product_type") != PRODUCT_TYPE_MODIFIER]
 
-    # с/с по блюду: порционная с/с × количество (iiko-метрика по блюду ~0).
-    # канал «доставка» — по принадлежности к категории «Доставка»; имя матчим как есть
-    # (привязка несовпадающих имён POS↔ТТК — через DishMapping).
-    # has_cost: нашлась ли порционная с/с (ТТК-привязка). Без неё с/с = 0 — НЕ выдаём
+    # с/с по блюду: iiko-с/с позиций (`order_items.cost` = ProductCostBase) за период,
+    # сопоставленная по нормализованному имени. Единый источник food cost для всех
+    # экранов; легаси-костинг по ТТК-файлу больше не используется.
+    # канал «доставка» — по принадлежности к категории «Доставка».
+    # has_cost: нашлась ли iiko-с/с по имени. Без неё с/с = 0 — НЕ выдаём
     # cost_pct/margin_pct (иначе блюдо выглядело бы как 100% маржа и искажало бы рейтинги).
     # галка «без доставки»: доставка = меню-категория «Доставка» ИЛИ имя с маркером `_д`
     # (get-data уже отдаёт категорию и имя) — просто убираем эти строки.
     if not include_delivery:
         rows = [r for r in rows if not is_delivery(r.get("category"), r.get("dish_name"))]
 
-    unit_cost = _dish_unit_cost()
+    unit_cost = await _iiko_unit_cost_by_name(date_from_d.isoformat(), date_to_d.isoformat())
     for r in rows:
         r["channel"] = (
             CHANNEL_DELIVERY if is_delivery(r.get("category"), r.get("dish_name")) else ""

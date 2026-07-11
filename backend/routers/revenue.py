@@ -3,7 +3,7 @@
 from datetime import date, timedelta
 
 from fastapi import APIRouter, Query
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from constants import (
     CATEGORY_GROUP_ORDER,
@@ -18,6 +18,7 @@ from constants import (
     METRIC_REFUNDS,
     METRIC_REV_GROSS,
     METRIC_TRN_ALL,
+    OLAP_FIELD_COST,
     OLAP_FIELD_DISH_CATEGORY,
     OLAP_FIELD_DISH_NAME,
     OLAP_FIELD_GUESTS,
@@ -32,8 +33,7 @@ from constants import (
     WEEKDAY_TO_GROUP,
 )
 from iiko_web_client import iiko_web
-from models import DaypartPlan, Order, OrderPayment, RevenueDaily, SessionLocal
-from routers.dishes import _dish_unit_cost
+from models import DaypartPlan, Order, OrderItem, OrderPayment, RevenueDaily, SessionLocal
 from services.daypart import category_group, hour_to_daypart
 from services.delivery import delivery_buckets, exclude_delivery
 from services.olap_parse import split_field_4, split_field_5
@@ -47,7 +47,6 @@ from services.ops_aggregation import (
 from services.order_store import order_rows
 from utils import (
     is_delivery,
-    normalize_name,
     payment_group,
     period_range,
     prev_period_range,
@@ -118,6 +117,17 @@ def _days_from_db(date_from: date, date_to: date) -> list[dict]:
             .scalars()
             .all()
         )
+        # food cost — единый iiko-кост позиций (order_items.cost = ProductCostBase),
+        # суммарно по дню. Fallback на revenue_daily.cost_sum (теоретич. расход iiko),
+        # если позиционный кост за день пуст (день вне окна бэкафилла) — чтобы P&L и
+        # food cost не обнулялись на неполных данных.
+        item_cost = dict(
+            db.execute(
+                select(OrderItem.date, func.sum(OrderItem.cost))
+                .where(OrderItem.date >= date_from, OrderItem.date <= date_to)
+                .group_by(OrderItem.date)
+            ).all()
+        )
     return [
         _day_dict(
             r.date,
@@ -126,7 +136,7 @@ def _days_from_db(date_from: date, date_to: date) -> list[dict]:
             r.avg_check,
             r.discount_sum,
             r.refund_count,
-            r.cost_sum,
+            item_cost.get(r.date) or r.cost_sum,
         )
         for r in rows
     ]
@@ -447,9 +457,10 @@ async def get_ops_report(
     """Ежедневный операционный отчёт: дни (столбцы) × дейпарты (строки).
 
     Аналог исторического Excel-свода «Ежедневный ОП». По каждому дню × дейпарту —
-    выручка, чеки, гости (`GuestNum`), средний чек и food cost % (с/с порций по ТТК).
-    Справа — Факт (сумма за период), Среднее (на активный день) и доля % дейпарта.
-    Один OLAP-запрос по [дата, час, заказ, категория, имя] + DishSumInt/Qty/GuestNum.
+    выручка, чеки, гости (`GuestNum`), средний чек и food cost % (iiko-с/с позиций
+    `ProductCostBase` ÷ выручка окна). Справа — Факт (сумма за период), Среднее (на
+    активный день) и доля % дейпарта. Один OLAP-запрос по [дата, час, заказ, категория,
+    имя] + DishSumInt/Qty/GuestNum/ProductCost.
     План пока не показываем (нет источника в iiko). `include_delivery=false` — отсев
     доставочных позиций (`utils.is_delivery`).
     """
@@ -463,12 +474,11 @@ async def get_ops_report(
             OLAP_FIELD_DISH_CATEGORY,
             OLAP_FIELD_DISH_NAME,
         ],
-        data_fields=[OLAP_FIELD_SUM, OLAP_FIELD_QTY, OLAP_FIELD_GUESTS],
+        data_fields=[OLAP_FIELD_SUM, OLAP_FIELD_QTY, OLAP_FIELD_GUESTS, OLAP_FIELD_COST],
         date_from=df.isoformat(),
         date_to=dt.isoformat(),
     )
 
-    unit_cost = _dish_unit_cost()
     h2dp = hour_to_daypart()
     # накопитель: (дата, ключ дейпарта) → bucket
     agg: dict[tuple[str, str], dict] = {}
@@ -491,8 +501,8 @@ async def get_ops_report(
         if dp is None:
             continue
         rev = float(r.get("field1", {}).get("value", 0) or 0)
-        qty = float(r.get("field2", {}).get("value", 0) or 0)
         guests = float(r.get("field3", {}).get("value", 0) or 0)
+        cost = float(r.get("field4", {}).get("value", 0) or 0)
         key = (ds, dp)
         b = agg.get(key)
         if b is None:
@@ -500,17 +510,20 @@ async def get_ops_report(
         b["revenue"] += rev
         b["orders"].add(ordernum)
         b["guests"].setdefault(ordernum, guests)
-        c = unit_cost.get(normalize_name(name))
         # группа категории для food cost (дейпарт × Еда/Напитки/Алкоголь)
         ck = (dp, category_group(category))
         cb = cat_agg.get(ck)
         if cb is None:
             cb = cat_agg[ck] = {"revenue": 0.0, "cost": 0.0, "rev_with_cost": 0.0}
         cb["revenue"] += rev
-        if c is not None:
-            b["cost"] += c * qty
+        # food cost % считаем от ВСЕЙ выручки окна (честный P&L-знаменатель, сходится
+        # с P&L). rev_with_cost копит только прокостованную выручку (cost>0) → coverage
+        # показывает дыру: у доставочных дублей («…доставка»/«_д») iiko не ставит
+        # ProductCostBase, поэтому на окнах с доставкой coverage < 100%.
+        b["cost"] += cost
+        cb["cost"] += cost
+        if cost > 0:
             b["rev_with_cost"] += rev
-            cb["cost"] += c * qty
             cb["rev_with_cost"] += rev
 
     # столбцы — все календарные дни периода
