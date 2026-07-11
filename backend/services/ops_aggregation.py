@@ -1,9 +1,9 @@
 """Аккумуляторы и финализаторы ежедневного ОП-отчёта и слоя плана.
 
 «Движок» `get_ops_report`: накопитель метрик окна (выручка/с-с/чеки/гости),
-свёртка в показатели (food cost % считается от выручки блюд с ТТК-привязкой,
-плюс coverage — доля выручки, покрытая ТТК) и расчёт плана на период из
-дневных норм. Вынесено из routers/revenue.py без изменения поведения.
+свёртка в показатели (food cost % = iiko-кост позиций `ProductCostBase` ÷ вся
+выручка окна; coverage — доля выручки с известной с-с, < 100% там, где доставочные
+позиции без коста) и расчёт плана на период из дневных норм. Вынесено из revenue.py.
 """
 
 
@@ -11,7 +11,7 @@ def blank_bucket() -> dict:
     return {
         "revenue": 0.0,
         "cost": 0.0,
-        "rev_with_cost": 0.0,  # выручка блюд, у которых есть ТТК-привязка (знаменатель кост%)
+        "rev_with_cost": 0.0,  # выручка с известной с-с (знаменатель кост%; = вся выручка)
         "orders": set(),
         "guests": {},  # OrderNum → гостей (берём раз на заказ)
     }
@@ -30,9 +30,10 @@ def finalize(b: dict) -> dict:
         "guests": guests,
         "avg_check": round(rev / checks, 2) if checks else 0,
         "cost": cost,
-        # кост% считаем от выручки блюд С привязкой (иначе занижается); coverage — какая
-        # доля выручки окна покрыта ТТК (чтобы видеть надёжность процента)
-        "food_cost_pct": round(cost / rwc * 100, 1) if rwc else None,
+        # food cost % — от ВСЕЙ выручки окна (честный знаменатель, сходится с P&L);
+        # coverage = доля выручки с известной iiko-с/с (< 100% там, где доставочные
+        # позиции без ProductCostBase) — сигнал надёжности процента
+        "food_cost_pct": round(cost / rev * 100, 1) if rev else None,
         "coverage": round(rwc / rev * 100, 1) if rev else 0,
     }
 
@@ -45,7 +46,7 @@ def finalize_cat(cb: dict, base_revenue: float) -> dict:
     return {
         "revenue": rev,
         "cost": cost,
-        "food_cost_pct": round(cost / rwc * 100, 1) if rwc else None,
+        "food_cost_pct": round(cost / rev * 100, 1) if rev else None,
         "coverage": round(rwc / rev * 100, 1) if rev else 0,
         "revenue_share": round(rev / base_revenue * 100, 1) if base_revenue else 0,
     }

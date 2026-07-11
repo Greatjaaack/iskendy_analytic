@@ -26,8 +26,8 @@ export function DishTable({ range, withDelivery = true }: Props) {
     queryFn: () => fetchDishes(range, groupBy, withDelivery),
   });
 
-  // sortable=false — колонки фактического с/с (пока не считаем, показываем «—»; позже
-  // подключим расчёт по накладным/расходу). «Кост %» = с/с ÷ цена реализации (=cost_pct).
+  // С/с и кост% — из iiko (ProductCostBase). Колонки «Факт» (sortable=false) пока «—»:
+  // подключим фактический кост по накладным. «Кост %» = с/с ÷ цена реализации (=cost_pct).
   const cols: { key: string; label: string; num?: boolean; sortable?: boolean }[] = [
     { key: "name", label: groupBy === "category" ? "Категория" : "Блюдо" },
     ...(groupBy === "dish" ? [{ key: "group_name", label: "Группа" }] : []),
@@ -35,10 +35,10 @@ export function DishTable({ range, withDelivery = true }: Props) {
     { key: "revenue", label: "Выручка", num: true },
     { key: "qty_share", label: "Доля кол-ва", num: true },
     { key: "revenue_share", label: "Доля продаж", num: true },
-    { key: "cost_sum", label: "План с/с", num: true },
-    { key: "cost_sum_fact", label: "Факт с/с", num: true, sortable: false },
-    { key: "cost_pct", label: "План кост %", num: true },
-    { key: "cost_pct_fact", label: "Факт кост %", num: true, sortable: false },
+    { key: "cost_sum", label: "С/с (iiko)", num: true },
+    { key: "cost_sum_fact", label: "С/с факт", num: true, sortable: false },
+    { key: "cost_pct", label: "Кост % (iiko)", num: true },
+    { key: "cost_pct_fact", label: "Кост % факт", num: true, sortable: false },
     { key: "cost_delta", label: "Δ кост", num: true, sortable: false },
     { key: "margin_pct", label: "Маржа %", num: true },
   ];
@@ -219,14 +219,14 @@ export function DishTable({ range, withDelivery = true }: Props) {
                 <td style={{ ...tdR, color: d.has_cost ? "var(--text)" : COLORS.muted }}>
                   {d.has_cost ? fmtInt(d.cost_sum) : "—"}
                 </td>
-                {/* факт с/с — пока не считаем (заглушка) */}
-                <td style={{ ...tdR, color: COLORS.muted }} title="Фактический с/с — появится после учёта накладных">—</td>
+                {/* с/с факт — по накладным, пока не считаем (заглушка) */}
+                <td style={{ ...tdR, color: COLORS.muted }} title="Фактический с/с по накладным — появится после учёта поставок">—</td>
                 <td style={{ ...tdR, color: COLORS.muted }}>{d.cost_pct == null ? "—" : `${d.cost_pct}%`}</td>
-                {/* факт кост % / Δ — пока не считаем (заглушки) */}
-                <td style={{ ...tdR, color: COLORS.muted }} title="Фактический кост — появится после учёта накладных">—</td>
-                <td style={{ ...tdR, color: COLORS.muted }} title="Дельта план↔факт — появится после учёта накладных">—</td>
+                {/* кост % факт / Δ — по накладным, пока не считаем (заглушки) */}
+                <td style={{ ...tdR, color: COLORS.muted }} title="Фактический кост по накладным — появится после учёта поставок">—</td>
+                <td style={{ ...tdR, color: COLORS.muted }} title="Дельта iiko↔факт — появится после учёта накладных">—</td>
                 {d.margin_pct == null ? (
-                  <td style={{ ...tdR, color: COLORS.muted }} title="Нет с/с — нужна привязка ТТК">—</td>
+                  <td style={{ ...tdR, color: COLORS.muted }} title="Нет с/с в iiko (напр. доставочная позиция без ProductCostBase)">—</td>
                 ) : (
                   <td style={{ ...tdR, color: d.margin_pct >= MARGIN_GOOD ? COLORS.good : d.margin_pct >= MARGIN_OK ? COLORS.warn : COLORS.bad, fontWeight: 600 }}>
                     {d.margin_pct}%

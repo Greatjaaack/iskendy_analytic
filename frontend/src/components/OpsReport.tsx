@@ -105,7 +105,7 @@ export function OpsReport({ range, withDelivery = true }: Props) {
       </div>
       {planOpen && <PlanEditor onClose={() => setPlanOpen(false)} />}
       <div style={{ color: "var(--muted)", fontSize: 12, marginBottom: 14 }}>
-        Дни по горизонтали, дейпарты по вертикали. Под каждым окном — выручка, средний чек, гости и кост % (себестоимость÷выручка по проданным блюдам с ТТК).
+        Дни по горизонтали, дейпарты по вертикали. Под каждым окном — выручка, средний чек, гости и кост % (iiko-с/с ÷ выручка окна).
       </div>
 
       {ready && (
@@ -202,7 +202,7 @@ export function OpsReport({ range, withDelivery = true }: Props) {
                       return <td key={g} style={{ ...TD, color: "var(--grid)" }}>—</td>;
                     return (
                       <td key={g} style={{ ...TD, color: costColor(c.food_cost_pct) }}
-                        title={`Выручка ${fmtInt(c.revenue)} ₽ · покрытие ТТК ${c.coverage}%`}>
+                        title={`Выручка ${fmtInt(c.revenue)} ₽ · покрыто костом ${c.coverage}%`}>
                         {c.food_cost_pct}%
                       </td>
                     );
@@ -215,7 +215,7 @@ export function OpsReport({ range, withDelivery = true }: Props) {
                   const c = d!.category_totals[g];
                   return (
                     <td key={g} style={{ ...TD, color: costColor(c?.food_cost_pct ?? null), fontWeight: 700 }}
-                      title={c ? `Выручка ${fmtInt(c.revenue)} ₽ · доля ${c.revenue_share}% · покрытие ТТК ${c.coverage}%` : ""}>
+                      title={c ? `Выручка ${fmtInt(c.revenue)} ₽ · доля ${c.revenue_share}% · покрыто костом ${c.coverage}%` : ""}>
                       {c && c.food_cost_pct != null ? `${c.food_cost_pct}%` : "—"}
                     </td>
                   );
@@ -224,7 +224,7 @@ export function OpsReport({ range, withDelivery = true }: Props) {
             </tbody>
           </table>
           <div style={{ color: "var(--muted)", fontSize: 11, marginTop: 8 }}>
-            Кост % = себестоимость ÷ выручка по блюдам с ТТК-привязкой. Наведите на ячейку — выручка и % покрытия тех-картами.
+            Кост % = iiko-с/с (ProductCostBase) ÷ выручка окна. «Покрыто костом» — доля выручки с известной с/с (ниже 100% там, где у позиции нет коста в iiko, напр. доставочные дубли). Наведите на ячейку.
           </div>
         </div>
       )}

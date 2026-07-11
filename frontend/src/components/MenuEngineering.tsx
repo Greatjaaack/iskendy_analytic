@@ -180,7 +180,7 @@ export function MenuEngineering({ range, withDelivery = true }: Props) {
           </div>
           <div style={{ color: "var(--muted)", fontSize: 12, marginTop: 8 }}>
             Оси: популярность (порог = 70% от средних продаж) × маржа на штуку (порог = ср. маржа {fmtInt(matrix.avgCM)} ₽).
-            {matrix.excluded > 0 && ` Без с/с и не учтено: ${matrix.excluded} блюд (нужна привязка ТТК).`}
+            {matrix.excluded > 0 && ` Без с/с и не учтено: ${matrix.excluded} блюд (нет коста в iiko).`}
           </div>
         </>
       ) : (
@@ -246,7 +246,7 @@ export function MenuEngineering({ range, withDelivery = true }: Props) {
 
           <div style={{ color: "var(--muted)", fontSize: 12, marginTop: 8 }}>
             A — до 80% {abcBasis === "rev" ? "выручки" : "прибыли"} (ключевые), B — до 95%, C — хвост (кандидаты на вывод/пересмотр).
-            {" "}Кост % = с/с ÷ цена реализации (по порогам food cost; «—» — нет привязки ТТК).
+            {" "}Кост % = с/с ÷ цена реализации (по порогам food cost; «—» — нет коста в iiko).
           </div>
         </>
       )}
