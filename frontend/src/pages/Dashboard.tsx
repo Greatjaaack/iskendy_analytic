@@ -42,7 +42,10 @@ export function Dashboard() {
   const [to, setTo] = useState(todayISO());
   const [syncing, setSyncing] = useState(false);
   const [tab, setTab] = useState<"pulse" | "ops" | "menu">("pulse");
-  // галка «с доставкой»: выкл → бэкенд вычитает выручку/чеки доставки из revenue-виджетов
+  // галка «с доставкой»: выкл по умолчанию — дашборд открывается по залу, доставка не
+  // мешает. Выкл → бэкенд вычитает доставку из revenue-виджетов (комиссии агрегатора при
+  // этом нет — чистая = брутто). Вкл → добавляется доставка, «Выручка» = чистая (после
+  // комиссии агрегатора) и сходится с P&L, под KPI видно сырую и удержание агрегатора.
   const [withDelivery, setWithDelivery] = useState(false);
   // интервал автосинхронизации (мс), выбор пользователя — хранится в localStorage
   const [autoSyncMs, setAutoSyncMs] = useState<number>(

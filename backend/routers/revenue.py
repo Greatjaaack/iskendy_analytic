@@ -34,6 +34,7 @@ from constants import (
 )
 from iiko_web_client import iiko_web
 from models import DaypartPlan, Order, OrderItem, OrderPayment, RevenueDaily, SessionLocal
+from services.aggregator import net_revenue
 from services.daypart import category_group, hour_to_daypart
 from services.delivery import delivery_buckets, exclude_delivery
 from services.olap_parse import split_field_4, split_field_5
@@ -217,6 +218,14 @@ async def get_revenue(
     total_checks = sum(r["check_count"] for r in days)
     total_cost = sum(r["cost_sum"] for r in days)
 
+    # ОСНОВНАЯ метрика — чистая выручка (после комиссии агрегатора): то, что реально
+    # упало в карман. Комиссия вычитается только из агрегаторской части (зал не трогаем).
+    # Без доставки агрегаторская часть уже убрана из total → комиссии нет.
+    if include_delivery:
+        net, agg_rev, commission = net_revenue(total, df, dt)
+    else:
+        net, agg_rev, commission = total, 0.0, 0.0
+
     # предыдущий сопоставимый период — для дельт. Месяц (MTD) сравнивается с тем же
     # отрезком прошлого месяца, день/неделя/диапазон — со скользящим окном (см. хелпер).
     # Берём из БД (быстро); если истории нет, дельта по этому показателю просто скрыта.
@@ -231,6 +240,11 @@ async def get_revenue(
         exclude_delivery(prev_days, await delivery_buckets(prev_df, prev_dt, OLAP_FIELD_OPEN_DATE))
     prev_rev = sum(r["total_sum"] for r in prev_days)
     prev_checks = sum(r["check_count"] for r in prev_days)
+    # чистая выручка прошлого периода — для сопоставимых дельт (та же база, что у текущего)
+    if include_delivery and prev_days:
+        prev_net, _, _ = net_revenue(prev_rev, prev_df, prev_dt)
+    else:
+        prev_net = prev_rev
 
     # прошлый период, выровненный по позиции дня (для сравнения выручка×погода)
     prev_weather = await get_weather(prev_df.isoformat(), prev_dt.isoformat())
@@ -253,17 +267,22 @@ async def get_revenue(
         "date_from": df.isoformat(),
         "date_to": dt.isoformat(),
         "summary": {
-            "total_revenue": total,
-            "avg_daily_revenue": round(total / len(days), 2) if days else 0,
+            # total_revenue — ОСНОВНАЯ (чистая, после комиссии). Все производные (ср.
+            # чек, food cost %) считаются от неё. Сырая и агрегатор — рядом, для контекста.
+            "total_revenue": round(net, 2),
+            "gross_revenue": round(total, 2),
+            "aggregator_revenue": round(agg_rev, 2),
+            "aggregator_commission": round(commission, 2),
+            "avg_daily_revenue": round(net / len(days), 2) if days else 0,
             "total_checks": total_checks,
-            "avg_check": round(total / total_checks, 2) if total_checks else 0,
+            "avg_check": round(net / total_checks, 2) if total_checks else 0,
             "total_cost": round(total_cost, 2),
-            "food_cost_pct": round(total_cost / total * 100, 1) if total else 0,
+            "food_cost_pct": round(total_cost / net * 100, 1) if net else 0,
             # значения прошлого периода (None — если истории нет, тогда дельту не показываем)
             "prev": {
-                "total_revenue": prev_rev if prev_days else None,
+                "total_revenue": round(prev_net, 2) if prev_days else None,
                 "total_checks": prev_checks if prev_days else None,
-                "avg_check": round(prev_rev / prev_checks, 2) if prev_checks else None,
+                "avg_check": round(prev_net / prev_checks, 2) if prev_checks else None,
             },
         },
         "data": days,
