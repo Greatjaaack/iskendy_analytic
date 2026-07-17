@@ -82,7 +82,8 @@ def _rate(key: str, pct: float, absval: float) -> str | None:
 def _default_month(year: int, month: int) -> dict:
     """Значения PnlMonth по умолчанию (когда за месяц ничего не введено)."""
     d = {f: 0.0 for f, _ in PNL_MANUAL_FIELDS}
-    d.update({"tax_pct": 6.0, "aggregator_pct": 0.0, "motivation_pct": 15.0, "work_hours": 12})
+    # aggregator_pct 35% — фиксированное удержание Яндекс Еды (у точки всегда так)
+    d.update({"tax_pct": 6.0, "aggregator_pct": 35.0, "motivation_pct": 15.0, "work_hours": 12})
     d.update({"year": year, "month": month})
     return d
 
@@ -396,12 +397,12 @@ def _day_pnl(
     `order_payments`), а не от всей категории «доставка».
     """
     d = date.fromisoformat(d_str)
-    revenue = float(day_data["total_sum"])
+    revenue_gross = float(day_data["total_sum"])
     cost_sum = float(day_data["cost_sum"])
     checks = int(day_data["check_count"])
     del_rev = float(del_bucket.get("revenue", 0.0))
     del_checks = int(del_bucket.get("checks", 0))
-    revenue_hall = max(0.0, revenue - del_rev)
+    revenue_hall = max(0.0, revenue_gross - del_rev)
     checks_hall = max(0, checks - del_checks)
 
     m = months.get((d.year, d.month)) or _default_month(d.year, d.month)
@@ -419,12 +420,13 @@ def _day_pnl(
     other_opex = m["other_opex"] / dim
     contingency = m["contingency"] / dim
     cap_reserve = m["cap_reserve"] / dim
-    tax = revenue * m["tax_pct"] / 100
     aggregator = agg_rev * m["aggregator_pct"] / 100
-    # операционный OPEX дня (над EBITDA) — БЕЗ налога, кап-резерва и маркетинга
-    opex = (
-        chemicals + supplies + rent + utilities + admin_fot + other_opex + contingency + aggregator
-    )
+    # ЧИСТАЯ выручка дня = брутто − удержание агрегатора (то, что реально пришло на счёт).
+    # Комиссия зашита в выручку, поэтому в OPEX её больше НЕТ (иначе двойной счёт).
+    revenue = revenue_gross - aggregator
+    tax = revenue * m["tax_pct"] / 100  # налог с поступлений (чистой), не с брутто
+    # операционный OPEX дня (над EBITDA) — БЕЗ налога, кап-резерва, маркетинга и комиссии
+    opex = chemicals + supplies + rent + utilities + admin_fot + other_opex + contingency
     ebitda = revenue - cogs - labor_op - opex  # EBITDA до налога/кап-резерва (и без марк.)
     net_profit = ebitda - tax - cap_reserve  # чистая прибыль дня (без марк.)
     total_expenses = cogs + labor_op + opex + tax + cap_reserve  # без маркетинга
@@ -433,6 +435,7 @@ def _day_pnl(
         "date": d_str,
         "day_of_week": DAY_NAMES_RU[d.weekday()],
         "revenue": round(revenue, 0),
+        "revenue_gross": round(revenue_gross, 0),
         "revenue_hall": round(revenue_hall, 0),
         "revenue_delivery": round(del_rev, 0),
         "checks": checks,
@@ -473,7 +476,7 @@ async def get_pnl(
     is_custom = bool(date_from and date_to)
 
     days = await _load_days(df, dt, is_custom)
-    revenue = sum(d["total_sum"] for d in days)
+    revenue_gross = sum(d["total_sum"] for d in days)
     checks = sum(d["check_count"] for d in days)
     food_cost_rub = sum(d["cost_sum"] for d in days)
     active_days = sum(1 for d in days if d["total_sum"] > 0) or 1
@@ -525,19 +528,25 @@ async def get_pnl(
     tax_pct = rate_m["tax_pct"]
     work_hours = rate_m["work_hours"] or 12
 
-    # #4: налог и комиссию агрегатора итога считаем СУММОЙ ПО ДНЯМ (те же помесячные
-    # ставки, что и в матрице) — чтобы диапазон через 2 месяца с разными ставками сходился
+    # #4: комиссию агрегатора и налог итога считаем СУММОЙ ПО ДНЯМ (те же помесячные
+    # ставки, что и в матрице) — чтобы диапазон через 2 месяца с разными ставками сходился.
+    # Налог — с ЧИСТОЙ (брутто дня − удержание агрегатора того дня): у точки доставочный
+    # чек в айке нефискальный, налог платится с того, что реально пришло на счёт.
     tax = 0.0
     aggregator = 0.0
     for dd in days:
         dm = date.fromisoformat(dd["date"])
         mm = months.get((dm.year, dm.month)) or _default_month(dm.year, dm.month)
-        tax += float(dd["total_sum"]) * mm["tax_pct"] / 100
-        aggregator += agg_by_day.get(dd["date"], 0.0) * mm["aggregator_pct"] / 100
+        agg_day = agg_by_day.get(dd["date"], 0.0) * mm["aggregator_pct"] / 100
+        aggregator += agg_day
+        tax += (float(dd["total_sum"]) - agg_day) * mm["tax_pct"] / 100
+    # ЧИСТАЯ выручка периода = брутто − удержание агрегатора (то, что упало на счёт)
+    revenue = revenue_gross - aggregator
     # эффективная ставка агрегатора за период — для честной подписи (при одном месяце = ставке)
     aggregator_pct = (
         (aggregator / agg_rev_total * 100) if agg_rev_total else rate_m["aggregator_pct"]
     )
+    agg_base_note = " · оценка от доставки" if agg_estimated else ""
 
     def pct(x: float) -> float:
         return (x / revenue * 100) if revenue else 0.0
@@ -575,8 +584,9 @@ async def get_pnl(
     )
     # химия/расходники — переменные дневные статьи, идут в OPEX сверх постоянных ручных
     day_var_opex = chemicals + supplies
-    # операционный OPEX (над EBITDA): постоянные ручные + дневные + комиссия агрегатора
-    total_opex = opex_manual + day_var_opex + aggregator
+    # операционный OPEX (над EBITDA): постоянные ручные + дневные. Комиссии агрегатора
+    # здесь НЕТ — она уже вычтена из выручки (revenue = чистая), иначе двойной счёт.
+    total_opex = opex_manual + day_var_opex
     cap_reserve_rub = manual["cap_reserve"]
 
     # ── Лесенка прибыли ──
@@ -593,7 +603,8 @@ async def get_pnl(
     net_margin = pct(net_profit)
 
     # ── Маржинальный анализ: переменные растут с продажами, постоянные — фикс/мес ──
-    variable_total = food_cost_rub + writeoffs + packaging + chemicals + supplies + tax + aggregator
+    # Комиссии агрегатора тут нет — она уже вычтена из выручки (revenue = чистая).
+    variable_total = food_cost_rub + writeoffs + packaging + chemicals + supplies + tax
     contribution_margin = revenue - variable_total
     cm_ratio = (contribution_margin / revenue) if revenue else 0.0
     # постоянные затраты за период (маркетинг входит — учитывается в итоге, не в днях)
@@ -663,8 +674,18 @@ async def get_pnl(
         }
 
     sales = [
-        money("revenue", "Выручка", revenue, rated=False),
-        money("revenue_hall", "— Зал", hall_rub, rated=False),
+        money("revenue", "Выручка (чистая, в карман)", revenue, rated=False),
+        money("revenue_gross", "— Сырая (брутто)", revenue_gross, rated=False),
+        money(
+            "aggregator",
+            (
+                f"— Удержано агрегатором ({round(aggregator_pct, 1):g}% от "
+                f"{agg_rev_total:,.0f} ₽{agg_base_note})"
+            ).replace(",", " "),
+            aggregator,
+            rated=False,
+        ),
+        money("revenue_hall", "— Зал (брутто)", hall_rub, rated=False),
         money("revenue_delivery", "— Доставка (брутто)", delivery_rub, rated=False),
         money("agg_revenue", "— Через агрегатора (оплаты)", agg_rev_total, rated=False),
         metric("checks", "Чеков", checks, "num"),
@@ -706,17 +727,9 @@ async def get_pnl(
         money("production_cost", "Себестоимость производства (COGS + весь ФОТ)", production_cost),
     ]
 
-    agg_base_note = " · оценка от доставки" if agg_estimated else ""
+    # комиссия агрегатора здесь НЕ показывается: она уже вычтена из выручки (revenue =
+    # чистая) и отражена строкой «— Удержано агрегатором» в блоке выручки выше.
     opex = [
-        money(
-            "aggregator",
-            (
-                f"Комиссия агрегатора ({round(aggregator_pct, 1):g}% от "
-                f"{agg_rev_total:,.0f} ₽{agg_base_note})"
-            ).replace(",", " "),
-            aggregator,
-            rated=False,
-        ),
         money("chemicals", "Химия / моющие", chemicals),
         money("supplies", "Расходники (салфетки/перчатки)", supplies),
         money("rent", "Аренда", manual["rent"]),

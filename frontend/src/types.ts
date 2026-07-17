@@ -9,7 +9,10 @@ export type RangeSel = { period: Period } | { from: string; to: string };
 // ---------- Выручка ----------
 
 export interface RevenueSummary {
-  total_revenue: number;
+  total_revenue: number; // ОСНОВНАЯ — чистая выручка (после комиссии агрегатора)
+  gross_revenue: number; // сырая выручка (REV_GROSS, до комиссии)
+  aggregator_revenue: number; // брутто-выручка через агрегатора (Яндекс Еда)
+  aggregator_commission: number; // удержание агрегатора (35% от агрег-выручки)
   avg_daily_revenue: number;
   total_checks: number;
   avg_check: number;
@@ -518,7 +521,8 @@ export interface PnlBreakeven {
 export interface PnlDay {
   date: string;
   day_of_week: string;
-  revenue: number;
+  revenue: number; // чистая (после удержания агрегатора)
+  revenue_gross: number; // сырая (брутто, до удержания)
   revenue_hall: number;
   revenue_delivery: number;
   checks: number;
@@ -552,7 +556,7 @@ export interface PnlDay {
 
 /** Ключ статьи-строки подневной матрицы — совпадает с ключом ₽ в PnlDay. */
 export type PnlDayKey =
-  | "revenue" | "revenue_hall" | "revenue_delivery" | "agg_revenue"
+  | "revenue" | "revenue_gross" | "revenue_hall" | "revenue_delivery" | "agg_revenue"
   | "food_cost" | "writeoffs" | "packaging" | "cogs"
   | "labor" | "chemicals" | "supplies"
   | "rent" | "utilities" | "admin_fot" | "other_opex" | "contingency" | "cap_reserve"

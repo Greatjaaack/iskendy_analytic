@@ -332,9 +332,11 @@ type MatrixGroup = { title: string; rows: MatrixRow[] };
 
 const MATRIX: MatrixGroup[] = [
   { title: "Выручка", rows: [
-    { key: "revenue", label: "Выручка", strong: true },
-    { key: "revenue_hall", label: "Зал", indent: true },
-    { key: "revenue_delivery", label: "Доставка", indent: true },
+    { key: "revenue", label: "Выручка (чистая)", strong: true },
+    { key: "revenue_gross", label: "Сырая (брутто)", indent: true },
+    { key: "aggregator", label: "− Удержано агрегатором", indent: true },
+    { key: "revenue_hall", label: "Зал (брутто)", indent: true },
+    { key: "revenue_delivery", label: "Доставка (брутто)", indent: true },
     { key: "agg_revenue", label: "Через агрегатора", indent: true },
   ] },
   { title: "Себестоимость (COGS)", rows: [
@@ -354,7 +356,6 @@ const MATRIX: MatrixGroup[] = [
     { key: "utilities", label: "Коммуналка" },
     { key: "other_opex", label: "Прочие (IT/ОФД/эквайр/аморт)" },
     { key: "contingency", label: "Непредвиденные" },
-    { key: "aggregator", label: "Агрегатор" },
   ] },
   { title: "Результат", rows: [
     { key: "ebitda", label: "EBITDA (без маркетинга)", strong: true, profit: true },
@@ -410,7 +411,7 @@ function DailyMatrix({ days }: { days: PnlDay[] }) {
       </div>
       <div style={{ color: COLORS.muted, fontSize: 12, marginBottom: 14 }}>
         Дни по горизонтали, статьи расходов по вертикали. В клетке — <b style={{ color: "var(--text)" }}>₽ за день</b> и <b style={{ color: "var(--text)" }}>доля от выручки дня</b>; тумблер «Крупно» выбирает, что крупнее и цветом. Справа — Факт за период, Среднее на активный день и доля от выручки.
-        Переменные статьи (списания, упаковка, химия, расходники) вводятся по дням — <b style={{ color: COLORS.warn }}>всплеск</b> выше нормы подсвечен. <b style={{ color: "var(--text)" }}>EBITDA</b> — до налога УСН и кап-резерва; ниже них — <b style={{ color: "var(--text)" }}>чистая прибыль</b>. Маркетинг не разносится по дням (учтён в EBITDA за период сверху), поэтому EBITDA/чистая прибыль в матрице — «без маркетинга» и выше итоговых ровно на сумму маркетинга. Комиссия агрегатора — от фактической выручки через агрегатора.
+        Переменные статьи (списания, упаковка, химия, расходники) вводятся по дням — <b style={{ color: COLORS.warn }}>всплеск</b> выше нормы подсвечен. <b style={{ color: "var(--text)" }}>EBITDA</b> — до налога УСН и кап-резерва; ниже них — <b style={{ color: "var(--text)" }}>чистая прибыль</b>. Маркетинг не разносится по дням (учтён в EBITDA за период сверху), поэтому EBITDA/чистая прибыль в матрице — «без маркетинга» и выше итоговых ровно на сумму маркетинга. <b style={{ color: "var(--text)" }}>Выручка — чистая</b> (сырая брутто − удержание агрегатора 35%): доставочный чек в айке нефискальный, налог платится с того, что реально пришло на счёт. Поэтому налог и food cost считаются от чистой.
       </div>
       <div style={{ overflowX: "auto" }}>
         <table style={{ borderCollapse: "collapse", minWidth: "100%", fontVariantNumeric: "tabular-nums" }}>
