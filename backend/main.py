@@ -7,14 +7,19 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 
 import storage
 from auth import require_auth
 from cache import cache_clear
+from config import settings
+from constants import OLAP_FIELD_OPEN_TIME, OLAP_FIELD_ORDER_NUM, OLAP_FIELD_SUM
+from iiko_web_client import iiko_web
 from models import SessionLocal, SyncLog, init_db
 from routers import (
     auth,
@@ -76,6 +81,47 @@ app.include_router(schedule.router, dependencies=protected)
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
+
+
+def _require_internal(x_internal_token: str = Header(default="")) -> None:
+    """Сервис-сервисная авторизация внутренних ручек по общему токену из .env."""
+    if not settings.internal_token or x_internal_token != settings.internal_token:
+        raise HTTPException(status_code=401, detail="internal token required")
+
+
+@app.get("/api/orders/today", dependencies=[Depends(_require_internal)])
+async def orders_today():
+    """Заказы за сегодня (номер + время открытия) для внешнего табло iskendy_site.
+
+    Живой OLAP SALES по кассе (кэш 60с, см. cache_ttl_seconds) — при оплате-вперёд
+    заказ закрывается сразу, поэтому попадает сюда за секунды. Read-only.
+    """
+    tz = ZoneInfo(settings.timezone)
+    today = datetime.now(tz).date().isoformat()
+    rows = await iiko_web.olap_sales(
+        group_fields=[OLAP_FIELD_ORDER_NUM, OLAP_FIELD_OPEN_TIME],
+        data_fields=[OLAP_FIELD_SUM],
+        date_from=today,
+        date_to=today,
+    )
+    orders = []
+    for r in rows:
+        # field0 = "<OrderNum>, <OpenTime ISO>" (склейка групп через ", ")
+        value = r.get("field0", {}).get("value", "")
+        parts = value.split(", ", 1)
+        if len(parts) != 2:
+            continue
+        try:
+            number = int(parts[0].strip())
+        except ValueError:
+            continue
+        orders.append({"number": number, "openTime": parts[1].strip()})
+    orders.sort(key=lambda o: o["number"])
+    return {
+        "date": today,
+        "orders": orders,
+        "now": datetime.now(tz).strftime("%H:%M:%S"),
+    }
 
 
 @app.get("/api/sync/last", dependencies=protected)

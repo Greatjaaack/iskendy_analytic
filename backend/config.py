@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     # Срок жизни токена сессии, часов.
     jwt_ttl_hours: int = 12
 
+    # Сервисный токен для внутренних read-only ручек (напр. табло заказов
+    # iskendy_site тянет `/api/orders/today`). Пустой — ручка отключена (401).
+    internal_token: str = ""
+
     # Начало истории для бэкафилла заказов в БД (ISO `YYYY-MM-DD`). Если не задано —
     # определяется автоматически (probe по выручке: первая дата с продажами).
     history_start_date: date | None = None
