@@ -88,7 +88,67 @@ curl https://<DOMAIN>/api/health
 
 > ⚠️ `docker compose ... down -v` удалит volume вместе с БД и файлами. Без `-v` данные
 > остаются. При смене СУЩЕСТВУЮЩЕЙ схемы БД (миграций нет) пересоздание делается
-> именно через `down -v` — это сотрёт накопленную историю, она перельётся бэкафиллом.
+> именно через `down -v` — это сотрёт накопленную историю. Заказы и выручка
+> перельются бэкафиллом из iiko, **а поставщики, цены, ТТК и себестоимость — нет:
+> они вбиты руками и в iiko их не существует**. Перед `down -v` — снять копию
+> (см. ниже) и убедиться, что она открывается.
+
+## Бэкапы БД
+
+Суточная копия базы с ротацией на 30 штук и выгрузкой на Google Диск владельца.
+
+| | |
+|---|---|
+| Скрипт | `/root/dashboards-backup.sh` на сервере, эталон в репозитории — `ops/backup.sh` |
+| Крон | `15 4 * * *` (сайт-табло выгружается в 03:30 — время разведено, чтобы не толкаться) |
+| Копии на сервере | `/root/backups/analytics/iskendi-<YYYYmmdd-HHMMSS>.db.gz`, последние 30 |
+| Копии снаружи | `gdrive:Искенди — бэкапы аналитики` (rclone, конфиг `/root/.config/rclone/rclone.conf`) |
+| Лог | `/var/log/iskendy-analytics-backup.log` |
+| Тревоги | через `/root/iskendy/guard.sh --raise/--resolve` в тему 858 рабочего чата |
+
+Как снимается: **не** копированием файла — приложение пишет в базу постоянно, и
+копия живого файла выйдет рваной. Внутри контейнера python делает
+`sqlite3.Connection.backup()` — согласованный снимок под блокировкой самой SQLite,
+без остановки сервиса, — и тут же проверяет его `PRAGMA integrity_check`.
+
+Наружу — `rclone copy`, **не** `sync`: локально держим 30 копий, sync удалял бы на
+Диске всё, что старше, то есть ровно тот архив, ради которого всё затевалось.
+`rclone` ходит в Google под общим client_id и упирается в поминутную квоту — отсюда
+`--retries` и вторая попытка через 5 минут, прежде чем звать людей. Скрипт задаёт
+`PATH` и `--config` явно: крон запускает его почти с пустым окружением, `$HOME` там
+нет и конфиг rclone не находится. Проверять правки запуском `env -i /root/dashboards-backup.sh`.
+
+Снять копию вручную (перед любой рискованной операцией):
+
+```bash
+/root/dashboards-backup.sh          # снимет, положит локально и выгрузит на Диск
+```
+
+**Восстановление** — единственная проверка, которая что-то значит. Бэкап, который не
+разворачивали, бэкапом не является:
+
+```bash
+# 1. забрать копию с Диска (а не локальную — проверяем весь путь)
+rclone --config /root/.config/rclone/rclone.conf \
+  copy "gdrive:Искенди — бэкапы аналитики/iskendi-<стамп>.db.gz" /tmp/restore --retries 5
+gunzip /tmp/restore/iskendi-<стамп>.db.gz
+
+# 2. открыть и посчитать строки, не трогая боевую базу
+docker cp /tmp/restore/iskendi-<стамп>.db dashboards-backend-1:/tmp/restored.db
+docker exec dashboards-backend-1 python3 -c "import sqlite3;\
+c=sqlite3.connect('file:/tmp/restored.db?mode=ro',uri=True);\
+print(c.execute('PRAGMA integrity_check').fetchone());\
+print([(n[0], c.execute('SELECT count(*) FROM \"%s\"' % n[0]).fetchone()[0]) \
+       for n in c.execute('SELECT name FROM sqlite_master WHERE type=\"table\"')])"
+
+# 3. вернуть в бой (только при остановленном backend — иначе снимок разъедется)
+docker compose -f docker-compose.prod.yml stop backend
+docker cp /tmp/restore/iskendi-<стамп>.db dashboards-backend-1:/data/iskendi.db
+docker compose -f docker-compose.prod.yml start backend
+```
+
+Проверено 24.08.2026: копия скачана с Диска, развёрнута, `integrity_check=ok`,
+число строк во всех 20 таблицах совпало с боевой базой.
 
 ## Запуск без домена (по IP, для теста)
 
