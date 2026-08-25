@@ -7,10 +7,10 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 
@@ -20,7 +20,7 @@ from cache import cache_clear
 from config import settings
 from constants import OLAP_FIELD_OPEN_TIME, OLAP_FIELD_ORDER_NUM, OLAP_FIELD_SUM
 from iiko_web_client import iiko_web
-from models import SessionLocal, SyncLog, init_db
+from models import RevenueDaily, SessionLocal, SyncLog, init_db
 from routers import (
     auth,
     dishes,
@@ -39,6 +39,7 @@ from scheduler import (
     sync_orders_recent,
     sync_revenue,
 )
+from services.aggregator import net_revenue
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -121,6 +122,55 @@ async def orders_today():
         "date": today,
         "orders": orders,
         "now": datetime.now(tz).strftime("%H:%M:%S"),
+    }
+
+
+@app.get("/api/summary", dependencies=[Depends(_require_internal)])
+def summary(date_: str | None = Query(default=None, alias="date")):
+    """Итоги дня для вечерней сводки iskendy_site: выручка, чеки, средний чек.
+
+    Дата параметром (`?date=YYYY-MM-DD`), по умолчанию сегодня в поясе ресторана.
+    Сводка уходит в полночь за ПРОШЕДШИЙ день, поэтому «сегодня» ей не годится.
+
+    Только из БД (`revenue_daily`), живой iiko не дёргаем: ручка вызывается по
+    расписанию, а не человеком, и не должна зависеть от доступности iikoweb.
+    Выручка — ЧИСТАЯ, после комиссии агрегатора: та же цифра, что в KPI дашборда
+    (`net_revenue`), иначе сводка и дашборд разошлись бы. Средний чек считается
+    от неё же, а не берётся из `revenue_daily.avg_check` (там брутто из iiko).
+
+    `has_data=false` — за этот день в БД нет строки (синк отстал или день ещё не
+    наступил). Тогда все три числа нули, и печатать их в сводке как факт нельзя.
+    """
+    tz = ZoneInfo(settings.timezone)
+    if date_:
+        try:
+            day = date.fromisoformat(date_)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="date must be YYYY-MM-DD")
+    else:
+        day = datetime.now(tz).date()
+
+    with SessionLocal() as db:
+        row = db.execute(select(RevenueDaily).where(RevenueDaily.date == day)).scalar_one_or_none()
+
+    if row is None:
+        return {
+            "date": day.isoformat(),
+            "revenue": 0.0,
+            "checks": 0,
+            "avg_check": 0.0,
+            "has_data": False,
+        }
+
+    gross = float(row.total_sum or 0)
+    checks = int(row.check_count or 0)
+    net, _, _ = net_revenue(gross, day, day)
+    return {
+        "date": day.isoformat(),
+        "revenue": round(net, 2),
+        "checks": checks,
+        "avg_check": round(net / checks, 2) if checks else 0.0,
+        "has_data": True,
     }
 
 

@@ -16,7 +16,7 @@ Backend (из `backend/`):
 - `pip install -r requirements.txt && python -m playwright install chromium`
 - `uvicorn main:app --reload --port 8000`
 - Триггер ручной синхронизации: `POST /api/sync`; здоровье: `GET /api/health`.
-- Тесты: `pip install -r requirements-dev.txt && python -m pytest tests/ -q`. Покрыт только контракт `/api/orders/today` (`tests/test_orders_today.py`) — внешняя ручка для сайта-табло, поломка которой не видна ни на одном экране; живой iiko в тестах не дёргается (`olap_sales` подменяется заглушкой), БД и планировщик не поднимаются. Остальное тестами не покрыто, проверка ручная.
+- Тесты: `pip install -r requirements-dev.txt && python -m pytest tests/ -q`. Покрыты контракты внутренних ручек `/api/orders/today` и `/api/summary` (`tests/test_orders_today.py`, `tests/test_summary.py`) — обе отдают данные сайту-табло, и их поломка не видна ни на одном экране; живой iiko в тестах не дёргается (`olap_sales` подменяется заглушкой), БД и планировщик не поднимаются. Остальное тестами не покрыто, проверка ручная.
 
 Frontend (из `frontend/`):
 - `npm install`, `npm run dev`, `npm run build` (`tsc -b && vite build`), `npm run lint`.
