@@ -15,6 +15,13 @@
 # `copy`, а не `sync`: локально держим 30 последних копий, sync удалял бы на
 # Диске всё, что старше, — ровно тот архив, ради которого всё затевалось.
 #
+# Куда: Яндекс.Диск. Google отвалился — rclone ходит туда под встроенным
+# client_id, общим для всех его пользователей в мире, и упирается в поминутную
+# квоту: 24.08 и 25.08 ночная выгрузка не прошла ни с первой попытки, ни со
+# второй, а ручной запуск через полчаса проходил сразу. Свой client_id завести
+# не вышло — Google требует политику конфиденциальности и подтверждённый домен.
+# У Яндекса квоты нет: 35 файлов залились с первого раза.
+#
 # На сервере лежит как /root/dashboards-backup.sh — НЕ внутри /root/dashboards,
 # чтобы не мешать `git pull` при деплое. Здесь хранится эталон; после правки
 # скопировать на сервер:
@@ -31,7 +38,7 @@ CONT=dashboards-backend-1
 DB=/data/iskendi.db
 SNAP=/tmp/iskendi-backup.db          # временный снимок внутри контейнера
 DIR=/root/backups/analytics
-DEST="gdrive:Искенди — бэкапы аналитики"
+DEST="yadisk:Искенди/бэкапы-аналитика"
 CONF=/root/.config/rclone/rclone.conf
 KEEP=30
 LOG=/var/log/iskendy-analytics-backup.log
@@ -75,9 +82,7 @@ print("%s таблиц, integrity_check=ok, %d байт" % (tables, os.path.gets
 PY
 ); then
   log "ОШИБКА снимка: $CHECK"
-  raise analytics_backup_snapshot "🔴 <b>Бэкап аналитики не снялся</b>
-Копия базы за сегодня не сделана. В базе поставщики, цены и ТТК — из iiko они не восстанавливаются.
-Смотреть: $LOG"
+  raise analytics_backup_snapshot "🔴 Бэкап аналитики не снялся. Копии за сегодня нет. $LOG"
   exit 1
 fi
 log "снимок: $CHECK"
@@ -89,8 +94,7 @@ docker exec "$CONT" rm -f "$SNAP"
 if [ ! -s "$OUT" ] || ! gzip -t "$OUT" 2>/dev/null; then
   log "ОШИБКА: архив $OUT битый или пуст"
   rm -f "$OUT"
-  raise analytics_backup_snapshot "🔴 <b>Бэкап аналитики не снялся</b>
-Архив получился битым. Смотреть: $LOG"
+  raise analytics_backup_snapshot "🔴 Бэкап аналитики не снялся: архив битый. $LOG"
   exit 1
 fi
 log "архив: $OUT ($(du -h "$OUT" | cut -f1))"
@@ -104,9 +108,9 @@ ls -1t "$DIR"/iskendi-*.db.gz 2>/dev/null | tail -n +$((KEEP + 1)) | while read 
 done
 
 # --------------------------------------------------------- выгрузка наружу
-# rclone ходит в Google под общим client_id и упирается в поминутную квоту:
-# 403 rateLimitExceeded ловится и на одном файле в сутки — отсюда --retries и
-# вторая попытка через пять минут, прежде чем звать людей.
+# Три попытки с паузой 5 минут. Сетевой промах или короткая недоступность
+# провайдера — не повод будить людей ночью: зовём, только когда не прошло ни
+# разу. Каждый промах остаётся в логе.
 upload() {
   rclone --config "$CONF" copy "$DIR" "$DEST" \
     --include "iskendi-*.db.gz" \
@@ -114,22 +118,20 @@ upload() {
     --stats-one-line >> "$LOG" 2>&1
 }
 
-if upload; then
-  log "выгружено на Диск"
-  resolve analytics_backup_drive "✅ Бэкап аналитики снова уезжает на Google Диск"
-else
-  log "первая попытка выгрузки не удалась, повтор через 5 минут"
-  sleep 300
+ATTEMPTS=3
+n=1
+while [ "$n" -le "$ATTEMPTS" ]; do
   if upload; then
-    log "выгружено со второй попытки"
-    resolve analytics_backup_drive "✅ Бэкап аналитики снова уезжает на Google Диск"
-  else
-    log "ОШИБКА выгрузки, обе попытки"
-    raise analytics_backup_drive "🔴 <b>Бэкап аналитики не уехал на Google Диск</b>
-Две попытки подряд не удались. Копия за сегодня осталась только на сервере — если он умрёт, она умрёт вместе с ним.
-Смотреть: $LOG"
-    exit 1
+    log "выгружено на Диск (попытка $n)"
+    resolve analytics_backup_drive "✅ Бэкап аналитики снова уезжает на Диск"
+    log "=== бэкап завершён ==="
+    exit 0
   fi
-fi
+  log "попытка $n из $ATTEMPTS не удалась"
+  [ "$n" -lt "$ATTEMPTS" ] && sleep 300
+  n=$((n + 1))
+done
 
-log "=== бэкап завершён ==="
+log "ОШИБКА выгрузки, все $ATTEMPTS попытки"
+raise analytics_backup_drive "🔴 Бэкап аналитики не уехал на Диск (3 попытки). Копия только на сервере. /var/log/iskendy-analytics-backup.log"
+exit 1
