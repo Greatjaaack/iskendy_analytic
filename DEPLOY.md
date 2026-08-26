@@ -8,7 +8,7 @@
 - Docker + docker compose (плагин v2).
 - **Открытые порты 80 и 443** (для Let's Encrypt и доступа к дашборду).
 - **Домен** с A-записью DNS на IP сервера (для авто-HTTPS). Без домена можно
-  по IP с self-signed (см. `Caddyfile`), но браузер будет ругаться на сертификат.
+  по IP с self-signed (см. `caddy/Caddyfile`), но браузер будет ругаться на сертификат.
 - Память: ~1–2 ГБ достаточно (Playwright поднимает Chromium на перелогин раз в ~20 мин).
   3 ГБ — с запасом, ни о чём беспокоиться не нужно.
 
@@ -160,8 +160,38 @@ docker compose -f docker-compose.prod.yml start backend
 развёрнута, `integrity_check=ok`, число строк во всех 20 таблицах совпало с
 боевой базой.
 
+## Общий Caddy — как правится
+
+Конфиг лежит в `caddy/Caddyfile` и монтируется в контейнер **каталогом**
+(`./caddy:/etc/caddy:ro`), а не файлом. Это не косметика: bind-mount одиночного
+файла держится за его inode, а `git pull` пишет новый файл и переименовывает —
+inode меняется, и контейнер продолжает читать СТАРУЮ версию. 24.08.2026 на этом
+обожглись: `caddy reload` отработал «успешно» на устаревшем конфиге, md5 файла на
+хосте и в контейнере разошлись, а поняли это только по прямой сверке. С каталогом
+`reload` честный.
+
+Caddy общий для трёх продуктов (analytics.iskendy.ru, iskendy.ru, чужой
+bot.iskendy.ru), поэтому после правки проверять **все три**, а не свой:
+
+```bash
+docker exec dashboards-caddy-1 caddy validate --config /etc/caddy/Caddyfile
+docker exec dashboards-caddy-1 caddy reload --config /etc/caddy/Caddyfile
+curl -s -o /dev/null -w "%{http_code}\n" https://analytics.iskendy.ru/api/health
+curl -s -o /dev/null -w "%{http_code}\n" https://iskendy.ru/api/health
+curl -s -o /dev/null -w "%{http_code}\n" https://bot.iskendy.ru
+```
+
+Если конфиг меняли не через git, а руками на сервере — валидировать НОВЫЙ файл
+одноразовым контейнером, иначе `caddy validate` проверит тот, что уже внутри:
+
+```bash
+docker run --rm -e DOMAIN=analytics.iskendy.ru \
+  -v /root/dashboards/caddy/Caddyfile:/etc/caddy/Caddyfile:ro \
+  caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile
+```
+
 ## Запуск без домена (по IP, для теста)
 
-В `Caddyfile` закомментировать блок `{$DOMAIN}` и раскомментировать блок `:443`
+В `caddy/Caddyfile` закомментировать блок `{$DOMAIN}` и раскомментировать блок `:443`
 с `tls internal`. Caddy отдаст self-signed сертификат — браузер предупредит, но
 соединение будет зашифровано. Для постоянной работы лучше завести домен.

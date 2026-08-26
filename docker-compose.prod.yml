@@ -46,6 +46,14 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
+    # nginx с готовой статикой ест 2-3 МБ; лимит тут не про экономию, а про то,
+    # чтобы при утечке жертву выбирал не глобальный OOM-killer по своей эвристике.
+    mem_limit: 64m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   # Реверс-прокси с автоматическим HTTPS. Проксирует всё на frontend:80,
   # а тот уже раздаёт SPA и проксирует /api на backend (см. frontend/nginx.conf).
@@ -58,11 +66,25 @@ services:
     environment:
       DOMAIN: ${DOMAIN:?нужно задать DOMAIN в .env}
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Монтируем КАТАЛОГ, а не файл. При монтировании одиночного файла bind-mount
+      # держится за его inode, а `git pull` пишет новый файл и переименовывает —
+      # inode меняется, и контейнер продолжает читать старую версию. 24.08 на этом
+      # обожглись: `caddy reload` отработал «успешно» на устаревшем конфиге, и
+      # разошлись md5 хоста и контейнера. С каталогом reload честный.
+      - ./caddy:/etc/caddy:ro
       - caddy-data:/data
       - caddy-config:/config
     depends_on:
       - frontend
+    # Caddy держит ~20 МБ; запас на перевыпуск сертификатов. Лимит тут важнее, чем
+    # у остальных: контейнер общий для трёх продуктов, и если его выберет жертвой
+    # глобальный OOM-killer, наружу пропадут сразу все домены.
+    mem_limit: 128m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   backend-data:
