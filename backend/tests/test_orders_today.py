@@ -29,9 +29,33 @@ OLAP_ROWS = [
 ]
 
 
+def _fake_session(order_rows=(), day_started=False):
+    """Подменяет БД: `day_started` — есть ли сегодня хоть один заказ."""
+
+    class FakeResult:
+        def scalar_one_or_none(self):
+            return 1 if day_started else None
+
+        def all(self):
+            return list(order_rows)
+
+    class FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def execute(self, *a, **kw):
+            return FakeResult()
+
+    return FakeSession
+
+
 @pytest.fixture
 def client(monkeypatch):
     monkeypatch.setattr(settings, "internal_token", TOKEN)
+    monkeypatch.setattr(main, "SessionLocal", _fake_session())
 
     async def fake_olap(*args, **kwargs):
         return OLAP_ROWS
@@ -86,3 +110,90 @@ def test_openTime_как_пришло_из_olap(client):
     by_num = {o["number"]: o["openTime"] for o in r.json()["orders"]}
     assert by_num[42] == "2026-08-24T12:30:15"
     assert by_num[7] == "2026-08-24T11:05:00"
+
+
+# --- устойчивость к сбоям iikoweb -------------------------------------------
+# OLAP периодически отвечает статусом ERROR, причём по истории 93% таких сбоев
+# приходятся на рабочие часы точки — когда заказы идут и табло без них слепнет.
+
+
+def test_ретрай_после_первой_ошибки(client, monkeypatch):
+    """Моргнул OLAP — переспрашиваем, а не отдаём 500."""
+    calls = {"n": 0}
+
+    async def flaky(*a, **kw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("iikoweb olap: статус ERROR")
+        return OLAP_ROWS
+
+    monkeypatch.setattr(main.iiko_web, "olap_sales", flaky)
+    r = client.get("/api/orders/today", headers={"X-Internal-Token": TOKEN})
+    assert r.status_code == 200
+    assert calls["n"] == 2
+    assert [o["number"] for o in r.json()["orders"]] == [7, 42]
+
+
+def test_обе_попытки_упали_отдаём_из_БД(client, monkeypatch):
+    """iiko недоступен — табло получает заказы из БД, а не 500."""
+
+    async def always_fails(*a, **kw):
+        raise RuntimeError("iikoweb olap: статус ERROR")
+
+    monkeypatch.setattr(main.iiko_web, "olap_sales", always_fails)
+    monkeypatch.setattr(
+        main,
+        "SessionLocal",
+        _fake_session(order_rows=[("42", "2026-08-26T12:30:15"), ("7", "2026-08-26T11:05:00")]),
+    )
+    r = client.get("/api/orders/today", headers={"X-Internal-Token": TOKEN})
+    assert r.status_code == 200
+    body = r.json()
+    # контракт тот же, что у живого ответа — источник данных наружу не виден
+    assert set(body) == {"date", "orders", "now"}
+    assert [o["number"] for o in body["orders"]] == [7, 42]
+    assert body["orders"][0]["openTime"] == "2026-08-26T11:05:00"
+
+
+def test_запасной_ответ_пишется_в_лог(client, monkeypatch, caplog):
+    """Иначе лежачий iiko спрячется за исправным на вид табло."""
+
+    async def always_fails(*a, **kw):
+        raise RuntimeError("iikoweb olap: статус ERROR")
+
+    monkeypatch.setattr(main.iiko_web, "olap_sales", always_fails)
+    with caplog.at_level("WARNING"):
+        client.get("/api/orders/today", headers={"X-Internal-Token": TOKEN})
+    assert any("отдаю из БД" in m for m in caplog.messages)
+
+
+# --- «тихий» режим, пока заказов за день нет ---------------------------------
+
+
+def test_пока_заказов_нет_ходим_в_iiko_реже(client, monkeypatch):
+    """Ночь, точка закрыта: запрос раз в минуту вместо 6 раз в минуту."""
+    seen = {}
+
+    async def spy(*a, **kw):
+        seen["ttl"] = kw.get("cache_ttl")
+        return []
+
+    monkeypatch.setattr(main.iiko_web, "olap_sales", spy)
+    monkeypatch.setattr(settings, "idle_poll_seconds", 60)
+    client.get("/api/orders/today", headers={"X-Internal-Token": TOKEN})
+    assert seen["ttl"] == 60
+
+
+def test_после_первого_заказа_режим_обычный(client, monkeypatch):
+    """Смена открылась — свежесть важнее экономии, TTL общий."""
+    seen = {}
+
+    async def spy(*a, **kw):
+        seen["ttl"] = kw.get("cache_ttl")
+        return OLAP_ROWS
+
+    monkeypatch.setattr(main.iiko_web, "olap_sales", spy)
+    monkeypatch.setattr(main, "SessionLocal", _fake_session(day_started=True))
+    monkeypatch.setattr(settings, "idle_poll_seconds", 60)
+    client.get("/api/orders/today", headers={"X-Internal-Token": TOKEN})
+    assert seen["ttl"] is None

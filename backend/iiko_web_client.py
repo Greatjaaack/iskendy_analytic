@@ -256,6 +256,7 @@ class IikoWebClient:
         date_from: str,
         date_to: str,
         poll_attempts: int = 30,
+        cache_ttl: int | None = None,
     ) -> list[dict]:
         """OLAP-отчёт SALES: init → поллинг статуса → выгрузка результата.
 
@@ -307,7 +308,7 @@ class IikoWebClient:
             resp = await self._post(f"/api/olap/fetch/{h}/{OLAP_VIEW_SIMPLE}", req)
             return resp.get("result", {}).get("rows", [])
 
-        return await cached_or_call(cache_key, _fetch)
+        return await cached_or_call(cache_key, _fetch, ttl=cache_ttl)
 
     # Каталог всех метрик (408 шт) — справочник кодов/названий
     async def metrics_catalog(self) -> list[dict]:
