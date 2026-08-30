@@ -331,11 +331,19 @@ async def sync_orders_range(date_from: date, date_to: date):
     отдельно — чтобы сплит-оплата не дублировала позиции).
     """
     df, dt = date_from.isoformat(), date_to.isoformat()
+    # Синк ждёт кассу дольше ручки табло: его никто не держит на линии, а его
+    # результат — та самая БД, из которой ручка отвечает мгновенно, когда касса
+    # больна. 27.08.2026 касса два часа собирала выборку дольше 30 секунд, синк
+    # сдавался на каждой попытке, БД осталась пустой — и запасной путь табло,
+    # рассчитанный ровно на этот случай, оказался пустым тоже.
+    terpenie = settings.sync_poll_attempts
     item_rows = await iiko_web.olap_sales(
-        group_fields=_ITEM_GROUP, data_fields=_ITEM_DATA, date_from=df, date_to=dt
+        group_fields=_ITEM_GROUP, data_fields=_ITEM_DATA, date_from=df, date_to=dt,
+        poll_attempts=terpenie,
     )
     attr_rows = await iiko_web.olap_sales(
-        group_fields=_ATTR_GROUP, data_fields=[OLAP_FIELD_SUM], date_from=df, date_to=dt
+        group_fields=_ATTR_GROUP, data_fields=[OLAP_FIELD_SUM], date_from=df, date_to=dt,
+        poll_attempts=terpenie,
     )
     items = _parse_order_rows(item_rows)
     attrs = _parse_order_attrs(attr_rows)

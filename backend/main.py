@@ -137,23 +137,31 @@ async def orders_today():
             cache_ttl=ttl,
         )
 
+    async def fetch_live_s_povtorom() -> list[dict]:
+        try:
+            return await fetch_live()
+        except Exception as first_error:
+            logger.warning("orders/today: живой OLAP не ответил (%s), повторяю", first_error)
+            await asyncio.sleep(1)
+            return await fetch_live()
+
     orders: list[dict] = []
     try:
-        rows = await fetch_live()
-    except Exception as first_error:
-        logger.warning("orders/today: живой OLAP не ответил (%s), повторяю", first_error)
-        await asyncio.sleep(1)
-        try:
-            rows = await fetch_live()
-        except Exception as error:
-            orders = _orders_from_db(today)
-            logger.warning(
-                "orders/today: iiko недоступен (%s), отдаю из БД: %d заказов "
-                "(данные могут отставать на время синка)",
-                error,
-                len(orders),
-            )
-            rows = []
+        # Жёсткий потолок на весь живой путь, включая повтор. Без него попытка,
+        # пауза и повтор складывались в 121 секунду — вчетверо дольше, чем табло
+        # готово ждать, так что даже удачный ответ до него не доезжал.
+        rows = await asyncio.wait_for(
+            fetch_live_s_povtorom(), timeout=settings.orders_live_budget_sec
+        )
+    except Exception as error:
+        orders = _orders_from_db(today)
+        logger.warning(
+            "orders/today: iiko недоступен (%s), отдаю из БД: %d заказов "
+            "(данные могут отставать на время синка)",
+            type(error).__name__ if isinstance(error, asyncio.TimeoutError) else error,
+            len(orders),
+        )
+        rows = []
 
     for r in rows:
         # field0 = "<OrderNum>, <OpenTime ISO>" (склейка групп через ", ")

@@ -197,3 +197,70 @@ def test_после_первого_заказа_режим_обычный(client
     monkeypatch.setattr(settings, "idle_poll_seconds", 60)
     client.get("/api/orders/today", headers={"X-Internal-Token": TOKEN})
     assert seen["ttl"] is None
+
+
+# --- потолок ожидания живой кассы --------------------------------------------
+
+
+def test_медленная_kassa_ne_derzhit_tablo(client, monkeypatch):
+    """Больная касса не должна утаскивать табло за собой.
+
+    27.08.2026 касса собирала выборку дольше, чем ждал клиент, и ручка тратила
+    60 секунд на попытку, секунду на паузу и ещё 60 на повтор. Табло обрывает
+    связь на 30-й секунде, поэтому за два часа не получило ни одного ответа —
+    включая удачные, приходившие на 77–106-й секунде. Ответ, опоздавший к сроку
+    вызывающего, равен отсутствию ответа.
+    """
+    import asyncio
+
+    async def medlennaya(*a, **kw):
+        await asyncio.sleep(30)
+        return OLAP_ROWS
+
+    monkeypatch.setattr(settings, "orders_live_budget_sec", 0.05)
+    monkeypatch.setattr(main.iiko_web, "olap_sales", medlennaya)
+    monkeypatch.setattr(
+        main,
+        "SessionLocal",
+        _fake_session(order_rows=[("11", "2026-08-27T12:07:02")]),
+    )
+    r = client.get("/api/orders/today", headers={"X-Internal-Token": TOKEN})
+    assert r.status_code == 200
+    # дождались запасного пути, а не живого ответа
+    assert [o["number"] for o in r.json()["orders"]] == [11]
+
+
+def test_potolok_nakryvaet_i_povtor(client, monkeypatch, caplog):
+    """Потолок считается на весь живой путь, а не на одну попытку.
+
+    Иначе неудачная попытка, пауза и повтор складывались бы в двойное ожидание —
+    ровно та арифметика, что дала 121 секунду при 30-секундном терпении табло.
+    """
+    import asyncio
+
+    popytok = {"n": 0}
+
+    async def upala_potom_visnet(*a, **kw):
+        popytok["n"] += 1
+        if popytok["n"] == 1:
+            raise RuntimeError("iikoweb olap: статус ERROR")
+        await asyncio.sleep(30)
+        return OLAP_ROWS
+
+    monkeypatch.setattr(settings, "orders_live_budget_sec", 0.05)
+    monkeypatch.setattr(main.iiko_web, "olap_sales", upala_potom_visnet)
+    with caplog.at_level("WARNING"):
+        r = client.get("/api/orders/today", headers={"X-Internal-Token": TOKEN})
+    assert r.status_code == 200
+    assert any("отдаю из БД" in m for m in caplog.messages)
+
+
+def test_bystraya_kassa_otvechaet_zhivymi_dannymi(client):
+    """Здоровая касса укладывается в потолок — табло получает живые заказы.
+
+    Обратная сторона: потолок не должен превращать рабочую кассу в вечный
+    запасной путь.
+    """
+    r = client.get("/api/orders/today", headers={"X-Internal-Token": TOKEN})
+    assert r.status_code == 200
+    assert [o["number"] for o in r.json()["orders"]] == [7, 42]
