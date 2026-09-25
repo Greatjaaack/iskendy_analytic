@@ -9,6 +9,7 @@
 from datetime import date, timedelta
 
 from fastapi import APIRouter, Query
+from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 
 from constants import (
@@ -61,10 +62,24 @@ def get_plan():
     }
 
 
+class PlanCellIn(BaseModel):
+    """Дневная норма одной клетки плана (дейпарт × группа дня недели)."""
+
+    revenue: float = Field(default=0, ge=0, le=10_000_000)
+    avg_check: float = Field(default=0, ge=0, le=1_000_000)
+    guests: float = Field(default=0, ge=0, le=100_000)
+
+
+class PlanIn(BaseModel):
+    """Матрица плана: ключ клетки — «<дейпарт>|<группа>». Неизвестные ключи игнорируем."""
+
+    cells: dict[str, PlanCellIn] = Field(default_factory=dict)
+
+
 @router.put("")
-def save_plan(payload: dict):
-    """Сохранить план: payload.cells = {"<дейпарт>|<группа>": {revenue, avg_check, guests}}."""
-    cells = payload.get("cells", {})
+def save_plan(body: PlanIn):
+    """Сохранить план: `cells` = {"<дейпарт>|<группа>": {revenue, avg_check, guests}}."""
+    cells = body.cells
     with SessionLocal() as db:
         existing = {
             (r.daypart_key, r.weekday_group): r for r in db.execute(select(DaypartPlan)).scalars()
@@ -81,9 +96,9 @@ def save_plan(payload: dict):
             if row is None:
                 row = DaypartPlan(daypart_key=dpk, weekday_group=gk)
                 db.add(row)
-            row.revenue = float(vals.get("revenue", 0) or 0)
-            row.avg_check = float(vals.get("avg_check", 0) or 0)
-            row.guests = float(vals.get("guests", 0) or 0)
+            row.revenue = vals.revenue
+            row.avg_check = vals.avg_check
+            row.guests = vals.guests
         db.commit()
     return {"ok": True}
 

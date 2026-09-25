@@ -8,8 +8,10 @@
 
 import calendar
 from datetime import date, timedelta
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, status
+from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 
 from models import Employee, SessionLocal, Shift
@@ -132,20 +134,40 @@ def list_employees():
         return [_emp_dict(e) for e in emps]
 
 
+class EmployeeIn(BaseModel):
+    """Сотрудник: что можно прислать. Кривой ввод теперь 422, а не 500 в глубине кода."""
+
+    name: str = Field(default="", max_length=120)
+    role: str = Field(default="", max_length=120)
+    # список обязан совпадать с LABOR_GROUPS ниже — это проверяет тест
+    labor_group: Literal["operational", "admin"] = "operational"
+    # список обязан совпадать с PAY_TYPES ниже — это проверяет тест
+    pay_type: Literal["shift", "month"] = "shift"
+    rate: float = Field(default=0, ge=0, le=1_000_000)
+    active: bool = True
+
+
+class EmployeePatch(BaseModel):
+    """То же, но все поля необязательны: правим только присланное."""
+
+    name: str | None = Field(default=None, max_length=120)
+    role: str | None = Field(default=None, max_length=120)
+    labor_group: Literal["operational", "admin"] | None = None
+    pay_type: Literal["shift", "month"] | None = None
+    rate: float | None = Field(default=None, ge=0, le=1_000_000)
+    active: bool | None = None
+
+
 @router.post("/employees")
-def create_employee(payload: dict):
+def create_employee(body: EmployeeIn):
     with SessionLocal() as db:
         e = Employee(
-            name=(payload.get("name") or "").strip() or "Без имени",
-            role=(payload.get("role") or "").strip(),
-            labor_group=(
-                payload.get("labor_group")
-                if payload.get("labor_group") in LABOR_GROUPS
-                else "operational"
-            ),
-            pay_type=payload.get("pay_type") if payload.get("pay_type") in PAY_TYPES else "shift",
-            rate=float(payload.get("rate", 0) or 0),
-            active=bool(payload.get("active", True)),
+            name=body.name.strip() or "Без имени",
+            role=body.role.strip(),
+            labor_group=body.labor_group,
+            pay_type=body.pay_type,
+            rate=body.rate,
+            active=body.active,
         )
         db.add(e)
         db.commit()
@@ -153,23 +175,23 @@ def create_employee(payload: dict):
 
 
 @router.put("/employees/{emp_id}")
-def update_employee(emp_id: int, payload: dict):
+def update_employee(emp_id: int, body: EmployeePatch):
     with SessionLocal() as db:
         e = db.get(Employee, emp_id)
         if not e:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Сотрудник не найден")
-        if "name" in payload:
-            e.name = (payload.get("name") or "").strip() or e.name
-        if "role" in payload:
-            e.role = (payload.get("role") or "").strip()
-        if payload.get("labor_group") in LABOR_GROUPS:
-            e.labor_group = payload["labor_group"]
-        if payload.get("pay_type") in PAY_TYPES:
-            e.pay_type = payload["pay_type"]
-        if "rate" in payload:
-            e.rate = float(payload.get("rate", 0) or 0)
-        if "active" in payload:
-            e.active = bool(payload["active"])
+        if body.name is not None:
+            e.name = body.name.strip() or e.name
+        if body.role is not None:
+            e.role = body.role.strip()
+        if body.labor_group is not None:
+            e.labor_group = body.labor_group
+        if body.pay_type is not None:
+            e.pay_type = body.pay_type
+        if body.rate is not None:
+            e.rate = body.rate
+        if body.active is not None:
+            e.active = body.active
         db.commit()
         return _emp_dict(e)
 
@@ -196,11 +218,17 @@ def get_shifts(year: int = Query(...), month: int = Query(..., ge=1, le=12)):
         return [{"employee_id": s.employee_id, "date": s.date.isoformat()} for s in rows]
 
 
+class ShiftToggleIn(BaseModel):
+    """Смена: сотрудник и день. Раньше отсутствие поля давало 500."""
+
+    employee_id: int = Field(ge=1)
+    date: date
+
+
 @router.post("/shifts/toggle")
-def toggle_shift(payload: dict):
+def toggle_shift(body: ShiftToggleIn):
     """Переключить смену сотрудника в дне (есть → удалить, нет → создать)."""
-    emp_id = int(payload.get("employee_id"))
-    d = date.fromisoformat(payload["date"])
+    emp_id, d = body.employee_id, body.date
     with SessionLocal() as db:
         existing = db.execute(
             select(Shift).where(Shift.employee_id == emp_id, Shift.date == d)

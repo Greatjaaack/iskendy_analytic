@@ -5,6 +5,7 @@
 """
 
 import asyncio
+import hmac
 import logging
 from contextlib import asynccontextmanager
 from datetime import date, datetime
@@ -59,12 +60,18 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Iskendy Analytics API", lifespan=lifespan)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# CORS нужен только локальной разработке: на проде фронт и API отдаются с одного адреса
+# (nginx проксирует `/api` на backend), то есть запросы same-origin и CORS не участвует.
+# Раньше здесь стояло `allow_origins=["*"]` — любой сайт мог из браузера жертвы дёргать
+# наши ручки; токен лежит в localStorage, так что данные бы не утекли, но и открывать
+# ручки всему интернету незачем.
+if settings.cors_origin_list:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origin_list,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 # Авторизация: роутер логина — публичный; все остальные закрыты зависимостью require_auth.
 app.include_router(auth.router)
@@ -86,8 +93,15 @@ def health():
 
 
 def _require_internal(x_internal_token: str = Header(default="")) -> None:
-    """Сервис-сервисная авторизация внутренних ручек по общему токену из .env."""
-    if not settings.internal_token or x_internal_token != settings.internal_token:
+    """Сервис-сервисная авторизация внутренних ручек по общему токену из .env.
+
+    Сверка в константное время (`hmac.compare_digest` по байтам): обычное `!=`
+    сравнивает до первого различия, а по времени ответа токен можно подбирать
+    посимвольно. Пустой токен в настройках = ручки выключены.
+    """
+    if not settings.internal_token:
+        raise HTTPException(status_code=401, detail="internal token required")
+    if not hmac.compare_digest(x_internal_token.encode(), settings.internal_token.encode()):
         raise HTTPException(status_code=401, detail="internal token required")
 
 

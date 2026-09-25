@@ -5,7 +5,7 @@
 `ttk_ingredients`, `dish_mappings`). Миграций нет — при смене схемы пересоздаём БД.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import (
     Boolean,
@@ -58,6 +58,16 @@ def _sqlite_pragmas(dbapi_connection, _record):
         cursor.close()
 
 
+def utc_now() -> datetime:
+    """Текущее время UTC без таймзоны — ровно то, что раньше давал `datetime.utcnow()`.
+
+    Naive намеренно: столбцы `DateTime` в SQLite хранят время без смещения, и потребители
+    (`/api/sync/last` дописывает «Z») рассчитывают именно на такую метку. `utcnow()`
+    объявлен устаревшим в 3.12, поэтому берём то же значение через aware-время.
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
 class Base(DeclarativeBase):
     pass
 
@@ -73,7 +83,7 @@ class RevenueDaily(Base):
     cost_sum = Column(Float, default=0)  # PRODUCTS_USAGE_THEO_AMT (себестоимость)
     check_count = Column(Integer, default=0)  # TRN_ALL
     avg_check = Column(Float, default=0)  # AVERAGE_SPEND_GROSS
-    updated_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=utc_now)
 
 
 class DishSale(Base):
@@ -89,7 +99,7 @@ class DishSale(Base):
     quantity = Column(Float, default=0)
     revenue = Column(Float, default=0)
     cost_sum = Column(Float, default=0)
-    updated_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=utc_now)
 
 
 class OrderItem(Base):
@@ -189,7 +199,7 @@ class SyncLog(Base):
     sync_type = Column(String)
     status = Column(String)
     message = Column(String, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
 
 
 # ---------- Поставщики, номенклатура, ТТК (Фазы 1–3) ----------
@@ -203,8 +213,8 @@ class Supplier(Base):
     address = Column(String, default="")
     min_delivery = Column(String, default="")  # мин. поставка (текстом: сумма/условия)
     comment = Column(String, default="")
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
     files = relationship("SupplierFile", back_populates="supplier", cascade="all, delete-orphan")
     prices = relationship("SupplierPrice", back_populates="supplier", cascade="all, delete-orphan")
@@ -226,7 +236,7 @@ class SupplierContact(Base):
     telegram = Column(String, default="")  # @username или ссылка
     email = Column(String, default="")
     comment = Column(String, default="")  # напр. «склад», «бухгалтерия»
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
 
     supplier = relationship("Supplier", back_populates="contacts")
 
@@ -239,7 +249,7 @@ class SupplierFile(Base):
     filename = Column(String)  # оригинальное имя
     path = Column(String)  # путь в /data/files
     file_type = Column(String, default="other")  # invoice | price | other
-    uploaded_at = Column(DateTime, default=datetime.utcnow)
+    uploaded_at = Column(DateTime, default=utc_now)
 
     supplier = relationship("Supplier", back_populates="files")
 
@@ -254,7 +264,7 @@ class Ingredient(Base):
     name_norm = Column(String, unique=True, index=True)  # lower/trim — ключ связывания
     unit = Column(String, default="")  # г / мл / шт
     iiko_product_id = Column(String, nullable=True)  # связь с iiko (Фаза 6)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
 
     prices = relationship(
         "SupplierPrice", back_populates="ingredient", cascade="all, delete-orphan"
@@ -274,7 +284,7 @@ class SupplierPrice(Base):
     unit_price = Column(Float, nullable=True)  # цена за 1 ед.изм.
     price_date = Column(Date, nullable=True)  # дата проценки
     source = Column(String, default="import")  # import | invoice
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
 
     supplier = relationship("Supplier", back_populates="prices")
     ingredient = relationship("Ingredient", back_populates="prices")
@@ -298,7 +308,7 @@ class Ttk(Base):
         Float, nullable=True
     )  # с/с ПОРЦИИ «общая» (продукты+списания+упаковка), «Сводная»
     dish_iiko_id = Column(String, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
 
     lines = relationship(
         "TtkIngredient",
@@ -343,7 +353,7 @@ class DishMapping(Base):
     sale_name = Column(String)  # как называется в продажах
     sale_name_norm = Column(String, unique=True, index=True)  # ключ сопоставления
     ttk_id = Column(Integer, ForeignKey("ttk.id"))
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
 
     ttk = relationship("Ttk")
 
@@ -366,7 +376,7 @@ class DaypartPlan(Base):
     revenue = Column(Float, default=0.0)  # дневная норма выручки
     avg_check = Column(Float, default=0.0)  # целевой средний чек
     guests = Column(Float, default=0.0)  # дневная норма гостей
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
     __table_args__ = (UniqueConstraint("daypart_key", "weekday_group", name="uq_daypart_group"),)
 
@@ -404,7 +414,7 @@ class PnlMonth(Base):
     motivation_pct = Column(Float, default=15.0)  # мотивация управляющего-партнёра
     # конфиг загрузки (для метрик выручка/час, чеков/час)
     work_hours = Column(Integer, default=12)  # рабочих часов в день
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
     __table_args__ = (UniqueConstraint("year", "month", name="uq_pnl_year_month"),)
 
@@ -428,7 +438,7 @@ class PnlDayCost(Base):
     packaging = Column(Float, default=0.0)  # упаковка ₽ за день
     chemicals = Column(Float, default=0.0)  # химия / моющие ₽ за день
     supplies = Column(Float, default=0.0)  # расходники (салфетки/перчатки) ₽ за день
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
 
 class Employee(Base):
@@ -450,7 +460,7 @@ class Employee(Base):
     pay_type = Column(String, default="shift")  # shift | month
     rate = Column(Float, default=0.0)  # ₽ за смену (shift) или ₽/мес (month)
     active = Column(Boolean, default=True)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
 
 class Shift(Base):
@@ -464,7 +474,7 @@ class Shift(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     employee_id = Column(Integer, ForeignKey("employees.id"), index=True)
     date = Column(Date, index=True)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
     __table_args__ = (UniqueConstraint("employee_id", "date", name="uq_shift_emp_date"),)
 

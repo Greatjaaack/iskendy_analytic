@@ -10,6 +10,7 @@ from pydantic import BaseModel, field_validator
 from sqlalchemy import func, select
 
 import storage
+from config import settings
 from models import Ingredient, SessionLocal, Supplier, SupplierContact, SupplierFile, SupplierPrice
 from utils import normalize_email, normalize_phone
 
@@ -304,8 +305,19 @@ async def upload_file(
         s = db.get(Supplier, supplier_id)
         if not s:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "поставщик не найден")
-        data = await file.read()
-        path, original = storage.save_bytes(data, file.filename or "file")
+        try:
+            path, original = await storage.save_upload(file, file.filename or "file")
+        except storage.UploadTooLarge:
+            raise HTTPException(
+                status.HTTP_413_CONTENT_TOO_LARGE,
+                f"файл больше {settings.max_upload_mb} МБ",
+            )
+        except storage.UploadNotAllowed as exc:
+            raise HTTPException(
+                status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                f"такие файлы не принимаем: {exc}. Можно: "
+                + ", ".join(sorted(storage.ALLOWED_EXTENSIONS)),
+            )
         rec = SupplierFile(
             supplier_id=supplier_id, filename=original, path=path, file_type=file_type
         )

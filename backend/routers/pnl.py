@@ -41,10 +41,13 @@ MTD/диапазона). Ставки-% (налог УСН, комиссия а�
 """
 
 import calendar
-from datetime import date, timedelta
+from datetime import date
+from datetime import date as Date
+from datetime import timedelta
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query, status
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import func, select
 
 from constants import (
@@ -201,11 +204,41 @@ def get_costs(year: int = Query(...), month: int = Query(..., ge=1, le=12)):
     }
 
 
+class CostsIn(BaseModel):
+    """Затраты месяца: год, месяц и ₽-поля из `PNL_MANUAL_FIELDS` + ставки.
+
+    Раньше было `payload: dict` и `int(payload.get("year"))` — запрос без года отвечал
+    500 вместо 422, а отрицательная аренда сохранялась молча.
+    """
+
+    model_config = {"extra": "ignore"}
+
+    year: int = Field(ge=2020, le=2100)
+    month: int = Field(ge=1, le=12)
+    tax_pct: float = Field(default=6, ge=0, le=100)
+    aggregator_pct: float = Field(default=0, ge=0, le=100)
+    motivation_pct: float = Field(default=15, ge=0, le=100)
+    work_hours: int = Field(default=12, ge=1, le=24)
+    amounts: dict[str, float] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _collect_amounts(cls, data):
+        """₽-поля приходят плоско (`rent`, `utilities`, …) — собираем их в один словарь."""
+        if not isinstance(data, dict):
+            return data
+        known = {k for k, _ in PNL_MANUAL_FIELDS}
+        data = dict(data)
+        data["amounts"] = {
+            k: float(v or 0) for k, v in data.items() if k in known and v is not None
+        }
+        return data
+
+
 @router.put("/costs")
-def save_costs(payload: dict):
-    """Сохранить затраты месяца. payload: {year, month, <поля>...}."""
-    year = int(payload.get("year"))
-    month = int(payload.get("month"))
+def save_costs(body: CostsIn):
+    """Сохранить затраты месяца."""
+    year, month = body.year, body.month
     with SessionLocal() as db:
         row = db.execute(
             select(PnlMonth).where(PnlMonth.year == year, PnlMonth.month == month)
@@ -214,11 +247,11 @@ def save_costs(payload: dict):
             row = PnlMonth(year=year, month=month)
             db.add(row)
         for f, _ in PNL_MANUAL_FIELDS:
-            setattr(row, f, float(payload.get(f, 0) or 0))
-        row.tax_pct = float(payload.get("tax_pct", 6) or 0)
-        row.aggregator_pct = float(payload.get("aggregator_pct", 0) or 0)
-        row.motivation_pct = float(payload.get("motivation_pct", 15) or 0)
-        row.work_hours = int(payload.get("work_hours", 12) or 12)
+            setattr(row, f, max(0.0, body.amounts.get(f, 0.0)))
+        row.tax_pct = body.tax_pct
+        row.aggregator_pct = body.aggregator_pct
+        row.motivation_pct = body.motivation_pct
+        row.work_hours = body.work_hours
         db.commit()
     return {"ok": True}
 
@@ -272,21 +305,43 @@ def get_day_costs(date_from: str = Query(...), date_to: str = Query(...)):
     }
 
 
+class DayCostIn(BaseModel):
+    """Дневные переменные затраты одного дня (списания/упаковка/химия/расходники)."""
+
+    model_config = {"extra": "ignore"}
+
+    date: Date
+    amounts: dict[str, float] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _collect_amounts(cls, data):
+        if not isinstance(data, dict):
+            return data
+        known = {k for k, _ in PNL_DAY_COST_FIELDS}
+        data = dict(data)
+        data["amounts"] = {
+            k: float(v or 0) for k, v in data.items() if k in known and v is not None
+        }
+        return data
+
+
+class DayCostsIn(BaseModel):
+    days: list[DayCostIn] = Field(default_factory=list, max_length=400)
+
+
 @router.put("/day-costs")
-def save_day_costs(payload: dict):
-    """Сохранить дневные затраты. payload: {days: [{date, writeoffs, ...}, ...]}."""
-    rows = payload.get("days") or []
+def save_day_costs(body: DayCostsIn):
+    """Сохранить дневные затраты (по одному дню на строку)."""
     with SessionLocal() as db:
-        for r in rows:
-            iso = str(r.get("date") or "")
-            if not iso:
-                continue
+        for r in body.days:
+            iso = r.date.isoformat()
             existing = db.get(PnlDayCost, iso)
             if existing is None:
                 existing = PnlDayCost(date=iso)
                 db.add(existing)
             for k, _ in PNL_DAY_COST_FIELDS:
-                setattr(existing, k, float(r.get(k, 0) or 0))
+                setattr(existing, k, max(0.0, r.amounts.get(k, 0.0)))
         db.commit()
     return {"ok": True}
 

@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     # чем «database is locked» на запросе дашборда или ручки табло.
     sqlite_busy_timeout_ms: int = 5000
     files_dir: str = "/data/files"
+    # Максимальный размер загружаемого файла (накладные/прайсы), МБ. У контейнера лимит
+    # памяти 512 МБ, поэтому загрузка читается кусками и обрывается на этом пороге.
+    max_upload_mb: int = 10
 
     # часовой пояс ресторана: определяет границы «сегодня/неделя/месяц» и расписание
     # синков. Не зависит от TZ контейнера (там обычно UTC). Точка московская (см. погоду).
@@ -93,6 +96,11 @@ class Settings(BaseSettings):
     # Срок жизни токена сессии, часов.
     jwt_ttl_hours: int = 12
 
+    # Разрешённые источники для CORS, через запятую. На проде фронт и API живут за одним
+    # адресом (nginx проксирует /api), поэтому CORS там не участвует вовсе; список нужен
+    # для локальной разработки, где vite поднимается на 5173. Пусто = CORS выключен.
+    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+
     # Сервисный токен для внутренних read-only ручек (напр. табло заказов
     # iskendy_site тянет `/api/orders/today`). Пустой — ручка отключена (401).
     internal_token: str = ""
@@ -111,6 +119,11 @@ class Settings(BaseSettings):
     # кнопкой «Обновить из таблицы» — бэкенд тянет публичный xlsx-экспорт (таблица
     # открыта «по ссылке»), парсит и заполняет `PnlMonth`. `pnl_sheet_id` — id документа.
     pnl_sheet_id: str = "1RltnlXXNkskwYLoZocUJils_4oydj2iNj0M1jK2b9SY"
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        """Разобранный `cors_origins` → список адресов (пустой = CORS не подключаем)."""
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
 
 settings = Settings()

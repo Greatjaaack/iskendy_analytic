@@ -62,11 +62,16 @@ def verify_token(token: str) -> dict:
 
 
 def verify_credentials(username: str, password: str) -> bool:
-    """Сверить логин/пароль с настройками (константное время). Пустой пароль = вход выключен."""
+    """Сверить логин/пароль с настройками (константное время). Пустой пароль = вход выключен.
+
+    Сравниваем БАЙТЫ: `hmac.compare_digest` на строках требует ASCII и на логине с
+    кириллицей бросал `TypeError` — вход отвечал 500 вместо 401, то есть подсказывал
+    перебирающему, что он ввёл что-то необычное.
+    """
     if not settings.auth_password:
         return False
-    ok_user = hmac.compare_digest(username, settings.auth_username)
-    ok_pass = hmac.compare_digest(password, settings.auth_password)
+    ok_user = hmac.compare_digest(username.encode(), settings.auth_username.encode())
+    ok_pass = hmac.compare_digest(password.encode(), settings.auth_password.encode())
     return ok_user and ok_pass
 
 

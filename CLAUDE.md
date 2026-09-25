@@ -35,6 +35,22 @@ Frontend (из `frontend/`):
 ### Авторизация в iikoweb (ключевой нюанс)
 `backend/iiko_web_client.py` — внутренний API защищён cookie-сессией (TTL ~20 мин), отдельного login-endpoint нет. `_login()` поднимает **headless Chromium через Playwright**, вводит логин/пароль как человек на странице `/navigator/index.html#/auth/login`, забирает cookies и дальше шлёт быстрые JSON-запросы через `httpx` с этими куками. `_ensure_session()` проверяет сессию через `/api/auth` и перелогинивается при истечении; `_post()` при 401/403 сбрасывает куки и повторяет один раз. Пароль — только в `.env`.
 
+### Защита ручек (этап 4 аудита, 25.09.2026)
+**Перебор пароля** — `backend/ratelimit.py`: скользящее окно на минуту по IP,
+`LOGIN_LIMIT` = 10 попыток, ответ 429; адрес берётся из `X-Forwarded-For` только если
+запрос пришёл из приватной сети (то есть от нашего прокси), иначе заголовок можно было бы
+подделать. **Сверка секретов — по байтам** через `hmac.compare_digest`: логин/пароль
+(`auth.verify_credentials`; на строках падал `TypeError` → 500 вместо 401 при кириллице) и
+internal-токен (`main._require_internal`; обычное `!=` сравнивает до первого различия).
+**Загрузка файлов** — `storage.save_upload`: пишется кусками, обрывается на
+`MAX_UPLOAD_MB` (413) и принимает только `storage.ALLOWED_EXTENSIONS` (415); недописанный
+файл удаляется. Раньше `await file.read()` тянул файл целиком в память при `mem_limit:
+512m`. **Тела write-ручек — pydantic-схемы** (`plan`, `pnl/costs`, `pnl/day-costs`,
+`schedule/employees` ×2, `schedule/shifts/toggle`): было `payload: dict`, и запрос без
+обязательного поля падал 500 в глубине кода. `Literal` в схемах совпадает со
+справочниками роутера — это проверяет тест. **CORS** — только `CORS_ORIGINS` (по умолчанию
+localhost для dev; на проде фронт и API за одним адресом, CORS не участвует), было `*`.
+
 ### Авторизация дашборда (логин/пароль)
 Весь дашборд закрыт за экраном входа. **Бэкенд** (`backend/auth.py`): один общий логин/пароль из `.env` (`AUTH_USERNAME`/`AUTH_PASSWORD`; пустой пароль = вход выключен, сверка в константное время через `hmac.compare_digest`). Сессия — **JWT (HS256), подписан вручную на `hmac`** (без внешних зависимостей), TTL `JWT_TTL_HOURS` (дефолт 12 ч); секрет подписи — `JWT_SECRET`, при пустом выводится из пароля (`iskendy:<auth_password>`). Роутер `backend/routers/auth.py`: `POST /api/auth/login` (логин/пароль → `{token, username}`), `GET /api/auth/me` (проверка токена). Зависимость **`require_auth`** (Bearer-JWT, иначе 401) навешена в `main.py` на **все роутеры и `/api/sync*`**; публичны только `/api/health` и `/api/auth/login`. **Фронт**: токен в localStorage (`src/token.ts`), axios-перехватчики (`src/api.ts`) добавляют `Authorization: Bearer` и при 401 чистят токен + редиректят на `/login`; guard `RequireAuth` (`src/auth.tsx`) оборачивает защищённые роуты в `App.tsx`; экран входа — `src/pages/Login.tsx`; кнопка «Выйти» — в `Sidebar`. Это **локальная авторизация дашборда**, не путать с cookie-сессией iikoweb выше.
 
