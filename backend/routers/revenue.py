@@ -1,6 +1,7 @@
 """Роутер выручки: по дням (из БД либо живой за произвольный диапазон) и по часам."""
 
-from datetime import date, timedelta
+import asyncio
+from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Query
 from sqlalchemy import func, select
@@ -39,7 +40,7 @@ from services.ops_aggregation import (
     period_plan,
     plan_pct,
 )
-from services.order_store import order_rows
+from services.order_store import order_rows, stored_covers
 from utils import (
     is_delivery,
     payment_group,
@@ -88,6 +89,14 @@ def _channel_revenue(rows: list[dict], bucket_field: str) -> dict[str, dict[str,
 
 
 router = APIRouter(prefix="/api/revenue", tags=["revenue"])
+
+
+def _daterange(start: date, end: date):
+    """Дни периода включительно."""
+    day = start
+    while day <= end:
+        yield day
+        day += timedelta(days=1)
 
 
 def _ru_dow(d: date) -> str:
@@ -147,6 +156,56 @@ def _days_from_db(date_from: date, date_to: date) -> list[dict]:
     ]
 
 
+def _days_from_items(date_from: date, date_to: date) -> list[dict]:
+    """Дни периода, собранные из позиций заказов (`order_items`).
+
+    Нужны там, где `revenue_daily` пуст, а заказы есть: сводка по дням синкается только
+    за последний месяц, а позиции — за всю историю (бэкафилл). Раньше такие периоды
+    уходили живым запросом в кассу — 8,4 секунды на месяц и полная зависимость от её
+    доступности, хотя данные лежали в двух таблицах рядом.
+
+    Числа те же, что в сводке: выручка — сумма позиций без служебных строк («Статус»),
+    чек — заказ с хотя бы одной товарной позицией (номер уникален внутри дня), скидка —
+    разница брутто и нетто. Возвратов в позициях нет, поэтому 0.
+    """
+    товарные = OrderItem.category != ORDER_STATUS_CATEGORY
+    window = (OrderItem.date >= date_from, OrderItem.date <= date_to)
+    with SessionLocal() as db:
+        sums = db.execute(
+            select(
+                OrderItem.date,
+                func.sum(OrderItem.sum),
+                func.sum(OrderItem.net),
+                func.sum(OrderItem.cost),
+            )
+            .where(*window, товарные)
+            .group_by(OrderItem.date)
+        ).all()
+        checks = dict(
+            db.execute(
+                select(OrderItem.date, func.count(func.distinct(OrderItem.order_num)))
+                .where(*window, товарные)
+                .group_by(OrderItem.date)
+            ).all()
+        )
+    days = []
+    for day, gross, net, cost in sums:
+        gross = float(gross or 0)
+        count = int(checks.get(day, 0))
+        days.append(
+            _day_dict(
+                day,
+                gross,
+                count,
+                gross / count if count else 0,
+                max(0.0, gross - float(net or 0)),
+                0,
+                cost,
+            )
+        )
+    return days
+
+
 async def _days_live(date_from: date, date_to: date) -> list[dict]:
     """Живой запрос сводки по дням у кассы (для произвольного диапазона вне БД)."""
     days = await get_pos().revenue_days(date_from, date_to)
@@ -164,22 +223,61 @@ async def _days_live(date_from: date, date_to: date) -> list[dict]:
     ]
 
 
-async def _load_days(df: date, dt: date, is_custom: bool) -> list[dict]:
-    """Дни периода: произвольный диапазон → живой; пресет → из БД.
+def _history_start() -> date | None:
+    """Первый день, о котором в БД вообще что-то есть (сводка или позиции)."""
+    with SessionLocal() as db:
+        starts = [
+            db.execute(select(func.min(RevenueDaily.date))).scalar(),
+            db.execute(select(func.min(OrderItem.date))).scalar(),
+        ]
+    known = [d for d in starts if d]
+    return min(known) if known else None
 
-    Текущий день тоже отдаём из БД: его свежесть держит частый синк (`sync_today` в
-    планировщике, раз в несколько минут), а OLAP-виджеты дашборда читают заказы из той
-    же БД (`order_store`) — так revenue и OLAP-разрезы сходятся между собой лучше, чем
-    когда «сегодня» тянулся вживую. Живой добор оставлен лишь как страховка: если сегодня
-    ещё нет в БД (пробел сразу после полуночи, до первого синка нового дня).
+
+async def days_stored_or_live(df: date, dt: date) -> list[dict]:
+    """Дни периода: из БД, насколько она их покрывает; живой запрос — только за пределами.
+
+    Источники по порядку: `revenue_daily` (сводка, синкается за месяц) → `order_items`
+    (позиции, есть за всю историю) → живая касса. Раньше признаком был `is_custom`:
+    любой выбор дат календарём уходил в кассу, даже когда все дни лежали в БД. Это
+    стоило 8,4 секунды на `/api/pnl` за месяц (против 0,36 с из БД) и делало календарь
+    заложником доступности кассы. Тот же путь нужен и для ПРОШЛОГО периода в KPI-дельтах:
+    прошлый месяц почти всегда за окном сводки, но внутри истории позиций.
+
+    Пробелы ВНУТРИ истории живым запросом не добираем: день без заказов — это закрытый
+    день (у точки таких семь за год), и касса вернёт по нему те же нули.
     """
-    if is_custom:
-        return await _days_live(df, dt)
     days = _days_from_db(df, dt)
-    if dt >= today() and not any(d["date"] == today().isoformat() for d in days):
+    have = {d["date"] for d in days}
+
+    gaps = [d for d in _daterange(df, dt) if d.isoformat() not in have]
+    if gaps:
+        from_items = await asyncio.to_thread(_days_from_items, min(gaps), max(gaps))
+        days += [d for d in from_items if d["date"] not in have]
+        have = {d["date"] for d in days}
+        gaps = [d for d in _daterange(df, dt) if d.isoformat() not in have]
+
+    start = _history_start()
+    # дни старше сохранённой истории — их в БД нет и не будет, только касса их помнит
+    before_history = [d for d in gaps if start is None or d < start]
+    if before_history:
+        live = await _days_live(min(before_history), max(before_history))
+        days += [d for d in live if d["date"] not in have]
+
+    return sorted(days, key=lambda d: d["date"])
+
+
+async def _load_days(df: date, dt: date, is_custom: bool) -> list[dict]:
+    """Дни периода для дашборда: `days_stored_or_live` + страховка на «сегодня».
+
+    Сегодня держит в БД частый синк (`sync_today`), но в первые минуты после полуночи
+    его там ещё нет — тогда добираем день живым запросом.
+    """
+    days = await days_stored_or_live(df, dt)
+    have = {d["date"] for d in days}
+    if dt >= today() and today().isoformat() not in have:
         live_today = await _days_live(today(), today())
-        if live_today:
-            days = sorted(days + live_today, key=lambda d: d["date"])
+        days = sorted(days + live_today, key=lambda d: d["date"])
     return days
 
 
@@ -219,11 +317,10 @@ async def get_revenue(
     # отрезком прошлого месяца, день/неделя/диапазон — со скользящим окном (см. хелпер).
     # Берём из БД (быстро); если истории нет, дельта по этому показателю просто скрыта.
     prev_df, prev_dt = prev_period_range(period, df, dt, is_custom)
-    prev_days = _days_from_db(prev_df, prev_dt)
-    # для «месяца» прошлый период (31–60 дн. назад) обычно не в БД (синк 30 дн.) —
-    # тогда берём живым запросом, иначе дельта не показывалась бы
-    if not prev_days:
-        prev_days = await _days_live(prev_df, prev_dt)
+    # тот же путь, что у текущего периода: сводка → позиции → касса. Для «месяца»
+    # прошлый период (31–60 дн. назад) за окном сводки, но внутри истории позиций —
+    # раньше это означало живой запрос в кассу на каждое открытие дашборда.
+    prev_days = await days_stored_or_live(prev_df, prev_dt)
     # без доставки — вычитаем её и из прошлого периода, чтобы дельта сравнивала сопоставимое
     if not include_delivery and prev_days:
         exclude_delivery(prev_days, await delivery_buckets(prev_df, prev_dt, OLAP_FIELD_OPEN_DATE))
@@ -341,8 +438,47 @@ async def get_revenue_by_weekday(
     }
 
 
+def _hours_from_db(df: date, dt: date) -> tuple[dict[int, float], dict[int, int]]:
+    """Выручка и чеки по часам суток из таблицы `orders`.
+
+    Час берём по **закрытию** заказа, а не по открытию: именно так считает iiko, и это
+    проверено на боевых данных за 01–20.09.2026 — все 12 часов сошлись с ответом кассы
+    до рубля и до чека, тогда как по часу открытия расхождение было 1–2 % в каждом часе
+    (чек, открытый в 10:59 и закрытый в 11:01, у кассы попадает в 11). У этой точки заказы
+    короткие (в среднем 0,6 минуты), поэтому расхождение и было небольшим — но оно было.
+
+    Если время закрытия не записано, используем час открытия (`orders.hour`).
+    """
+    rev: dict[int, float] = {}
+    trn: dict[int, int] = {}
+    with SessionLocal() as db:
+        rows = db.execute(
+            select(Order.hour, Order.close_time, Order.total_sum).where(
+                Order.date >= df, Order.date <= dt
+            )
+        ).all()
+    for open_hour, close_time, total in rows:
+        hour = open_hour
+        if close_time:
+            try:
+                hour = datetime.fromisoformat(str(close_time)).hour
+            except ValueError:
+                pass
+        if hour is None:
+            continue
+        rev[hour] = round(rev.get(hour, 0.0) + float(total or 0), 2)
+        trn[hour] = trn.get(hour, 0) + 1
+    return rev, trn
+
+
 async def _hours(df: date, dt: date) -> tuple[dict[int, float], dict[int, int]]:
-    """Выручка и чеки по часам суток за период: {час: выручка}, {час: чеки}."""
+    """Выручка и чеки по часам суток за период: {час: выручка}, {час: чеки}.
+
+    Из БД, если период покрыт сохранёнными заказами; иначе — живой почасовой разрез
+    кассы. Раньше ходили в кассу всегда, хотя те же заказы лежат в БД.
+    """
+    if stored_covers(Order, df.isoformat(), dt.isoformat()):
+        return await asyncio.to_thread(_hours_from_db, df, dt)
     hours = await get_pos().hourly(df, dt)
     rev = {h: v.revenue for h, v in hours.items()}
     trn = {h: v.checks for h, v in hours.items()}

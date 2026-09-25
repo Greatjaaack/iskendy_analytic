@@ -59,7 +59,7 @@ from constants import (
     PNL_RATE_FIELDS,
 )
 from models import PnlDayCost, PnlMonth, SessionLocal
-from routers.revenue import _days_from_db, _days_live, _load_days
+from routers.revenue import _load_days, days_stored_or_live
 from routers.schedule import labor_by_day, labor_for_period, operational_shifts
 from services.delivery import delivery_buckets
 from utils import period_range
@@ -797,9 +797,8 @@ async def get_pnl(
     prev_summary = None
     if prev_dates_sorted:
         prange_from, prange_to = prev_dates_sorted[0], prev_dates_sorted[-1]
-        prev_days_raw = _days_from_db(prange_from, prange_to)
-        if not prev_days_raw:
-            prev_days_raw = await _days_live(prange_from, prange_to)
+        # сводка → позиции → касса (тот же путь, что у текущего периода)
+        prev_days_raw = await days_stored_or_live(prange_from, prange_to)
         prev_by_date = {r["date"]: r for r in prev_days_raw}
         prev_del_buckets = await delivery_buckets(prange_from, prange_to, OLAP_FIELD_OPEN_DATE)
         prev_months = _load_months(prange_from, prange_to)
