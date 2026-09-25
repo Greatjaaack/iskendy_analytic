@@ -640,8 +640,12 @@ async def get_ops_report(
         if b is None:
             b = agg[key] = blank_bucket()
         b["revenue"] += rev
-        b["orders"].add(ordernum)
-        b["guests"].setdefault(ordernum, guests)
+        # Ключ заказа — ПАРА (дата, номер): номер уникален только внутри дня, а корзины
+        # дней сворачиваются в «Факт за период» объединением множеств. По одному номеру
+        # 20 дней давали 237 «чеков» вместо 3 310 и средний чек 14 312 ₽ вместо 1 025 ₽
+        # (выручка при этом была верной, поэтому ошибку никто не замечал).
+        b["orders"].add((ds, ordernum))
+        b["guests"].setdefault((ds, ordernum), guests)
         # группа категории для food cost (дейпарт × Еда/Напитки/Алкоголь)
         ck = (dp, category_group(category))
         cb = cat_agg.get(ck)
@@ -704,8 +708,7 @@ async def get_ops_report(
             tot["cost"] += b["cost"]
             tot["rev_with_cost"] += b["rev_with_cost"]
             tot["orders"] |= b["orders"]
-            for on, g in b["guests"].items():
-                tot["guests"].setdefault((dk, on), g)
+            tot["guests"].update(b["guests"])
         total = finalize(tot)
         # Среднее — на активный день (как в Excel «Среднее»)
         avg_per_day = {
@@ -755,8 +758,7 @@ async def get_ops_report(
             acc["cost"] += b["cost"]
             acc["rev_with_cost"] += b["rev_with_cost"]
             acc["orders"] |= b["orders"]
-            for on, g in b["guests"].items():
-                acc["guests"].setdefault(on, g)
+            acc["guests"].update(b["guests"])
         if has:
             tot_cells[dk] = finalize(acc)
             active_total += 1
@@ -764,8 +766,7 @@ async def get_ops_report(
             grand["cost"] += acc["cost"]
             grand["rev_with_cost"] += acc["rev_with_cost"]
             grand["orders"] |= acc["orders"]
-            for on, g in acc["guests"].items():
-                grand["guests"].setdefault((dk, on), g)
+            grand["guests"].update(acc["guests"])
     grand_total = finalize(grand)
     # план на период по всей точке = сумма планов дейпартов
     grand_plan = {m: round(sum(dp["plan"][m] for dp in dayparts), 2) for m in ("revenue", "guests")}
