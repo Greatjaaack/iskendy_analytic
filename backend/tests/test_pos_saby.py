@@ -23,7 +23,12 @@ from constants import (  # noqa: E402
     PRODUCT_TYPE_GOODS,
     PRODUCT_TYPE_MODIFIER,
 )
-from pos.base import aggregate_days, aggregate_hours, aggregate_products  # noqa: E402
+from pos.base import (  # noqa: E402
+    aggregate_days,
+    aggregate_hours,
+    aggregate_products,
+    to_order_rows,
+)
 from pos.saby import SabyPos  # noqa: E402
 
 # id номенклатуры → (категория, тип позиции): так его отдаёт каталог Presto
@@ -31,6 +36,7 @@ MENU = {
     101: ("Дюрюмы", PRODUCT_TYPE_DISH),
     102: ("Напитки", PRODUCT_TYPE_GOODS),
     103: ("Допы и соусы", PRODUCT_TYPE_DISH),
+    104: ("Статус", PRODUCT_TYPE_DISH),  # служебная папка-маркер канала (как в iiko)
 }
 
 SALE = {
@@ -134,8 +140,10 @@ def test_продажа_становится_заказом(saby):
     assert o.close_time == "2026-09-24T13:47:40"
     assert o.session_num == "3"
     assert o.cashier == "#77"  # имя кассира Saby в продаже не отдаёт, только id
-    assert o.guests == 0  # гостей в API продаж нет
-    assert o.channel is None  # тип обслуживания в продаже отсутствует
+    # гостей в API продаж нет: ставим 1 на чек — у точки кассир гостей не вводит и
+    # iiko отдаёт ровно 1:1 к чекам, так что цифры «Гостей» не меняются
+    assert o.guests == 1
+    assert o.channel is None  # служебной позиции «Статус» в этом чеке нет
 
 
 def test_позиции_с_категорией_и_модификатором(saby):
@@ -196,3 +204,36 @@ def test_пустая_выборка_не_ломает_агрегаты():
     assert aggregate_days([]) == []
     assert aggregate_hours([]) == {}
     assert aggregate_products([]) == []
+
+
+def test_канал_из_служебной_позиции_статус(saby, monkeypatch):
+    """Канал переезжает, если в меню Presto завести папку «Статус» с позициями по 0 ₽.
+
+    Системного признака «в зале / с собой» в API продаж нет, но точка и в iiko
+    помечает канал служебным модификатором — ту же схему повторяем в Presto.
+    """
+    s_собой = {
+        **SALE,
+        "Number": "20",
+        "SaleNomenclatures": SALE["SaleNomenclatures"]
+        + [
+            {
+                "Nomenclature": 104,
+                "Name": "С собой",
+                "Quantity": 1,
+                "TotalPrice": 0,
+                "IsModifier": True,
+            }
+        ],
+    }
+
+    async def sales(date_from, date_to):
+        return [s_собой]
+
+    monkeypatch.setattr(saby, "_fetch_sales", sales)
+    (o,) = run(saby.orders(date(2026, 9, 24), date(2026, 9, 24)))
+    assert o.channel == "с собой"
+    # служебная строка не попадает в суммы заказа
+    rows = to_order_rows([o])
+    assert rows[0]["total_sum"] == 700.0
+    assert rows[0]["channel"] == "с собой"

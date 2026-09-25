@@ -27,6 +27,8 @@ import httpx
 from cache import cached_or_call
 from config import settings
 from constants import (
+    ORDER_STATUS_CATEGORY,
+    ORDER_STATUS_CHANNELS,
     PAYMENT_CARD,
     PAYMENT_CASH,
     PRODUCT_TYPE_DISH,
@@ -270,13 +272,36 @@ class SabyPos:
             hour=opened.hour if opened else None,
             open_time=_iso(sale.get("OpenedWTZ")) or _iso(sale.get("DateWTZ")),
             close_time=_iso(sale.get("ClosedWTZ")),
-            guests=0.0,  # Saby не отдаёт число гостей в продаже (см. SABY_API.md)
-            channel=None,  # тип обслуживания в продаже отсутствует → выводим из позиций
+            # Числа гостей в API продаж Saby нет. Ставим 1 гостя на чек, а не 0: у этой
+            # точки кассир гостей не вводит и iiko отдаёт ровно 1:1 к чекам (проверено
+            # на боевой базе, август 2026) — значит единица сохраняет текущие цифры
+            # «Гостей» в ОП-отчёте и плане, а ноль обнулил бы их на ровном месте.
+            guests=1.0,
+            channel=self._channel(items),
             cashier=str(sale.get("SellerName") or (teller and f"#{teller}") or "") or None,
             session_num=str(sale.get("ShiftNumber") or sale.get("Shift") or "") or None,
             items=items,
             payments=self._to_payments(sale),
         )
+
+    def _channel(self, items: list[PosItem]) -> str | None:
+        """Канал обслуживания по служебной позиции категории «Статус», если она есть.
+
+        В API продаж Saby признака «в зале / с собой» НЕТ (см. `SABY_API.md`). Но точка
+        и в iiko помечает канал не системным полем, а служебным модификатором категории
+        «Статус» — и ту же схему можно повторить в меню Presto: папка «Статус» с тремя
+        позициями по 0 ₽ («В зале», «С собой», «Доставка»). Тогда канал приезжает в
+        позициях продажи и разрез по каналам переживает переезд без потерь.
+
+        Нет такой позиции — `None`, и канал выведется из правила доставки по товарам.
+        """
+        for it in items:
+            if it.category != ORDER_STATUS_CATEGORY:
+                continue
+            channel = ORDER_STATUS_CHANNELS.get((it.name or "").strip().lower())
+            if channel:
+                return channel
+        return None
 
     def _collect_items(
         self, pos: dict, menu: dict[int, tuple[str, str]], out: list[PosItem], depth: int = 0
