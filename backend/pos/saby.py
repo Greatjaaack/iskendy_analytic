@@ -111,6 +111,7 @@ class SabyPos:
         self._lock = asyncio.Lock()
         self._menu: dict[int, tuple[str, str]] = {}  # id → (категория, тип позиции)
         self._menu_at: float = 0.0
+        self._point_ok = False
 
     # ---------- Авторизация ----------
 
@@ -170,6 +171,29 @@ class SabyPos:
             r.raise_for_status()
             return r.json() or {}
 
+    # ---------- Точка продаж ----------
+
+    async def _ensure_point(self) -> None:
+        """Убедиться, что `SABY_POINT_ID` существует. Проверяется один раз за процесс.
+
+        ⚠️ Зачем: на неизвестный `pointId` Saby отвечает **HTTP 200 и пустым списком**
+        продаж (проверено живьём 25.09.2026 на `pointId=999999`), а не ошибкой. То есть
+        опечатка в настройке выглядела бы как «продаж нет»: дашборд показал бы нули, и
+        никто бы не понял, что спрашивают не ту точку. Поэтому идентификатор сверяем
+        отдельным запросом и падаем с понятным текстом.
+        """
+        if self._point_ok:
+            return
+        resp = await self._get("/retail/point/list", {"pointId": settings.saby_point_id})
+        points = _as_list(resp.get("salesPoints"))
+        if not any(p.get("id") == settings.saby_point_id for p in points):
+            raise RuntimeError(
+                f"Saby: точка продаж {settings.saby_point_id} не найдена — проверьте "
+                f"SABY_POINT_ID (на неизвестный id Saby отвечает пустой выборкой, "
+                f"а не ошибкой)"
+            )
+        self._point_ok = True
+
     # ---------- Каталог номенклатуры (категории и тип позиции) ----------
 
     async def _ensure_menu(self) -> dict[int, tuple[str, str]]:
@@ -225,6 +249,7 @@ class SabyPos:
         key = f"saby:sales:{date_from}:{date_to}"
 
         async def _load() -> list[dict]:
+            await self._ensure_point()
             out: list[dict] = []
             page = 0
             while True:
@@ -402,6 +427,11 @@ class SabyPos:
         return settings.history_start_date
 
     async def warm(self) -> None:
-        """Обновить токен и каталог заранее, чтобы синк не тратил на это время."""
+        """Обновить токен, сверить точку и обновить каталог заранее.
+
+        Так синк не тратит на это время, а ошибка в настройках всплывает в логе
+        планировщика, а не пустыми цифрами на дашборде.
+        """
         await self._ensure_token()
+        await self._ensure_point()
         await self._ensure_menu()

@@ -163,23 +163,24 @@ async def orders_today():
         rows = []
 
     for r in rows:
-        # Номер приводим к int, пока табло держит его числом (его схема:
-        # `orders.number INTEGER`). В Saby номер продажи — СТРОКА, и нечисловой
-        # номер табло молча отбросит, поэтому такой случай виден в логе: это
-        # сигнал, что схему табло пора переводить на строковый номер.
+        # Номер отдаём числом, пока он числовой: табло хранит его в колонке с
+        # INTEGER-affinity, и на iiko это ровно те же числа, что и раньше. В Saby
+        # номер продажи — СТРОКА, поэтому нечисловой номер не выбрасываем, а отдаём
+        # строкой: табло такой принимает (`ingest_kassa_order`), а потерянный заказ
+        # на табло никто бы не заметил, кроме гостя у стойки.
         number = str(r.get("number", "")).strip()
         open_time = str(r.get("openTime", "")).strip()
         if not number or not open_time:
             continue
-        try:
-            orders.append({"number": int(number), "openTime": open_time})
-        except ValueError:
-            logger.warning(
-                "orders/today: нечисловой номер заказа %r — табло его не примет "
-                "(нужна миграция схемы табло на строковый номер)",
-                number,
-            )
-    orders.sort(key=lambda o: o["number"])
+        orders.append(
+            {
+                "number": int(number) if number.isdigit() else number,
+                "openTime": open_time,
+            }
+        )
+    # Сортировка по номеру: числа отдельно от строк — сравнивать их между собой
+    # Python не умеет, а падать на смешанном дне ручка не должна.
+    orders.sort(key=lambda o: (isinstance(o["number"], str), o["number"]))
     return {
         "date": today_iso,
         "orders": orders,

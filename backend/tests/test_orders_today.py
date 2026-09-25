@@ -27,7 +27,9 @@ OLAP_ROWS = [
     {"field0": {"value": "42, 2026-08-24T12:30:15"}, "field1": {"value": 1200}},
     {"field0": {"value": "7, 2026-08-24T11:05:00"}, "field1": {"value": 800}},
     {"field0": {"value": "мусор без разделителя"}, "field1": {"value": 0}},
-    {"field0": {"value": "не-число, 2026-08-24T13:00:00"}, "field1": {"value": 0}},
+    # нечисловой номер: в iiko таких нет, а в Saby номер продажи — строка. Заказ
+    # должен доехать до табло, а не потеряться по дороге.
+    {"field0": {"value": "A-7, 2026-08-24T13:00:00"}, "field1": {"value": 0}},
 ]
 
 
@@ -93,18 +95,26 @@ def test_поля_ответа(client):
     assert len(body["now"].split(":")) == 3  # HH:MM:SS
 
     orders = body["orders"]
-    # мусорные строки OLAP отбрасываются, а не ломают ответ
-    assert len(orders) == 2
+    # строка без разделителя отбрасывается, а не ломает ответ; нечисловой номер — нет
+    assert len(orders) == 3
     for o in orders:
         assert set(o) == {"number", "openTime"}
-        assert isinstance(o["number"], int)
+        assert isinstance(o["number"], (int, str))
         assert isinstance(o["openTime"], str)
 
 
 def test_заказы_отсортированы_по_номеру(client):
+    """Числовые номера по возрастанию, нечисловые — после них (а не падение ручки)."""
     r = client.get("/api/orders/today", headers={"X-Internal-Token": TOKEN})
     numbers = [o["number"] for o in r.json()["orders"]]
-    assert numbers == sorted(numbers) == [7, 42]
+    assert numbers == [7, 42, "A-7"]
+
+
+def test_нечисловой_номер_доезжает_строкой(client):
+    """В Saby номер продажи — строка; терять такой заказ нельзя (см. SABY_API.md)."""
+    r = client.get("/api/orders/today", headers={"X-Internal-Token": TOKEN})
+    by_num = {o["number"]: o["openTime"] for o in r.json()["orders"]}
+    assert by_num["A-7"] == "2026-08-24T13:00:00"
 
 
 def test_openTime_как_пришло_из_olap(client):
@@ -133,7 +143,7 @@ def test_ретрай_после_первой_ошибки(client, monkeypatch):
     r = client.get("/api/orders/today", headers={"X-Internal-Token": TOKEN})
     assert r.status_code == 200
     assert calls["n"] == 2
-    assert [o["number"] for o in r.json()["orders"]] == [7, 42]
+    assert [o["number"] for o in r.json()["orders"]] == [7, 42, "A-7"]
 
 
 def test_обе_попытки_упали_отдаём_из_БД(client, monkeypatch):
@@ -265,4 +275,4 @@ def test_bystraya_kassa_otvechaet_zhivymi_dannymi(client):
     """
     r = client.get("/api/orders/today", headers={"X-Internal-Token": TOKEN})
     assert r.status_code == 200
-    assert [o["number"] for o in r.json()["orders"]] == [7, 42]
+    assert [o["number"] for o in r.json()["orders"]] == [7, 42, "A-7"]

@@ -46,20 +46,48 @@ def _daterange(start: date, end: date):
         d += timedelta(days=1)
 
 
+def sync_window(date_from: date, date_to: date) -> tuple[date, date] | None:
+    """Обрезать окно синка по дате, с которой работает текущая касса.
+
+    ⚠️ Это предохранитель истории. Синк заказов заменяет данные по дням (delete +
+    insert), а новая касса о старых днях не знает НИЧЕГО: Saby отдаёт только свои
+    продажи. Без обрезки первый же `sync_orders_recent(7)` после переключения стёр бы
+    неделю истории iiko, а `backfill` — всю её целиком, и вернуть было бы нечего:
+    в iiko мы уже не ходим, а больше она нигде не лежит.
+
+    `POS_SWITCH_DATE` — день, с которого данные берёт текущий провайдер. Дни раньше
+    него синк не трогает вовсе. Не задана — ведём себя как раньше (актуально для iiko,
+    у которого история своя).
+
+    Возвращает суженное окно или `None`, если от окна ничего не осталось.
+    """
+    start = settings.pos_switch_date
+    if start and date_from < start:
+        date_from = start
+    if date_from > date_to:
+        return None
+    return date_from, date_to
+
+
 # ---------- Выручка по дням ----------
 
 
 async def sync_revenue(days_back: int = 7):
     """Выручка/чеки/средний чек/себестоимость по дням (upsert по дате)."""
     logger.info(f"Синк выручки за {days_back} дн...")
-    date_to = today()
-    date_from = date_to - timedelta(days=days_back - 1)
+    window = sync_window(today() - timedelta(days=days_back - 1), today())
+    if window is None:
+        logger.info("Синк выручки: окно раньше даты переключения кассы — пропускаю")
+        return
+    date_from, date_to = window
 
     try:
         days = await get_pos().revenue_days(date_from, date_to)
 
         with SessionLocal() as db:
             for day in days:
+                if day.date < date_from:  # касса отдала лишний день — не трогаем историю
+                    continue
                 row = db.get(RevenueDaily, day.date)
                 if not row:
                     row = RevenueDaily(date=day.date)
@@ -90,11 +118,43 @@ async def sync_orders_range(date_from: date, date_to: date):
 
     Заказы приходят от адаптера кассы уже разобранными (`pos.PosOrder`); здесь только
     раскладка их по трём таблицам и замена диапазона одной транзакцией.
+
+    Два предохранителя истории:
+    1. Окно обрезается по `POS_SWITCH_DATE` (см. `sync_window`) — новая касса не должна
+       переписывать дни, которых она не видела.
+    2. Пустой ответ кассы по диапазону, где в БД заказы ЕСТЬ, считается сбоем, а не
+       «продаж не было»: данные остаются как есть. Иначе одна кривая выборка (у iiko
+       OLAP умеет отвечать пустотой вместо ошибки) обнуляла бы день на дашборде и в
+       запасном ответе табло — до следующего удачного синка.
     """
+    window = sync_window(date_from, date_to)
+    if window is None:
+        logger.info("Синк заказов: окно раньше даты переключения кассы — пропускаю")
+        return
+    date_from, date_to = window
+
     orders = await get_pos().orders(date_from, date_to)
     items = to_item_rows(orders)
     order_rows = to_order_rows(orders)
     payments = to_payment_rows(orders)
+
+    if not items:
+        with SessionLocal() as db:
+            have = (
+                db.query(OrderItem)
+                .filter(OrderItem.date >= date_from, OrderItem.date <= date_to)
+                .count()
+            )
+        if have:
+            logger.warning(
+                "Синк заказов %s..%s: касса отдала 0 позиций, а в БД их %d — "
+                "считаю это сбоем выборки и НЕ затираю данные",
+                date_from,
+                date_to,
+                have,
+            )
+            return
+
     with SessionLocal() as db:
         db.query(OrderItem).filter(OrderItem.date >= date_from, OrderItem.date <= date_to).delete()
         db.query(Order).filter(Order.date >= date_from, Order.date <= date_to).delete()
@@ -108,9 +168,20 @@ async def sync_orders_range(date_from: date, date_to: date):
 
 
 async def sync_dish_detail_day(day: date):
-    """Заполнить `dish_detail` за один день (продажи по номенклатуре + тип позиции)."""
+    """Заполнить `dish_detail` за один день (продажи по номенклатуре + тип позиции).
+
+    Те же два предохранителя, что в `sync_orders_range`: день раньше переключения кассы
+    не трогаем, пустой ответ поверх непустого дня считаем сбоем выборки.
+    """
+    if sync_window(day, day) is None:
+        return
     rows = await get_pos().products(day)
     with SessionLocal() as db:
+        if not rows and db.query(DishDetail).filter(DishDetail.date == day).count():
+            logger.warning(
+                "dish_detail %s: касса отдала пусто поверх непустого дня — пропускаю", day
+            )
+            return
         db.query(DishDetail).filter(DishDetail.date == day).delete()
         db.bulk_save_objects(
             [
@@ -151,10 +222,16 @@ async def sync_orders_recent(days_back: int = 7):
 
 
 async def _history_start() -> date | None:
-    """Начало истории: из настройки, иначе спрашиваем кассу (если она умеет probe)."""
-    if settings.history_start_date:
-        return settings.history_start_date
-    return await get_pos().history_start()
+    """Начало истории: из настройки, иначе спрашиваем кассу (если она умеет probe).
+
+    Ниже даты переключения кассы не опускаемся: старые дни уже лежат в БД, и новая
+    касса о них ничего не знает — бэкафиллить их значит затирать историю пустотой.
+    """
+    start = settings.history_start_date or await get_pos().history_start()
+    switch = settings.pos_switch_date
+    if start and switch:
+        return max(start, switch)
+    return start or switch
 
 
 async def backfill():
@@ -189,7 +266,15 @@ async def backfill():
     if real_start is None:
         logger.info("backfill: заказов нет — dish_detail пропускаем")
         return
-    days = sorted((d for d in _daterange(real_start, date_to) if d not in have), reverse=True)
+    switch = settings.pos_switch_date
+    days = sorted(
+        (
+            d
+            for d in _daterange(real_start, date_to)
+            if d not in have and not (switch and d < switch)
+        ),
+        reverse=True,
+    )
     logger.info("backfill: dish_detail — %d дней (с %s)", len(days), real_start)
     for i, d in enumerate(days, 1):
         try:

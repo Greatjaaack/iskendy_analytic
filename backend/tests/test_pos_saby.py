@@ -18,6 +18,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from config import settings  # noqa: E402
 from constants import (  # noqa: E402
     PRODUCT_TYPE_DISH,
     PRODUCT_TYPE_GOODS,
@@ -237,3 +238,25 @@ def test_канал_из_служебной_позиции_статус(saby, mo
     rows = to_order_rows([o])
     assert rows[0]["total_sum"] == 700.0
     assert rows[0]["channel"] == "с собой"
+
+
+def test_неизвестная_точка_это_ошибка_а_не_пустые_продажи(monkeypatch):
+    """Опечатка в SABY_POINT_ID не должна выглядеть как «продаж нет».
+
+    Saby на неизвестный pointId отвечает HTTP 200 и пустым списком (проверено живьём
+    25.09.2026), поэтому идентификатор сверяется отдельным запросом.
+    """
+    pos = SabyPos()
+
+    async def fake_get(path, params, _retry=True):
+        assert path == "/retail/point/list"
+        return {"salesPoints": [{"id": 283}], "outcome": {"hasMore": False}}
+
+    monkeypatch.setattr(pos, "_get", fake_get)
+    monkeypatch.setattr(settings, "saby_point_id", 999999)
+    with pytest.raises(RuntimeError, match="не найдена"):
+        run(pos._ensure_point())
+
+    monkeypatch.setattr(settings, "saby_point_id", 283)
+    run(pos._ensure_point())  # верная точка — проходит молча
+    assert pos._point_ok is True
