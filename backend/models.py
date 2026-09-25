@@ -18,6 +18,7 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
     create_engine,
+    event,
     inspect,
     text,
 )
@@ -27,6 +28,34 @@ from config import settings
 
 engine = create_engine(settings.database_url, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(bind=engine)
+
+
+@event.listens_for(engine, "connect")
+def _sqlite_pragmas(dbapi_connection, _record):
+    """Режим SQLite: WAL + разумная долговечность + ожидание блокировки вместо ошибки.
+
+    Зачем каждая строка:
+    - **WAL** — читатели не блокируют писателя и наоборот. Синк заменяет данные по дням
+      (delete + insert десятков тысяч строк) ровно тогда, когда дашборд читает те же
+      таблицы; в журнальном режиме по умолчанию это даёт «database is locked».
+      Режим записывается в сам файл БД один раз и сохраняется.
+    - **synchronous=NORMAL** — при WAL это стандартная пара: fsync на чекпоинте, а не на
+      каждой транзакции. Потеря возможна только при отказе ОС/питания, и то последних
+      транзакций; для витрины продаж, которая пересобирается синком, цена приемлемая.
+    - **busy_timeout** — вместо немедленной ошибки ждать освобождения блокировки
+      (сколько — в `settings.sqlite_busy_timeout_ms`).
+
+    Применяется только к SQLite: на другой СУБД этих pragma нет.
+    """
+    if not settings.database_url.startswith("sqlite"):
+        return
+    cursor = dbapi_connection.cursor()
+    try:
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute(f"PRAGMA busy_timeout={settings.sqlite_busy_timeout_ms}")
+    finally:
+        cursor.close()
 
 
 class Base(DeclarativeBase):

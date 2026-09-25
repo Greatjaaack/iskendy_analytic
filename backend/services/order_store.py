@@ -11,6 +11,7 @@
 поэтому история iiko живёт у нас в БД и обязана быть выкачана ДО отключения iiko).
 """
 
+import asyncio
 from datetime import date, timedelta
 
 from sqlalchemy import func, select
@@ -72,23 +73,19 @@ def stored_covers(model, date_from: str, date_to: str) -> bool:
     return lo is not None and _parse(date_from) >= lo
 
 
-async def order_rows(group_fields, data_fields, date_from, date_to):
-    """Аналог `olap_sales`: строки заказа из БД (или живой fallback вне окна)."""
-    df, dt = _parse(date_from), _parse(date_to)
-    if stored_covers(OrderItem, date_from, date_to):
-        with SessionLocal() as db:
-            items = (
-                db.execute(select(OrderItem).where(OrderItem.date >= df, OrderItem.date <= dt))
-                .scalars()
-                .all()
-            )
-    else:
-        # Период старше сохранённой истории — спрашиваем кассу и агрегируем так же.
-        # `ItemRow` повторяет имена полей `OrderItem`, поэтому код ниже общий.
-        items = to_item_rows(await get_pos().orders(df, dt))
+def _load_items(df: date, dt: date) -> list:
+    """Позиции заказов за диапазон из БД (синхронно — вызывается в отдельном потоке)."""
+    with SessionLocal() as db:
+        return (
+            db.execute(select(OrderItem).where(OrderItem.date >= df, OrderItem.date <= dt))
+            .scalars()
+            .all()
+        )
 
+
+def _aggregate_rows(items: list, group_fields, data_fields) -> list[dict]:
+    """Позиции → строки разреза: группировка по выбранным полям, суммы/максимумы."""
     getters = [_GROUP_GETTERS[f] for f in group_fields]
-    # группировка по значениям выбранных group-полей
     agg: dict[tuple, dict] = {}
     for r in items:
         key = tuple(g(r) for g in getters)
@@ -109,6 +106,25 @@ async def order_rows(group_fields, data_fields, date_from, date_to):
             row[f"field{i}"] = {"value": bucket[f]}
         rows.append(row)
     return rows
+
+
+async def order_rows(group_fields, data_fields, date_from, date_to):
+    """Строки разреза по заказам: из БД (или живой добор с кассы вне окна истории).
+
+    Чтение БД и агрегация уходят в отдельный поток (`asyncio.to_thread`): месяц данных —
+    это десятки тысяч строк и сотни миллисекунд чистого Python. В одном процессе с
+    дашбордом живёт ручка табло `/api/orders/today`, и пока event loop занят подсчётом
+    разреза, заказы к гостю не едут. Замер до выноса: четыре тяжёлых ручки держали loop
+    712 мс подряд.
+    """
+    df, dt = _parse(date_from), _parse(date_to)
+    if stored_covers(OrderItem, date_from, date_to):
+        items = await asyncio.to_thread(_load_items, df, dt)
+    else:
+        # Период старше сохранённой истории — спрашиваем кассу и агрегируем так же.
+        # `ItemRow` повторяет имена полей `OrderItem`, поэтому код ниже общий.
+        items = to_item_rows(await get_pos().orders(df, dt))
+    return await asyncio.to_thread(_aggregate_rows, items, group_fields, data_fields)
 
 
 async def dish_detail_rows(date_from, date_to):
@@ -135,6 +151,11 @@ async def dish_detail_rows(date_from, date_to):
             day += timedelta(days=1)
         return _merge_products(live)
 
+    return await asyncio.to_thread(_dish_detail_from_db, df, dt)
+
+
+def _dish_detail_from_db(df: date, dt: date) -> list[dict]:
+    """Агрегат продаж по номенклатуре за период из БД (синхронно, в отдельном потоке)."""
     with SessionLocal() as db:
         rows = (
             db.execute(select(DishDetail).where(DishDetail.date >= df, DishDetail.date <= dt))
