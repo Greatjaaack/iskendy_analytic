@@ -12,7 +12,7 @@
 
 import logging
 from dataclasses import asdict
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import func, select
@@ -313,9 +313,31 @@ async def run_startup_sync():
     await backfill()
 
 
+def prune_sync_log() -> int:
+    """Удалить записи журнала синков старше `settings.sync_log_keep_days`.
+
+    Журнал нужен для разбора («когда синк падал и почему»), но каждый успешный синк
+    пишет строку, а `sync_today` идёт раз в три минуты: к 25.09.2026 в таблице было
+    86 196 строк — больше, чем самих позиций заказов (39 045). Месяца истории хватает:
+    ошибки разбираются по горячим следам, а `/api/sync/last` смотрит только последнюю
+    удачную запись. Возвращает число удалённых строк.
+    """
+    keep = settings.sync_log_keep_days
+    if keep <= 0:
+        return 0
+    edge = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=keep)
+    with SessionLocal() as db:
+        removed = db.query(SyncLog).filter(SyncLog.created_at < edge).delete()
+        db.commit()
+    if removed:
+        logger.info("журнал синков: удалено %d записей старше %d дней", removed, keep)
+    return removed
+
+
 async def nightly():
     await full_sync()
     await backfill()
+    prune_sync_log()
 
 
 async def keep_session_warm():
