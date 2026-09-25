@@ -1,15 +1,17 @@
-"""Доступ к сохранённой истории заказов из БД — drop-in замена живых запросов iiko.
+"""Доступ к сохранённой истории заказов из БД — единственный источник разрезов.
 
-`order_rows()` повторяет контракт `IikoWebClient.olap_sales` (строки вида
-`{"field0": {"value": "<склейка group через ', '>"}, "field1": {"value": n}, ...}`),
-а `dish_detail_rows()` — контракт `IikoWebClient.dishes_detail`. Поэтому даунстрим-
-разбор в роутерах (`split_field_*`) и вся доменная логика остаются без изменений.
+`order_rows()` отдаёт строки вида `{"field0": {"value": "<склейка group через ', '>"},
+"field1": {"value": n}, ...}` — исторически это формат OLAP-ответа iiko, и роутеры
+разбирают его через `split_field_*`. Формат оставлен как внутренний контракт разрезов:
+он не зависит от кассы, потому что собирается здесь из таблицы `order_items`.
 
-Для периодов внутри сохранённого окна данные берутся из таблиц `order_items` /
-`dish_detail`; для диапазонов старше начала истории — живой fallback к iiko.
+Для периодов внутри сохранённого окна данные берутся из `order_items` / `dish_detail`;
+для диапазонов старше начала истории — живой fallback к кассе через порт `pos`
+(касса может истории и не иметь: у Saby выборка ограничена сроком её подключения,
+поэтому история iiko живёт у нас в БД и обязана быть выкачана ДО отключения iiko).
 """
 
-from datetime import date
+from datetime import date, timedelta
 
 from sqlalchemy import func, select
 
@@ -26,8 +28,8 @@ from constants import (
     OLAP_FIELD_QTY,
     OLAP_FIELD_SUM,
 )
-from iiko_web_client import iiko_web
 from models import DishDetail, OrderItem, SessionLocal
+from pos import get_pos, to_item_rows
 
 # OLAP-поле группировки → как достать его строковое значение из строки order_items
 _GROUP_GETTERS = {
@@ -72,21 +74,18 @@ def stored_covers(model, date_from: str, date_to: str) -> bool:
 
 async def order_rows(group_fields, data_fields, date_from, date_to):
     """Аналог `olap_sales`: строки заказа из БД (или живой fallback вне окна)."""
-    if not stored_covers(OrderItem, date_from, date_to):
-        return await iiko_web.olap_sales(
-            group_fields=group_fields,
-            data_fields=data_fields,
-            date_from=date_from,
-            date_to=date_to,
-        )
-
     df, dt = _parse(date_from), _parse(date_to)
-    with SessionLocal() as db:
-        items = (
-            db.execute(select(OrderItem).where(OrderItem.date >= df, OrderItem.date <= dt))
-            .scalars()
-            .all()
-        )
+    if stored_covers(OrderItem, date_from, date_to):
+        with SessionLocal() as db:
+            items = (
+                db.execute(select(OrderItem).where(OrderItem.date >= df, OrderItem.date <= dt))
+                .scalars()
+                .all()
+            )
+    else:
+        # Период старше сохранённой истории — спрашиваем кассу и агрегируем так же.
+        # `ItemRow` повторяет имена полей `OrderItem`, поэтому код ниже общий.
+        items = to_item_rows(await get_pos().orders(df, dt))
 
     getters = [_GROUP_GETTERS[f] for f in group_fields]
     # группировка по значениям выбранных group-полей
@@ -114,10 +113,28 @@ async def order_rows(group_fields, data_fields, date_from, date_to):
 
 async def dish_detail_rows(date_from, date_to):
     """Аналог `dishes_detail`: агрегат блюд из БД (или живой fallback вне окна)."""
-    if not stored_covers(DishDetail, date_from, date_to):
-        return await iiko_web.dishes_detail(date_from, date_to)
-
     df, dt = _parse(date_from), _parse(date_to)
+    if not stored_covers(DishDetail, date_from, date_to):
+        # Живой добор по дням: продажи по номенклатуре касса отдаёт за день.
+        pos = get_pos()
+        live: list[dict] = []
+        day = df
+        while day <= dt:
+            live += [
+                {
+                    "dish_id": p.product_id,
+                    "dish_name": p.name,
+                    "category": p.category,
+                    "product_type": p.product_type,
+                    "quantity": p.quantity,
+                    "revenue": p.revenue,
+                    "cost_sum": p.cost_sum,
+                }
+                for p in await pos.products(day)
+            ]
+            day += timedelta(days=1)
+        return _merge_products(live)
+
     with SessionLocal() as db:
         rows = (
             db.execute(select(DishDetail).where(DishDetail.date >= df, DishDetail.date <= dt))
@@ -143,6 +160,21 @@ async def dish_detail_rows(date_from, date_to):
         a["revenue"] += r.revenue or 0.0
         a["cost_sum"] += r.cost_sum or 0.0
 
+    out = list(agg.values())
+    out.sort(key=lambda r: r["revenue"], reverse=True)
+    return out
+
+
+def _merge_products(rows: list[dict]) -> list[dict]:
+    """Слить дневные строки продаж по номенклатуре в период (как агрегат за диапазон)."""
+    agg: dict[str, dict] = {}
+    for r in rows:
+        a = agg.get(r["dish_id"])
+        if a is None:
+            a = agg[r["dish_id"]] = {**r, "quantity": 0.0, "revenue": 0.0, "cost_sum": 0.0}
+        a["quantity"] += r["quantity"] or 0.0
+        a["revenue"] += r["revenue"] or 0.0
+        a["cost_sum"] += r["cost_sum"] or 0.0
     out = list(agg.values())
     out.sort(key=lambda r: r["revenue"], reverse=True)
     return out

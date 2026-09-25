@@ -1,7 +1,7 @@
 """Точка входа FastAPI: инициализация БД/хранилища, планировщик, подключение роутеров.
 
 При старте (`lifespan`) создаём схему БД, готовим каталог файлов, запускаем планировщик
-синков и делаем первый полный синк продаж из iiko.
+синков и делаем первый полный синк продаж с кассы.
 """
 
 import asyncio
@@ -18,9 +18,8 @@ import storage
 from auth import require_auth
 from cache import cache_clear
 from config import settings
-from constants import OLAP_FIELD_OPEN_TIME, OLAP_FIELD_ORDER_NUM, OLAP_FIELD_SUM
-from iiko_web_client import iiko_web
 from models import Order, RevenueDaily, SessionLocal, SyncLog, init_db
+from pos import get_pos
 from routers import (
     auth,
     dishes,
@@ -96,25 +95,25 @@ def _require_internal(x_internal_token: str = Header(default="")) -> None:
 async def orders_today():
     """Заказы за сегодня (номер + время открытия) для внешнего табло iskendy_site.
 
-    Живой OLAP SALES по кассе — при оплате-вперёд заказ закрывается сразу, поэтому
-    попадает сюда за секунды. Read-only.
+    Живое чтение с кассы через порт `pos` — при оплате-вперёд заказ закрывается
+    сразу, поэтому попадает сюда за секунды. Read-only.
 
     Три вещи, ради которых тут не просто один запрос:
 
-    1. Пока за сегодня НЕТ ни одного заказа (ночь, точка закрыта), ходим в iiko раз
+    1. Пока за сегодня НЕТ ни одного заказа (ночь, точка закрыта), ходим в кассу раз
        в `idle_poll_seconds` вместо 6 раз в минуту: за ночь это экономит ~4 тысячи
        запросов ради пустого ответа. Признак — наличие заказов в БД, а НЕ время
        суток: точка открывалась и в 12:05, и в 13:01, и жёсткий час однажды съел бы
        первые заказы смены. Цена — первый заказ дня доедет с задержкой до минуты.
-    2. OLAP в iikoweb периодически отвечает статусом ERROR — по истории `sync_log`
+    2. Касса периодически отвечает ошибкой (у iiko это статус OLAP ERROR) — по `sync_log`
        93% таких сбоев приходятся на РАБОЧИЕ часы точки, то есть ровно тогда, когда
        заказы идут. Поэтому при ошибке переспрашиваем ещё раз.
     3. Если и повтор не удался — отдаём заказы из БД (их кладёт `sync_today` каждые
        3 минуты) вместо 500: табло продолжит работать на данных, отстающих на пару
        минут, вместо того чтобы ослепнуть. Это спасает от коротких морганий; при
-       долгом обрыве iiko синк тоже ничего не заберёт, и БД устареет — поэтому
-       каждый такой ответ пишется в лог WARNING, иначе лежачий iiko прятался бы за
-       исправным на вид табло.
+       долгом обрыве кассы синк тоже ничего не заберёт, и БД устареет — поэтому
+       каждый такой ответ пишется в лог WARNING, иначе лежачая касса пряталась бы
+       за исправным на вид табло.
     """
     tz = ZoneInfo(settings.timezone)
     today = datetime.now(tz).date()
@@ -128,20 +127,20 @@ async def orders_today():
 
     ttl = None if day_started else (settings.idle_poll_seconds or None)
 
+    pos = get_pos()
+    # Пока за сегодня нет ни одного заказа, живые чтения кэшируются дольше (см. ниже).
+    if ttl is not None and hasattr(pos, "with_open_orders_ttl"):
+        pos = pos.with_open_orders_ttl(ttl)
+
     async def fetch_live() -> list[dict]:
-        return await iiko_web.olap_sales(
-            group_fields=[OLAP_FIELD_ORDER_NUM, OLAP_FIELD_OPEN_TIME],
-            data_fields=[OLAP_FIELD_SUM],
-            date_from=today_iso,
-            date_to=today_iso,
-            cache_ttl=ttl,
-        )
+        found = await pos.open_orders(today)
+        return [{"number": o.number, "openTime": o.open_time} for o in found]
 
     async def fetch_live_s_povtorom() -> list[dict]:
         try:
             return await fetch_live()
         except Exception as first_error:
-            logger.warning("orders/today: живой OLAP не ответил (%s), повторяю", first_error)
+            logger.warning("orders/today: касса не ответила (%s), повторяю", first_error)
             await asyncio.sleep(1)
             return await fetch_live()
 
@@ -156,7 +155,7 @@ async def orders_today():
     except Exception as error:
         orders = _orders_from_db(today)
         logger.warning(
-            "orders/today: iiko недоступен (%s), отдаю из БД: %d заказов "
+            "orders/today: касса недоступна (%s), отдаю из БД: %d заказов "
             "(данные могут отставать на время синка)",
             type(error).__name__ if isinstance(error, asyncio.TimeoutError) else error,
             len(orders),
@@ -164,16 +163,22 @@ async def orders_today():
         rows = []
 
     for r in rows:
-        # field0 = "<OrderNum>, <OpenTime ISO>" (склейка групп через ", ")
-        value = r.get("field0", {}).get("value", "")
-        parts = value.split(", ", 1)
-        if len(parts) != 2:
+        # Номер приводим к int, пока табло держит его числом (его схема:
+        # `orders.number INTEGER`). В Saby номер продажи — СТРОКА, и нечисловой
+        # номер табло молча отбросит, поэтому такой случай виден в логе: это
+        # сигнал, что схему табло пора переводить на строковый номер.
+        number = str(r.get("number", "")).strip()
+        open_time = str(r.get("openTime", "")).strip()
+        if not number or not open_time:
             continue
         try:
-            number = int(parts[0].strip())
+            orders.append({"number": int(number), "openTime": open_time})
         except ValueError:
-            continue
-        orders.append({"number": number, "openTime": parts[1].strip()})
+            logger.warning(
+                "orders/today: нечисловой номер заказа %r — табло его не примет "
+                "(нужна миграция схемы табло на строковый номер)",
+                number,
+            )
     orders.sort(key=lambda o: o["number"])
     return {
         "date": today_iso,
@@ -183,7 +188,7 @@ async def orders_today():
 
 
 def _orders_from_db(day: date) -> list[dict]:
-    """Заказы дня из БД — запасной ответ табло, когда живой iiko недоступен.
+    """Заказы дня из БД — запасной ответ табло, когда живая касса недоступна.
 
     Те же поля, что у живого ответа: контракт от источника данных не зависит.
     Строки с нечисловым номером или без времени открытия пропускаем — на табло
@@ -209,11 +214,11 @@ def summary(date_: str | None = Query(default=None, alias="date")):
     Дата параметром (`?date=YYYY-MM-DD`), по умолчанию сегодня в поясе ресторана.
     Сводка уходит в полночь за ПРОШЕДШИЙ день, поэтому «сегодня» ей не годится.
 
-    Только из БД (`revenue_daily`), живой iiko не дёргаем: ручка вызывается по
-    расписанию, а не человеком, и не должна зависеть от доступности iikoweb.
+    Только из БД (`revenue_daily`), живую кассу не дёргаем: ручка вызывается по
+    расписанию, а не человеком, и не должна зависеть от доступности кассы.
     Выручка — ЧИСТАЯ, после комиссии агрегатора: та же цифра, что в KPI дашборда
     (`net_revenue`), иначе сводка и дашборд разошлись бы. Средний чек считается
-    от неё же, а не берётся из `revenue_daily.avg_check` (там брутто из iiko).
+    от неё же, а не берётся из `revenue_daily.avg_check` (там брутто с кассы).
 
     `has_data=false` — за этот день в БД нет строки (синк отстал или день ещё не
     наступил). Тогда все три числа нули, и печатать их в сводке как факт нельзя.
@@ -271,7 +276,7 @@ def last_sync():
 
 @app.post("/api/sync", dependencies=protected)
 async def trigger_sync(days: int = 0):
-    """Ручная/авто-синхронизация продаж из iiko в SQLite.
+    """Ручная/авто-синхронизация продаж с кассы в SQLite.
 
     `days` — окно синка: 0 (по умолчанию) — полный синк (31 день, кнопка «Синхронизировать»);
     >0 — лёгкий синк за последние `days` дней (автосинхронизация по таймеру на дашборде —

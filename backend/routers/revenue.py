@@ -12,12 +12,6 @@ from constants import (
     CHANNEL_TAKEAWAY,
     DAY_NAMES_RU,
     DAYPARTS,
-    METRIC_AVG_SPEND,
-    METRIC_COST,
-    METRIC_DISCOUNT,
-    METRIC_REFUNDS,
-    METRIC_REV_GROSS,
-    METRIC_TRN_ALL,
     OLAP_FIELD_COST,
     OLAP_FIELD_DISH_CATEGORY,
     OLAP_FIELD_DISH_NAME,
@@ -32,8 +26,8 @@ from constants import (
     PAYMENT_GROUP_ORDER,
     WEEKDAY_TO_GROUP,
 )
-from iiko_web_client import iiko_web
 from models import DaypartPlan, Order, OrderItem, OrderPayment, RevenueDaily, SessionLocal
+from pos import get_pos
 from services.aggregator import net_revenue
 from services.daypart import category_group, hour_to_daypart
 from services.delivery import delivery_buckets, exclude_delivery
@@ -144,35 +138,20 @@ def _days_from_db(date_from: date, date_to: date) -> list[dict]:
 
 
 async def _days_live(date_from: date, date_to: date) -> list[dict]:
-    """Живой запрос выручки по дням из iiko (для произвольного диапазона)."""
-    data = await iiko_web.revenue_by_day(date_from.isoformat(), date_to.isoformat())
-
-    def g(code, key):
-        return data.get(code, {}).get(key)
-
-    all_dates = set()
-    for block in data.values():
-        if isinstance(block, dict):
-            all_dates.update(block.keys())
-
-    days = []
-    for ds in sorted(all_dates):
-        try:
-            d = date.fromisoformat(ds)
-        except ValueError:
-            continue
-        days.append(
-            _day_dict(
-                d,
-                g(METRIC_REV_GROSS, ds),
-                g(METRIC_TRN_ALL, ds),
-                g(METRIC_AVG_SPEND, ds),
-                g(METRIC_DISCOUNT, ds),
-                g(METRIC_REFUNDS, ds),
-                g(METRIC_COST, ds),
-            )
+    """Живой запрос сводки по дням у кассы (для произвольного диапазона вне БД)."""
+    days = await get_pos().revenue_days(date_from, date_to)
+    return [
+        _day_dict(
+            d.date,
+            d.revenue,
+            d.checks,
+            d.avg_check,
+            d.discount_sum,
+            d.refund_count,
+            d.cost_sum,
         )
-    return days
+        for d in days
+    ]
 
 
 async def _load_days(df: date, dt: date, is_custom: bool) -> list[dict]:
@@ -352,20 +331,12 @@ async def get_revenue_by_weekday(
     }
 
 
-def _parse_hour_matrix(block: dict) -> dict[int, float]:
-    """DATA_SUMMARY_BY_HOURS: rows={"D11":0,...}, data=[[по датам], ...].
-    Возвращает {час: сумма по всем датам}."""
-    rows = block.get("rows", {})
-    data = block.get("data", [])
-    out: dict[int, float] = {}
-    for key, ri in rows.items():
-        try:
-            hour = int(str(key).lstrip("D"))
-        except ValueError:
-            continue
-        row = data[ri] if ri < len(data) else []
-        out[hour] = sum(v for v in row if v is not None)
-    return out
+async def _hours(df: date, dt: date) -> tuple[dict[int, float], dict[int, int]]:
+    """Выручка и чеки по часам суток за период: {час: выручка}, {час: чеки}."""
+    hours = await get_pos().hourly(df, dt)
+    rev = {h: v.revenue for h, v in hours.items()}
+    trn = {h: v.checks for h, v in hours.items()}
+    return rev, trn
 
 
 @router.get("/hourly")
@@ -375,12 +346,10 @@ async def get_hourly(
     date_to: str | None = None,
     include_delivery: bool = True,
 ):
-    """Продажи по часам (интервалы 11-12, 12-13, …) — живой запрос в iiko."""
+    """Продажи по часам (интервалы 11-12, 12-13, …) — почасовой разрез кассы."""
     df, dt = period_range(period, date_from, date_to)
 
-    raw = await iiko_web.revenue_by_hour(df.isoformat(), dt.isoformat())
-    rev = _parse_hour_matrix(raw.get(METRIC_REV_GROSS, {}))
-    trn = _parse_hour_matrix(raw.get(METRIC_TRN_ALL, {}))
+    rev, trn = await _hours(df, dt)
 
     hours = sorted(set(rev) | set(trn))
     data = [
@@ -422,15 +391,13 @@ async def get_by_daypart(
 ):
     """Выручка/чеки/средний чек по дейпартам (Завтрак/Ланч/Полдник/Ужин/Ночь).
 
-    Источник — почасовые данные (`DATA_SUMMARY_BY_HOURS`), свёрнутые в операционные
-    окна (границы — в `DAYPARTS`). При `include_delivery=false` вычитаем выручку/чеки
-    доставки по каждому часу (OLAP) до свёртки — как в `/hourly`.
+    Источник — почасовой разрез кассы, свёрнутый в операционные окна (границы — в
+    `DAYPARTS`). При `include_delivery=false` вычитаем выручку/чеки доставки по
+    каждому часу до свёртки — как в `/hourly`.
     """
     df, dt = period_range(period, date_from, date_to)
 
-    raw = await iiko_web.revenue_by_hour(df.isoformat(), dt.isoformat())
-    rev = _parse_hour_matrix(raw.get(METRIC_REV_GROSS, {}))
-    trn = _parse_hour_matrix(raw.get(METRIC_TRN_ALL, {}))
+    rev, trn = await _hours(df, dt)
 
     if not include_delivery:
         del_h = await delivery_buckets(df, dt, OLAP_FIELD_HOUR)

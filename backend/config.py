@@ -13,11 +13,30 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
+    # Какая касса стоит за данными: `iiko` или `saby` (Saby Presto). Переключает
+    # адаптер в `backend/pos/` — весь остальной код от кассы не зависит. В день
+    # переезда меняется только эта переменная (и ключи ниже).
+    pos_provider: str = "iiko"
+
     # iikoweb (внутренний API через cookie-сессию)
     iiko_web_url: str = "https://iskendi.iikoweb.ru"
     iiko_web_login: str = ""
     iiko_web_password: str = ""
     iiko_store_id: int = 161059
+
+    # Saby (СБИС) Presto — публичный REST API, сервисная авторизация приложения.
+    # Ключи создаются в кабинете: Настройки → Безопасность → Подключения к Saby.
+    # Только чтение: в кассу мы не пишем никогда.
+    saby_api_url: str = "https://api.sbis.ru"
+    saby_auth_url: str = "https://online.sbis.ru/oauth/service/"
+    saby_app_client_id: str = ""
+    saby_app_secret: str = ""
+    saby_secret_key: str = ""
+    saby_point_id: int = 0  # идентификатор точки продаж (GET /retail/point/list)
+    # TTL токена Saby не документирован — держим не дольше этого и обновляем по 401.
+    saby_token_ttl_seconds: int = 3600
+    # Как долго кэшируем каталог номенклатуры (он же даёт категорию блюда), сек.
+    saby_menu_ttl_seconds: int = 3600
 
     # хранилище
     database_url: str = "sqlite:///./iskendi.db"

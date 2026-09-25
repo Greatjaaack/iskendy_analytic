@@ -1,47 +1,25 @@
-"""Планировщик синхронизации продаж из iiko в SQLite (APScheduler).
+"""Планировщик синхронизации продаж с кассы в SQLite (APScheduler).
 
-Дашборд читает ВСЁ из БД; живые запросы к iiko делает только этот планировщик.
+Дашборд читает ВСЁ из БД; живые запросы к кассе делает только этот планировщик.
 - Выручка по дням (`revenue_daily`) — `sync_revenue`.
-- Заказы (`order_items`/`orders`/`dish_detail`) — `sync_orders_recent` (свежие дни)
-  и `backfill` (вся история; закрытые дни в iiko неизменны → тянем один раз).
-`order_items` за весь диапазон тянется ОДНИМ OLAP-запросом (группировка включает
-дату); `dish_detail` (нужен `product_type`) — по дню через get-data.
+- Заказы (`order_items`/`orders`/`order_payments`/`dish_detail`) — `sync_orders_recent`
+  (свежие дни) и `backfill` (вся история; закрытые дни касса не меняет → тянем однократно).
+
+Какая касса за этим стоит, планировщик не знает: он работает с портом `pos.PosClient`
+(адаптеры iiko/Saby в `backend/pos/`). Раньше здесь же разбирались OLAP-строки iiko —
+теперь этот разбор живёт в адаптере, а сюда приходят готовые заказы.
 """
 
 import logging
-from collections import defaultdict
-from datetime import date, datetime, timedelta
+from dataclasses import asdict
+from datetime import date, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import func, select
 
 import weather
 from config import settings
-from constants import (
-    CHANNEL_DINEIN,
-    DAY_NAMES_EN,
-    OLAP_FIELD_CASHIER,
-    OLAP_FIELD_CLOSE_TIME,
-    OLAP_FIELD_COST,
-    OLAP_FIELD_DISH_CATEGORY,
-    OLAP_FIELD_DISH_NAME,
-    OLAP_FIELD_DISH_TYPE,
-    OLAP_FIELD_GUESTS,
-    OLAP_FIELD_HOUR,
-    OLAP_FIELD_NET,
-    OLAP_FIELD_OPEN_DATE,
-    OLAP_FIELD_OPEN_TIME,
-    OLAP_FIELD_ORDER_NUM,
-    OLAP_FIELD_PAYTYPES,
-    OLAP_FIELD_QTY,
-    OLAP_FIELD_SECTION,
-    OLAP_FIELD_SESSION,
-    OLAP_FIELD_SUM,
-    OLAP_FIELD_TABLE,
-    ORDER_STATUS_CATEGORY,
-    ORDER_STATUS_CHANNELS,
-)
-from iiko_web_client import iiko_web
+from constants import DAY_NAMES_EN
 from models import (
     DishDetail,
     Order,
@@ -51,20 +29,14 @@ from models import (
     SessionLocal,
     SyncLog,
 )
-from services.daypart import hour_to_daypart
-from services.olap_parse import split_field
-from utils import is_delivery, today
+from pos import get_pos, to_item_rows, to_order_rows, to_payment_rows
+from utils import today
 
 logger = logging.getLogger(__name__)
 
 # Тот же пояс, что у границ «сегодня» (settings.timezone) — синки и определение
 # текущего дня живут в одном времени, иначе ночной full_sync ловил бы не тот день.
 scheduler = AsyncIOScheduler(timezone=settings.timezone)
-
-
-def _g(metric: dict, code: str, key: str, default=0):
-    """Достать значение метрики по коду и ключу (дата/uuid)."""
-    return metric.get(code, {}).get(key, default)
 
 
 def _daterange(start: date, end: date):
@@ -78,40 +50,27 @@ def _daterange(start: date, end: date):
 
 
 async def sync_revenue(days_back: int = 7):
-    """Выручка/чеки/средний чек/себестоимость по дням."""
+    """Выручка/чеки/средний чек/себестоимость по дням (upsert по дате)."""
     logger.info(f"Синк выручки за {days_back} дн...")
     date_to = today()
     date_from = date_to - timedelta(days=days_back - 1)
 
     try:
-        data = await iiko_web.revenue_by_day(date_from.isoformat(), date_to.isoformat())
-
-        # data = {"REV_GROSS": {"2026-06-17": 11780, ...}, "TRN_ALL": {...}, ...}
-        all_dates = set()
-        for code in data.values():
-            all_dates.update(code.keys())
+        days = await get_pos().revenue_days(date_from, date_to)
 
         with SessionLocal() as db:
-            for d_str in sorted(all_dates):
-                d = date.fromisoformat(d_str)
-                rev = float(_g(data, "REV_GROSS", d_str) or 0)
-                checks = int(_g(data, "TRN_ALL", d_str) or 0)
-                avg = float(_g(data, "AVERAGE_SPEND_GROSS", d_str) or 0)
-                disc = float(_g(data, "ACC_CAT_DISCOUNT_AMT", d_str) or 0)
-                refunds = int(_g(data, "REFUND_TRN", d_str) or 0)
-                cost = float(_g(data, "PRODUCTS_USAGE_THEO_AMT", d_str) or 0)
-
-                row = db.get(RevenueDaily, d)
+            for day in days:
+                row = db.get(RevenueDaily, day.date)
                 if not row:
-                    row = RevenueDaily(date=d)
+                    row = RevenueDaily(date=day.date)
                     db.add(row)
-                row.day_of_week = DAY_NAMES_EN[d.weekday()]
-                row.total_sum = rev
-                row.check_count = checks
-                row.avg_check = avg
-                row.discount_sum = disc
-                row.refund_count = refunds
-                row.cost_sum = cost
+                row.day_of_week = DAY_NAMES_EN[day.date.weekday()]
+                row.total_sum = day.revenue
+                row.check_count = day.checks
+                row.avg_check = day.avg_check
+                row.discount_sum = day.discount_sum
+                row.refund_count = day.refund_count
+                row.cost_sum = day.cost_sum
 
             db.add(SyncLog(sync_type="revenue", status="ok"))
             db.commit()
@@ -123,259 +82,47 @@ async def sync_revenue(days_back: int = 7):
             db.commit()
 
 
-# ---------- Заказы (order_items / orders / dish_detail) ----------
-
-
-# группы/данные позиционного OLAP-запроса по позициям (имя — последним, может содержать «, »)
-_ITEM_GROUP = [
-    OLAP_FIELD_OPEN_DATE,
-    OLAP_FIELD_HOUR,
-    OLAP_FIELD_ORDER_NUM,
-    OLAP_FIELD_DISH_CATEGORY,
-    OLAP_FIELD_DISH_TYPE,
-    OLAP_FIELD_DISH_NAME,
-]
-_ITEM_DATA = [OLAP_FIELD_SUM, OLAP_FIELD_QTY, OLAP_FIELD_GUESTS, OLAP_FIELD_COST, OLAP_FIELD_NET]
-# заказ-уровневые атрибуты (отдельный запрос); free-text (зал/кассир) — в конце
-_ATTR_GROUP = [
-    OLAP_FIELD_OPEN_DATE,
-    OLAP_FIELD_ORDER_NUM,
-    OLAP_FIELD_OPEN_TIME,
-    OLAP_FIELD_CLOSE_TIME,
-    OLAP_FIELD_SESSION,
-    OLAP_FIELD_TABLE,
-    OLAP_FIELD_PAYTYPES,
-    OLAP_FIELD_SECTION,
-    OLAP_FIELD_CASHIER,
-]
-
-
-def _f(r: dict, i: int) -> float:
-    return float(r.get(f"field{i}", {}).get("value", 0) or 0)
-
-
-def _parse_order_rows(rows: list[dict]) -> list[dict]:
-    """OLAP-позиции [дата,час,заказ,категория,тип,имя]+[sum,qty,guests,cost,net] → dict-и."""
-    out = []
-    for r in rows:
-        ds, hs, order_num, category, dish_type, name = split_field(
-            r.get("field0", {}).get("value", ""), 6
-        )
-        if not ds:
-            continue
-        try:
-            d = date.fromisoformat(ds)
-        except ValueError:
-            continue
-        try:
-            hour = int(hs)
-        except (ValueError, TypeError):
-            hour = None
-        out.append(
-            {
-                "date": d,
-                "hour": hour,
-                "order_num": order_num,
-                "category": category,
-                "dish_type": dish_type,
-                "name": name,
-                "sum": _f(r, 1),
-                "qty": _f(r, 2),
-                "guests": _f(r, 3),
-                "cost": _f(r, 4),
-                "net": _f(r, 5),
-            }
-        )
-    return out
-
-
-def _duration_min(open_t: str | None, close_t: str | None) -> float | None:
-    if not open_t or not close_t:
-        return None
-    try:
-        m = (datetime.fromisoformat(close_t) - datetime.fromisoformat(open_t)).total_seconds() / 60
-    except ValueError:
-        return None
-    return round(m, 1) if m >= 0 else None
-
-
-def _parse_order_attrs(rows: list[dict]) -> dict[tuple, dict]:
-    """Заказ-атрибуты (время/касса/зал/стол/оплата) → {(дата, заказ): {...}}.
-
-    Способ оплаты может быть сплитом (несколько строк на заказ) — собираем множеством.
-    """
-    out: dict[tuple, dict] = {}
-    for r in rows:
-        ds, onum, open_t, close_t, session, table, pay, section, cashier = split_field(
-            r.get("field0", {}).get("value", ""), 9
-        )
-        try:
-            d = date.fromisoformat(ds)
-        except ValueError:
-            continue
-        a = out.get((d, onum))
-        if a is None:
-            a = out[(d, onum)] = {
-                "open_time": open_t or None,
-                "close_time": close_t or None,
-                "session_num": session or None,
-                "table_num": table or None,
-                "section": section or None,
-                "cashier": cashier or None,
-                "_pays": set(),
-            }
-        if pay:
-            a["_pays"].add(pay)
-        if open_t and (a["open_time"] is None or open_t < a["open_time"]):
-            a["open_time"] = open_t
-        if close_t and (a["close_time"] is None or close_t > a["close_time"]):
-            a["close_time"] = close_t
-    return out
-
-
-def _build_payments(attr_rows: list[dict]) -> list[dict]:
-    """Из заказ-атрибутов собрать оплаты по способу: (дата, заказ, способ) → сумма.
-
-    Сплит-оплата даёт несколько строк на заказ; OLAP делит сумму по способу корректно
-    (проверено: Σ по (заказ, оплата) = выручке заказа).
-    """
-    agg: dict[tuple, float] = defaultdict(float)
-    for r in attr_rows:
-        ds, onum, _ot, _ct, _se, _tb, pay, _sc, _ca = split_field(
-            r.get("field0", {}).get("value", ""), 9
-        )
-        if not pay:
-            continue
-        try:
-            d = date.fromisoformat(ds)
-        except ValueError:
-            continue
-        agg[(d, onum, pay)] += _f(r, 1)
-    return [
-        {"date": d, "order_num": o, "pay_type": p, "amount": round(a, 2)}
-        for (d, o, p), a in agg.items()
-    ]
-
-
-def _build_orders(items: list[dict], attrs: dict[tuple, dict]) -> list[dict]:
-    """Из позиций заказа + заказ-атрибутов собрать обогащённые чек-сущности.
-
-    Канал — из модификатора «Статус»; `is_delivery` — бизнес-правило доставки
-    (категория «Доставка» ИЛИ маркер `_д`); `daypart`/`weekday` — из часа/даты;
-    `dish_count` — число разных позиций; `cost_sum` — с/с iiko по позициям; время/
-    касса/зал/стол/оплата — из отдельного запроса (`attrs`), + длительность.
-    """
-    h2dp = hour_to_daypart()
-    by_order: dict[tuple, list[dict]] = defaultdict(list)
-    for it in items:
-        by_order[(it["date"], it["order_num"])].append(it)
-
-    orders = []
-    for (d, onum), its in by_order.items():
-        channel = CHANNEL_DINEIN
-        guests = 0.0
-        total = 0.0
-        cost = 0.0
-        item_count = 0.0
-        hour = None
-        delivery = False
-        names: set[str] = set()
-        for it in its:
-            if it["category"] == ORDER_STATUS_CATEGORY:
-                ch = ORDER_STATUS_CHANNELS.get((it["name"] or "").strip().lower())
-                if ch:
-                    channel = ch
-                continue  # «Статус» — не товарная позиция
-            total += it["sum"]
-            cost += it["cost"]
-            item_count += it["qty"]
-            guests = max(guests, it["guests"])
-            names.add(it["name"])
-            if is_delivery(it["category"], it["name"]):
-                delivery = True
-            if it["hour"] is not None:
-                hour = it["hour"] if hour is None else min(hour, it["hour"])
-        a = attrs.get((d, onum), {})
-        pays = a.get("_pays") or set()
-        orders.append(
-            {
-                "date": d,
-                "order_num": onum,
-                "hour": hour,
-                "weekday": d.weekday(),
-                "daypart": h2dp.get(hour) if hour is not None else None,
-                "channel": channel,
-                "is_delivery": delivery,
-                "guests": guests,
-                "total_sum": total,
-                "cost_sum": cost,
-                "item_count": item_count,
-                "dish_count": len(names),
-                "pay_type": ", ".join(sorted(pays)) or None,
-                "table_num": a.get("table_num"),
-                "section": a.get("section"),
-                "cashier": a.get("cashier"),
-                "session_num": a.get("session_num"),
-                "open_time": a.get("open_time"),
-                "close_time": a.get("close_time"),
-                "duration_min": _duration_min(a.get("open_time"), a.get("close_time")),
-            }
-        )
-    return orders
+# ---------- Заказы (order_items / orders / order_payments / dish_detail) ----------
 
 
 async def sync_orders_range(date_from: date, date_to: date):
-    """Заполнить `order_items`/`orders` за диапазон (replace по дням).
+    """Заполнить `order_items`/`orders`/`order_payments` за диапазон (replace по дням).
 
-    Два OLAP-запроса: позиции (item-уровень) и заказ-атрибуты (order-уровень,
-    отдельно — чтобы сплит-оплата не дублировала позиции).
+    Заказы приходят от адаптера кассы уже разобранными (`pos.PosOrder`); здесь только
+    раскладка их по трём таблицам и замена диапазона одной транзакцией.
     """
-    df, dt = date_from.isoformat(), date_to.isoformat()
-    # Синк ждёт кассу дольше ручки табло: его никто не держит на линии, а его
-    # результат — та самая БД, из которой ручка отвечает мгновенно, когда касса
-    # больна. 27.08.2026 касса два часа собирала выборку дольше 30 секунд, синк
-    # сдавался на каждой попытке, БД осталась пустой — и запасной путь табло,
-    # рассчитанный ровно на этот случай, оказался пустым тоже.
-    terpenie = settings.sync_poll_attempts
-    item_rows = await iiko_web.olap_sales(
-        group_fields=_ITEM_GROUP, data_fields=_ITEM_DATA, date_from=df, date_to=dt,
-        poll_attempts=terpenie,
-    )
-    attr_rows = await iiko_web.olap_sales(
-        group_fields=_ATTR_GROUP, data_fields=[OLAP_FIELD_SUM], date_from=df, date_to=dt,
-        poll_attempts=terpenie,
-    )
-    items = _parse_order_rows(item_rows)
-    attrs = _parse_order_attrs(attr_rows)
-    payments = _build_payments(attr_rows)
+    orders = await get_pos().orders(date_from, date_to)
+    items = to_item_rows(orders)
+    order_rows = to_order_rows(orders)
+    payments = to_payment_rows(orders)
     with SessionLocal() as db:
         db.query(OrderItem).filter(OrderItem.date >= date_from, OrderItem.date <= date_to).delete()
         db.query(Order).filter(Order.date >= date_from, Order.date <= date_to).delete()
         db.query(OrderPayment).filter(
             OrderPayment.date >= date_from, OrderPayment.date <= date_to
         ).delete()
-        db.bulk_save_objects([OrderItem(**it) for it in items])
-        db.bulk_save_objects([Order(**o) for o in _build_orders(items, attrs)])
+        db.bulk_save_objects([OrderItem(**asdict(it)) for it in items])
+        db.bulk_save_objects([Order(**o) for o in order_rows])
         db.bulk_save_objects([OrderPayment(**p) for p in payments])
         db.commit()
 
 
 async def sync_dish_detail_day(day: date):
-    """Заполнить `dish_detail` за один день (get-data DATA_DETAILS, нужен `product_type`)."""
-    rows = await iiko_web.dishes_detail(day.isoformat(), day.isoformat())
+    """Заполнить `dish_detail` за один день (продажи по номенклатуре + тип позиции)."""
+    rows = await get_pos().products(day)
     with SessionLocal() as db:
         db.query(DishDetail).filter(DishDetail.date == day).delete()
         db.bulk_save_objects(
             [
                 DishDetail(
                     date=day,
-                    dish_id=r["dish_id"],
-                    dish_name=r["dish_name"],
-                    category=r["category"],
-                    product_type=r["product_type"],
-                    quantity=r["quantity"],
-                    revenue=r["revenue"],
-                    cost_sum=r["cost_sum"],
+                    dish_id=r.product_id,
+                    dish_name=r.name,
+                    category=r.category,
+                    product_type=r.product_type,
+                    quantity=r.quantity,
+                    revenue=r.revenue,
+                    cost_sum=r.cost_sum,
                 )
                 for r in rows
             ]
@@ -404,25 +151,17 @@ async def sync_orders_recent(days_back: int = 7):
 
 
 async def _history_start() -> date | None:
-    """Начало истории: из настройки либо probe по выручке (первая дата с продажами)."""
+    """Начало истории: из настройки, иначе спрашиваем кассу (если она умеет probe)."""
     if settings.history_start_date:
         return settings.history_start_date
-    date_to = today()
-    probe_from = date_to - timedelta(days=3650)  # до ~10 лет назад; ответ разрежён
-    data = await iiko_web.revenue_by_day(probe_from.isoformat(), date_to.isoformat())
-    dates: set[str] = set()
-    for code in data.values():
-        dates.update(code.keys())
-    if not dates:
-        return None
-    return min(date.fromisoformat(x) for x in dates)
+    return await get_pos().history_start()
 
 
 async def backfill():
     """Один раз выкачать всю историю заказов в БД (идемпотентно, пропускает заполненное).
 
-    `order_items` — одним OLAP-запросом на весь диапазон (быстро, чинит OLAP-разрезы
-    сразу). `dish_detail` — по дню (нужен `product_type`), newest→oldest, в фоне.
+    `order_items` — одним запросом на весь диапазон (быстро, сразу чинит все разрезы
+    дашборда). `dish_detail` — по дню (нужен тип позиции), newest→oldest, в фоне.
     """
     try:
         start = await _history_start()
@@ -441,9 +180,9 @@ async def backfill():
         logger.exception("backfill: order_items упал")
 
     # dish_detail заполняем только за дни, где реально есть заказы: начало истории
-    # из probe может быть завышено (revenue_by_day отдаёт стартовую дату окна), а
+    # из probe может быть завышено (сводка по дням отдаёт стартовую дату окна), а
     # фактический минимум — это первая дата в order_items. Иначе гоняли бы тысячи
-    # пустых дней get-data впустую.
+    # пустых дней впустую.
     with SessionLocal() as db:
         real_start = db.execute(select(func.min(OrderItem.date))).scalar()
         have = {d for (d,) in db.execute(select(DishDetail.date).distinct()).all()}
@@ -495,17 +234,16 @@ async def nightly():
 
 
 async def keep_session_warm():
-    """Освежить cookie-сессию iiko, чтобы не релогиниться во время запроса дашборда.
+    """Прогреть авторизацию кассы, чтобы она не случилась на запросе пользователя.
 
-    `_ensure_session` пингует `/api/auth` (TTL сессии ~20 мин, скользящий) и поднимает
-    Playwright-логин только если сессия истекла. Дашборд для текущего дня ходит в iiko
-    вживую — без этого «тёплого» пинга релогин с headless-браузером мог бы случиться
-    прямо на запросе пользователя и давать секунды задержки на «Сегодня».
+    У iiko это cookie-сессия с TTL ~20 мин, поднимаемая headless-браузером (секунды);
+    у Saby — сервисный токен и каталог номенклатуры. Ручка табло ходит в кассу вживую,
+    и логин посреди её запроса стоил бы этих секунд ожидания.
     """
     try:
-        await iiko_web._ensure_session()
+        await get_pos().warm()
     except Exception:
-        logger.exception("keep_session_warm: не удалось освежить сессию iiko")
+        logger.exception("keep_session_warm: не удалось прогреть авторизацию кассы")
 
 
 def setup_scheduler():

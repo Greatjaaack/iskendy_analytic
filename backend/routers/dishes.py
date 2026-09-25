@@ -5,6 +5,7 @@ from itertools import combinations
 
 from fastapi import APIRouter, Query
 
+from config import settings
 from constants import (
     CHANNEL_DELIVERY,
     CHANNEL_DINEIN,
@@ -24,6 +25,7 @@ from constants import (
     PRODUCT_TYPE_MODIFIER,
 )
 from iiko_web_client import iiko_web
+from pos import PROVIDER_IIKO
 from services.olap_parse import split_field_3
 from services.order_store import dish_detail_rows, order_rows
 from utils import (
@@ -499,7 +501,17 @@ async def get_order_types(
 
     Нужна, чтобы подтвердить имя поля `OLAP_FIELD_ORDER_TYPE` и увидеть реальные значения
     (доставка/самовывоз/обычный…). При неверном имени поля OLAP вернёт ошибку.
+
+    Ручка привязана к OLAP iiko: это единственное место, где мы намеренно смотрим в
+    «сырое» поле кассы. На другой кассе такого поля нет — отдаём пустой ответ с
+    пояснением, а не 500.
     """
+    if (settings.pos_provider or "").strip().lower() != PROVIDER_IIKO:
+        return {
+            "field": OLAP_FIELD_ORDER_TYPE,
+            "values": [],
+            "note": f"диагностика доступна только на кассе {PROVIDER_IIKO}",
+        }
     df, dt = period_range(period, date_from, date_to)
     # диагностика OrderType — намеренно живой запрос (поле в БД не храним, оно пусто)
     rows = await iiko_web.olap_sales(

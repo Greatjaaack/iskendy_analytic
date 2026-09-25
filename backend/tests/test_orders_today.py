@@ -4,7 +4,8 @@
 внешний контракт: переименовали поле — табло молча перестало получать заказы, и
 узнали об этом от кассира. Тест фиксирует ровно то, на что табло рассчитывает.
 
-Живой iiko не дёргаем: `olap_sales` подменяется заглушкой с сырыми OLAP-строками.
+Живая касса не дёргается: подменяется `olap_sales` внутри адаптера iiko
+(`pos/iiko.py`), поэтому тест проверяет и разбор ответа кассы, и саму ручку.
 """
 
 import sys
@@ -17,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import main  # noqa: E402
 from config import settings  # noqa: E402
+from pos import iiko as pos_iiko  # noqa: E402
 
 TOKEN = "test-internal-token"
 
@@ -60,7 +62,7 @@ def client(monkeypatch):
     async def fake_olap(*args, **kwargs):
         return OLAP_ROWS
 
-    monkeypatch.setattr(main.iiko_web, "olap_sales", fake_olap)
+    monkeypatch.setattr(pos_iiko.iiko_web, "olap_sales", fake_olap)
     # без `with` lifespan не запускается: ни планировщика, ни синка из iiko
     return TestClient(main.app)
 
@@ -127,7 +129,7 @@ def test_ретрай_после_первой_ошибки(client, monkeypatch):
             raise RuntimeError("iikoweb olap: статус ERROR")
         return OLAP_ROWS
 
-    monkeypatch.setattr(main.iiko_web, "olap_sales", flaky)
+    monkeypatch.setattr(pos_iiko.iiko_web, "olap_sales", flaky)
     r = client.get("/api/orders/today", headers={"X-Internal-Token": TOKEN})
     assert r.status_code == 200
     assert calls["n"] == 2
@@ -140,7 +142,7 @@ def test_обе_попытки_упали_отдаём_из_БД(client, monkeyp
     async def always_fails(*a, **kw):
         raise RuntimeError("iikoweb olap: статус ERROR")
 
-    monkeypatch.setattr(main.iiko_web, "olap_sales", always_fails)
+    monkeypatch.setattr(pos_iiko.iiko_web, "olap_sales", always_fails)
     monkeypatch.setattr(
         main,
         "SessionLocal",
@@ -161,7 +163,7 @@ def test_запасной_ответ_пишется_в_лог(client, monkeypatc
     async def always_fails(*a, **kw):
         raise RuntimeError("iikoweb olap: статус ERROR")
 
-    monkeypatch.setattr(main.iiko_web, "olap_sales", always_fails)
+    monkeypatch.setattr(pos_iiko.iiko_web, "olap_sales", always_fails)
     with caplog.at_level("WARNING"):
         client.get("/api/orders/today", headers={"X-Internal-Token": TOKEN})
     assert any("отдаю из БД" in m for m in caplog.messages)
@@ -178,7 +180,7 @@ def test_пока_заказов_нет_ходим_в_iiko_реже(client, monk
         seen["ttl"] = kw.get("cache_ttl")
         return []
 
-    monkeypatch.setattr(main.iiko_web, "olap_sales", spy)
+    monkeypatch.setattr(pos_iiko.iiko_web, "olap_sales", spy)
     monkeypatch.setattr(settings, "idle_poll_seconds", 60)
     client.get("/api/orders/today", headers={"X-Internal-Token": TOKEN})
     assert seen["ttl"] == 60
@@ -192,7 +194,7 @@ def test_после_первого_заказа_режим_обычный(client
         seen["ttl"] = kw.get("cache_ttl")
         return OLAP_ROWS
 
-    monkeypatch.setattr(main.iiko_web, "olap_sales", spy)
+    monkeypatch.setattr(pos_iiko.iiko_web, "olap_sales", spy)
     monkeypatch.setattr(main, "SessionLocal", _fake_session(day_started=True))
     monkeypatch.setattr(settings, "idle_poll_seconds", 60)
     client.get("/api/orders/today", headers={"X-Internal-Token": TOKEN})
@@ -218,7 +220,7 @@ def test_медленная_kassa_ne_derzhit_tablo(client, monkeypatch):
         return OLAP_ROWS
 
     monkeypatch.setattr(settings, "orders_live_budget_sec", 0.05)
-    monkeypatch.setattr(main.iiko_web, "olap_sales", medlennaya)
+    monkeypatch.setattr(pos_iiko.iiko_web, "olap_sales", medlennaya)
     monkeypatch.setattr(
         main,
         "SessionLocal",
@@ -248,7 +250,7 @@ def test_potolok_nakryvaet_i_povtor(client, monkeypatch, caplog):
         return OLAP_ROWS
 
     monkeypatch.setattr(settings, "orders_live_budget_sec", 0.05)
-    monkeypatch.setattr(main.iiko_web, "olap_sales", upala_potom_visnet)
+    monkeypatch.setattr(pos_iiko.iiko_web, "olap_sales", upala_potom_visnet)
     with caplog.at_level("WARNING"):
         r = client.get("/api/orders/today", headers={"X-Internal-Token": TOKEN})
     assert r.status_code == 200
