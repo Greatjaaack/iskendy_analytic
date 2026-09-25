@@ -54,7 +54,7 @@ from pos.base import (
     PosProduct,
 )
 from services.olap_parse import split_field
-from utils import today
+from utils import stronger_channel, today
 
 logger = logging.getLogger(__name__)
 
@@ -184,9 +184,11 @@ class IikoPos:
             # Тип обслуживания у этой точки ведётся модификатором категории «Статус»
             # на уровне заказа — других источников канала в iiko нет (OrderType пуст).
             if category == ORDER_STATUS_CATEGORY:
-                channel = ORDER_STATUS_CHANNELS.get((name or "").strip().lower())
-                if channel:
-                    order.channel = channel
+                # заказ может нести несколько «Статусов» (кассир отметил оба) — берём
+                # сильнейший, иначе канал зависел бы от порядка строк в ответе OLAP
+                order.channel = stronger_channel(
+                    order.channel, ORDER_STATUS_CHANNELS.get((name or "").strip().lower())
+                )
 
         # Заказ без «Статуса» — «в зале»: так было до вынесения адаптера.
         for order in orders.values():

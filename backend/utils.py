@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 from config import settings
 from constants import (
     CATEGORY_DISPLAY,
+    CHANNEL_PRIORITY,
     DELIVERY_CATEGORY,
     DELIVERY_NAME_MARKER,
     PAYMENT_GROUP_RULES,
@@ -25,6 +26,20 @@ def payment_group(pay_type: str | None) -> str:
         if needle in low:
             return group
     return PAYMENT_OTHER
+
+
+def stronger_channel(current: str | None, candidate: str | None) -> str | None:
+    """Выбрать канал заказа, если «Статусов» у него несколько (детерминированно).
+
+    Кассир иногда отмечает два статуса сразу. Прежний код брал последний встреченный,
+    поэтому канал заказа зависел от порядка строк в ответе кассы. Теперь берём
+    сильнейший по `CHANNEL_PRIORITY`: доставка > с собой > в зале.
+    """
+    if not candidate:
+        return current
+    if not current:
+        return candidate
+    return max(current, candidate, key=lambda ch: CHANNEL_PRIORITY.get(ch, 0))
 
 
 def display_category(name: str | None) -> str:

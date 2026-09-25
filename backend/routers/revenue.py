@@ -31,7 +31,7 @@ from pos import get_pos
 from services.aggregator import net_revenue
 from services.daypart import category_group, hour_to_daypart
 from services.delivery import delivery_buckets, exclude_delivery
-from services.olap_parse import split_field_4, split_field_5
+from services.olap_parse import order_group_fields, split_field_5, split_order_row
 from services.ops_aggregation import (
     blank_bucket,
     finalize,
@@ -45,6 +45,7 @@ from utils import (
     payment_group,
     period_range,
     prev_period_range,
+    stronger_channel,
     today,
 )
 from weather import get_weather
@@ -52,26 +53,35 @@ from weather import get_weather
 CHANNELS = (CHANNEL_DINEIN, CHANNEL_TAKEAWAY, CHANNEL_DELIVERY)
 
 
-def _channel_revenue(rows: list[dict]) -> dict[str, dict[str, float]]:
-    """{bucket → {канал: выручка}}. bucket = 1-е group-поле (дата/час). Канал: категория
-    «Доставка» → доставка; иначе «Статус» заказа (по умолчанию зал)."""
+def _channel_revenue(rows: list[dict], bucket_field: str) -> dict[str, dict[str, float]]:
+    """{корзина → {канал: выручка}}. Корзина — дата или час (`bucket_field`).
+
+    Канал: категория «Доставка» → доставка; иначе «Статус» заказа (по умолчанию зал).
+    Заказ опознаётся парой (дата, номер) — по одному номеру «Статус» одного дня
+    приписывался бы заказам того же номера из других дней.
+    """
     order_channel: dict[str, str] = {}
     for r in rows:
-        _b, ordernum, category, name = split_field_4(r.get("field0", {}).get("value", ""))
+        ordernum, _b, category, name = split_order_row(
+            r.get("field0", {}).get("value", ""), bucket_field
+        )
         if category == ORDER_STATUS_CATEGORY:
-            ch = ORDER_STATUS_CHANNELS.get(name.strip().lower())
-            if ch:
-                order_channel[ordernum] = ch
+            # несколько «Статусов» на заказе → сильнейший (доставка > с собой > зал)
+            order_channel[ordernum] = stronger_channel(
+                order_channel.get(ordernum), ORDER_STATUS_CHANNELS.get(name.strip().lower())
+            )
     out: dict[str, dict[str, float]] = {}
     for r in rows:
-        bucket, ordernum, category, name = split_field_4(r.get("field0", {}).get("value", ""))
+        ordernum, bucket, category, name = split_order_row(
+            r.get("field0", {}).get("value", ""), bucket_field
+        )
         if not name or category == ORDER_STATUS_CATEGORY:
             continue
         rev = float(r.get("field1", {}).get("value", 0) or 0)
         ch = (
             CHANNEL_DELIVERY
             if is_delivery(category, name)
-            else order_channel.get(ordernum, CHANNEL_DINEIN)
+            else (order_channel.get(ordernum) or CHANNEL_DINEIN)
         )
         out.setdefault(bucket, {c: 0.0 for c in CHANNELS})[ch] += rev
     return out
@@ -680,17 +690,12 @@ async def get_revenue_by_channel(
     df, dt = period_range(period, date_from, date_to)
     channels = [c for c in CHANNELS if include_delivery or c != CHANNEL_DELIVERY]
     rows = await order_rows(
-        group_fields=[
-            OLAP_FIELD_OPEN_DATE,
-            OLAP_FIELD_ORDER_NUM,
-            OLAP_FIELD_DISH_CATEGORY,
-            OLAP_FIELD_DISH_NAME,
-        ],
+        group_fields=order_group_fields(OLAP_FIELD_OPEN_DATE),
         data_fields=[OLAP_FIELD_SUM],
         date_from=df.isoformat(),
         date_to=dt.isoformat(),
     )
-    buckets = _channel_revenue(rows)
+    buckets = _channel_revenue(rows, OLAP_FIELD_OPEN_DATE)
     data = []
     for ds in sorted(buckets):
         try:
@@ -723,17 +728,12 @@ async def get_hourly_by_channel(
     """Продажи по часам в разрезе каналов (зал/с собой/доставка) — через OLAP SALES."""
     df, dt = period_range(period, date_from, date_to)
     rows = await order_rows(
-        group_fields=[
-            OLAP_FIELD_HOUR,
-            OLAP_FIELD_ORDER_NUM,
-            OLAP_FIELD_DISH_CATEGORY,
-            OLAP_FIELD_DISH_NAME,
-        ],
+        group_fields=order_group_fields(OLAP_FIELD_HOUR),
         data_fields=[OLAP_FIELD_SUM],
         date_from=df.isoformat(),
         date_to=dt.isoformat(),
     )
-    buckets = _channel_revenue(rows)
+    buckets = _channel_revenue(rows, OLAP_FIELD_HOUR)
     data = []
     for hk in sorted((h for h in buckets if h.isdigit()), key=int):
         h = int(hk)
@@ -763,15 +763,11 @@ async def get_kpi_by_channel(
     """KPI (выручка/чеки/средний чек) в разрезе ДОСТАВКА vs НЕ ДОСТАВКА (зал + с собой).
 
     Канал заказа: доставка, если у заказа «Статус» = Доставка ИЛИ есть позиция из
-    меню-категории «Доставка»; иначе — не доставка. Через OLAP SALES по `OrderNum`.
+    меню-категории «Доставка»; иначе — не доставка. Заказ опознаётся парой (дата, номер).
     """
     df, dt = period_range(period, date_from, date_to)
     rows = await order_rows(
-        group_fields=[
-            OLAP_FIELD_ORDER_NUM,
-            OLAP_FIELD_DISH_CATEGORY,
-            OLAP_FIELD_DISH_NAME,
-        ],
+        group_fields=order_group_fields(),
         data_fields=[OLAP_FIELD_SUM],
         date_from=df.isoformat(),
         date_to=dt.isoformat(),
@@ -780,10 +776,9 @@ async def get_kpi_by_channel(
     order_rev: dict[str, float] = {}
     order_delivery: dict[str, bool] = {}
     for r in rows:
-        parts = str(r.get("field0", {}).get("value", "")).split(", ")
-        if len(parts) < 3:
+        order_num, _day, category, name = split_order_row(r.get("field0", {}).get("value", ""))
+        if not order_num:
             continue
-        order_num, category, name = parts[0], parts[1], ", ".join(parts[2:])
         if category == ORDER_STATUS_CATEGORY:
             if ORDER_STATUS_CHANNELS.get(name.strip().lower()) == CHANNEL_DELIVERY:
                 order_delivery[order_num] = True

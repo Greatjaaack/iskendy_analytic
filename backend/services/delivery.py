@@ -7,28 +7,26 @@
 
 from datetime import date
 
-from constants import (
-    OLAP_FIELD_DISH_CATEGORY,
-    OLAP_FIELD_DISH_NAME,
-    OLAP_FIELD_ORDER_NUM,
-    OLAP_FIELD_SUM,
-)
-from services.olap_parse import split_field_4
+from constants import OLAP_FIELD_SUM
+from services.olap_parse import order_group_fields, split_order_row
 from services.order_store import order_rows
 from utils import is_delivery
 
 
-def delivery_per_bucket(rows: list[dict]) -> dict[str, dict[str, float]]:
-    """{bucket → {"revenue": выручка доставки, "checks": число заказов доставки}}.
+def delivery_per_bucket(rows: list[dict], bucket_field: str) -> dict[str, dict[str, float]]:
+    """{корзина → {"revenue": выручка доставки, "checks": число заказов доставки}}.
 
     Доставка = меню-категория «Доставка» ИЛИ имя с маркером `_д` (см. utils.is_delivery):
     выручка — сумма по таким позициям, чек — заказ, в котором есть хотя бы одна.
-    bucket = 1-е group-поле (дата/час).
+    Корзина — дата или час (`bucket_field`); заказ опознаётся парой (дата, номер), иначе
+    в часовых корзинах заказы одного номера из разных дней считались бы одним чеком.
     """
     out: dict[str, dict[str, float]] = {}
     seen: dict[str, set[str]] = {}
     for r in rows:
-        bucket, ordernum, category, name = split_field_4(r.get("field0", {}).get("value", ""))
+        ordernum, bucket, category, name = split_order_row(
+            r.get("field0", {}).get("value", ""), bucket_field
+        )
         if not name or not is_delivery(category, name):
             continue
         rev = float(r.get("field1", {}).get("value", 0) or 0)
@@ -44,17 +42,12 @@ def delivery_per_bucket(rows: list[dict]) -> dict[str, dict[str, float]]:
 async def delivery_buckets(date_from: date, date_to: date, bucket_field: str) -> dict[str, dict]:
     """Выручка и чеки доставки по корзинам (дата/час) за период — через OLAP SALES."""
     rows = await order_rows(
-        group_fields=[
-            bucket_field,
-            OLAP_FIELD_ORDER_NUM,
-            OLAP_FIELD_DISH_CATEGORY,
-            OLAP_FIELD_DISH_NAME,
-        ],
+        group_fields=order_group_fields(bucket_field),
         data_fields=[OLAP_FIELD_SUM],
         date_from=date_from.isoformat(),
         date_to=date_to.isoformat(),
     )
-    return delivery_per_bucket(rows)
+    return delivery_per_bucket(rows, bucket_field)
 
 
 def exclude_delivery(days: list[dict], del_buckets: dict[str, dict]) -> None:

@@ -16,7 +16,6 @@ from constants import (
     OLAP_FIELD_DISH_CATEGORY,
     OLAP_FIELD_DISH_NAME,
     OLAP_FIELD_HOUR,
-    OLAP_FIELD_ORDER_NUM,
     OLAP_FIELD_ORDER_TYPE,
     OLAP_FIELD_QTY,
     OLAP_FIELD_SUM,
@@ -26,7 +25,7 @@ from constants import (
 )
 from iiko_web_client import iiko_web
 from pos import PROVIDER_IIKO
-from services.olap_parse import split_field_3
+from services.olap_parse import order_group_fields, split_order_row
 from services.order_store import dish_detail_rows, order_rows
 from utils import (
     classify_channel,
@@ -34,6 +33,7 @@ from utils import (
     is_delivery,
     normalize_name,
     period_range,
+    stronger_channel,
 )
 
 router = APIRouter(prefix="/api/dishes", tags=["dishes"])
@@ -225,20 +225,17 @@ async def get_check_distribution(
 ):
     """Распределение чеков по типу обслуживания: Доставка / В зале / С собой.
 
-    Считаем УНИКАЛЬНЫЕ заказы (`OrderNum`) по каналу через OLAP — так сумма по типам
-    равна реальному числу чеков (раньше суммировали кол-во модификаторов «Статус», и
-    оно завышало итог, т.к. на заказ может приходиться больше одной «Статус»-строки).
+    Считаем УНИКАЛЬНЫЕ заказы по каналу — так сумма по типам равна реальному числу
+    чеков (раньше суммировали кол-во модификаторов «Статус», и оно завышало итог,
+    т.к. на заказ может приходиться больше одной «Статус»-строки). Заказ опознаётся
+    парой (дата, номер): номер сам по себе повторяется каждый день.
     Канал заказа: модификатор «Статус» → иначе доставка по категории «Доставка»/маркеру
     `_д` → зал. При `include_delivery=false` доставочные заказы исключаются (галка).
     """
     date_from_d, date_to_d = period_range(period, date_from, date_to)
 
     rows = await order_rows(
-        group_fields=[
-            OLAP_FIELD_ORDER_NUM,
-            OLAP_FIELD_DISH_CATEGORY,
-            OLAP_FIELD_DISH_NAME,
-        ],
+        group_fields=order_group_fields(),
         data_fields=[OLAP_FIELD_QTY],
         date_from=date_from_d.isoformat(),
         date_to=date_to_d.isoformat(),
@@ -248,13 +245,14 @@ async def get_check_distribution(
     order_has_delivery: set[str] = set()  # в заказе есть позиция меню-категории «Доставка»
     orders: set[str] = set()  # все товарные заказы (по которым считаем чеки)
     for r in rows:
-        order_num, category, name = split_field_3(r.get("field0", {}).get("value", ""))
+        order_num, _day, category, name = split_order_row(r.get("field0", {}).get("value", ""))
         if not order_num:
             continue
         if category == ORDER_STATUS_CATEGORY:
-            ch = ORDER_STATUS_CHANNELS.get(name.strip().lower())
-            if ch:
-                order_channel[order_num] = ch
+            # у заказа может быть несколько «Статусов» — берём сильнейший, а не последний
+            order_channel[order_num] = stronger_channel(
+                order_channel.get(order_num), ORDER_STATUS_CHANNELS.get(name.strip().lower())
+            )
             continue
         if not name:
             continue
@@ -420,42 +418,37 @@ async def get_service_breakdown(
     """Разрез блюдо/категория × канал обслуживания (#4): в зале / с собой / в доставку.
 
     Тип обслуживания у точки не пишется в OrderType (он пуст) — он задаётся модификатором
-    категории «Статус» на уровне ЗАКАЗА. Поэтому через OLAP SALES группируем по
-    [номер заказа, категория, блюдо]: у каждого заказа из его «Статус»-строки берём канал
-    и относим к нему все блюда заказа. Постфикс `_д` форсит «доставка» (заодно подстраховка,
-    если у заказа нет «Статуса»).
+    категории «Статус» на уровне ЗАКАЗА. Поэтому группируем по [дата, номер заказа,
+    категория, блюдо]: у каждого заказа из его «Статус»-строки берём канал и относим к
+    нему все блюда заказа. Дата в группировке обязательна — без неё заказы с одинаковым
+    номером из разных дней склеились бы в один, и часть блюд ушла бы не в свой канал.
+    Постфикс `_д` форсит «доставка» (заодно подстраховка, если у заказа нет «Статуса»).
     """
     date_from_d, date_to_d = period_range(period, date_from, date_to)
 
     _, mod_cats = await _modifier_filters(date_from_d.isoformat(), date_to_d.isoformat())
     rows = await order_rows(
-        group_fields=[
-            OLAP_FIELD_ORDER_NUM,
-            OLAP_FIELD_DISH_CATEGORY,
-            OLAP_FIELD_DISH_NAME,
-        ],
+        group_fields=order_group_fields(),
         data_fields=[OLAP_FIELD_QTY, OLAP_FIELD_SUM],
         date_from=date_from_d.isoformat(),
         date_to=date_to_d.isoformat(),
     )
 
-    # field0 = "<OrderNum>, <Категория>, <Имя>". OrderNum и категория без запятых; имя
-    # может содержать ", " — поэтому склеиваем хвост обратно (split_field_3).
     # 1-й проход: канал каждого заказа из его строки категории «Статус»
     order_channel: dict[str, str] = {}
     for r in rows:
-        order_num, category, name = split_field_3(r.get("field0", {}).get("value", ""))
+        order_num, _day, category, name = split_order_row(r.get("field0", {}).get("value", ""))
         if category == ORDER_STATUS_CATEGORY:
-            ch = ORDER_STATUS_CHANNELS.get(name.strip().lower())
-            if ch:
-                order_channel[order_num] = ch
+            order_channel[order_num] = stronger_channel(
+                order_channel.get(order_num), ORDER_STATUS_CHANNELS.get(name.strip().lower())
+            )
 
     # 2-й проход: канал блюда — по категории «Доставка»/маркеру `_д` (бизнес-правило),
     # иначе «Статус» заказа (по умолчанию зал).
     channels = (CHANNEL_DINEIN, CHANNEL_TAKEAWAY, CHANNEL_DELIVERY)
     agg: dict[str, dict] = {}
     for r in rows:
-        order_num, category, name = split_field_3(r.get("field0", {}).get("value", ""))
+        order_num, _day, category, name = split_order_row(r.get("field0", {}).get("value", ""))
         # пропускаем «Статус» (он дал канал в 1-м проходе) и платные модификаторы — не блюда
         if not name or category == ORDER_STATUS_CATEGORY or category in mod_cats:
             continue
@@ -545,28 +538,18 @@ async def get_check_composition(
     df, dt = period_range(period, date_from, date_to)
     _, mod_cats = await _modifier_filters(df.isoformat(), dt.isoformat())
     rows = await order_rows(
-        group_fields=[
-            OLAP_FIELD_HOUR,
-            OLAP_FIELD_ORDER_NUM,
-            OLAP_FIELD_DISH_CATEGORY,
-            OLAP_FIELD_DISH_NAME,
-        ],
+        group_fields=order_group_fields(OLAP_FIELD_HOUR),
         data_fields=[OLAP_FIELD_QTY, OLAP_FIELD_SUM],
         date_from=df.isoformat(),
         date_to=dt.isoformat(),
     )
-    # заказ → {категория: [qty, sum]}, заказ → час
+    # заказ → {категория: [qty, sum]}, заказ → час. Ключ заказа — (дата, номер):
+    # по одному номеру заказы разных дней склеились бы в один чек на 40 позиций.
     orders: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(lambda: [0.0, 0.0]))
     order_hour: dict[str, str] = {}
     for r in rows:
-        parts = str(r.get("field0", {}).get("value", "")).split(", ")
-        if len(parts) < 4:
-            continue
-        hour, ordernum, category, name = (
-            parts[0],
-            parts[1],
-            parts[2],
-            ", ".join(parts[3:]),
+        ordernum, hour, category, name = split_order_row(
+            r.get("field0", {}).get("value", ""), OLAP_FIELD_HOUR
         )
         # галка «без доставки»: доставка = категория «Доставка» ИЛИ имя с маркером `_д`
         if not include_delivery and is_delivery(category, name):
@@ -645,26 +628,17 @@ async def get_check_fullness(
     df, dt = period_range(period, date_from, date_to)
     _, mod_cats = await _modifier_filters(df.isoformat(), dt.isoformat())
     rows = await order_rows(
-        group_fields=[
-            OLAP_FIELD_HOUR,
-            OLAP_FIELD_ORDER_NUM,
-            OLAP_FIELD_DISH_CATEGORY,
-            OLAP_FIELD_DISH_NAME,
-        ],
+        group_fields=order_group_fields(OLAP_FIELD_HOUR),
         data_fields=[OLAP_FIELD_QTY],
         date_from=df.isoformat(),
         date_to=dt.isoformat(),
     )
+    # ключ — (час, заказ), где заказ = (дата, номер): по одному номеру заказы разных
+    # дней склеивались в один «чек» на 40 позиций, и почти всё падало в корзину «4+».
     positions: dict[tuple[str, str], float] = defaultdict(float)
     for r in rows:
-        parts = str(r.get("field0", {}).get("value", "")).split(", ")
-        if len(parts) < 4:
-            continue
-        hour, ordernum, category, name = (
-            parts[0],
-            parts[1],
-            parts[2],
-            ", ".join(parts[3:]),
+        ordernum, hour, category, name = split_order_row(
+            r.get("field0", {}).get("value", ""), OLAP_FIELD_HOUR
         )
         # галка «без доставки»: доставка = категория «Доставка» ИЛИ имя с маркером `_д`
         if not include_delivery and is_delivery(category, name):
@@ -725,22 +699,19 @@ async def get_basket(
     df, dt = period_range(period, date_from, date_to)
     _, mod_cats = await _modifier_filters(df.isoformat(), dt.isoformat())
     rows = await order_rows(
-        group_fields=[
-            OLAP_FIELD_ORDER_NUM,
-            OLAP_FIELD_DISH_CATEGORY,
-            OLAP_FIELD_DISH_NAME,
-        ],
+        group_fields=order_group_fields(),
         data_fields=[OLAP_FIELD_QTY],
         date_from=df.isoformat(),
         date_to=dt.isoformat(),
     )
 
+    # Заказ — пара (дата, номер). По одному номеру в «чек» попадали позиции из всех
+    # дней периода, и матрица показывала пары, которых в одном чеке никогда не было.
     order_labels: dict[str, set[str]] = defaultdict(set)
     for r in rows:
-        parts = str(r.get("field0", {}).get("value", "")).split(", ")
-        if len(parts) < 3:
+        ordernum, _day, category, name = split_order_row(r.get("field0", {}).get("value", ""))
+        if not ordernum:
             continue
-        ordernum, category, name = parts[0], parts[1], ", ".join(parts[2:])
         if not include_delivery and is_delivery(category, name):
             continue
         if not name or category in NON_PRODUCT_CATEGORIES or category in mod_cats:
