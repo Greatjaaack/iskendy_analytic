@@ -4,6 +4,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import { fetchCheckFullness, rangeKey, type RangeSel } from "../api";
 import { CHART_HEIGHT, COLORS } from "../constants";
 import { fillHourGaps, hourLabel } from "../format";
+import { miniBtn } from "../styles";
 
 interface Props {
   range: RangeSel;
@@ -62,8 +63,8 @@ export function CheckFullness({ range, withDelivery = true }: Props) {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 16 }}>
         <div style={{ color: "var(--text)", fontWeight: 600 }}>Наполненность чеков по часам (позиций в чеке)</div>
         <div style={{ display: "flex", background: "var(--bg)", borderRadius: 8, padding: 3, gap: 2 }}>
-          <button onClick={() => setPct(false)} style={mini(!pct)}>кол-во</button>
-          <button onClick={() => setPct(true)} style={mini(pct)}>доля %</button>
+          <button onClick={() => setPct(false)} style={miniBtn(!pct)}>кол-во</button>
+          <button onClick={() => setPct(true)} style={miniBtn(pct)}>доля %</button>
         </div>
       </div>
 
@@ -106,9 +107,3 @@ export function CheckFullness({ range, withDelivery = true }: Props) {
   );
 }
 
-const mini = (active: boolean): React.CSSProperties => ({
-  padding: "5px 12px", borderRadius: 6, border: "none", cursor: "pointer",
-  fontSize: 12, fontWeight: 600,
-  background: active ? COLORS.primary : "transparent",
-  color: active ? "var(--text)" : "var(--muted)",
-});

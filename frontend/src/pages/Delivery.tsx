@@ -6,10 +6,9 @@ import {
 import { fetchKpiByChannel, fetchRevenueByChannel, rangeKey } from "../api";
 import type { Period, RangeSel } from "../api";
 import { COLORS, PERIODS, CHART_HEIGHT } from "../constants";
-import { fmtInt } from "../format";
+import { fmtInt, daysAgoISO, todayISO } from "../format";
+import { tabBtn } from "../styles";
 
-const todayISO = () => new Date().toISOString().slice(0, 10);
-const daysAgoISO = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
 
 const CHANNEL_DELIVERY = "доставка";
 
@@ -169,13 +168,6 @@ function KpiCard({ label, value, sub, color }: { label: string; value: string; s
     </div>
   );
 }
-
-const tabBtn = (active: boolean): React.CSSProperties => ({
-  padding: "6px 16px", borderRadius: 6, border: "none", cursor: "pointer",
-  fontSize: 13, fontWeight: 600,
-  background: active ? COLORS.primary : "transparent",
-  color: active ? "var(--text)" : COLORS.muted,
-});
 
 const dateInput: React.CSSProperties = {
   padding: "6px 10px", borderRadius: 8, border: `1px solid ${COLORS.grid}`,

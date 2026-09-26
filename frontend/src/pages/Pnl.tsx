@@ -5,11 +5,9 @@ import type {
   Period, RangeSel, PnlLine, PnlRating, PnlSection, PnlBreakeven, PnlDay, PnlDayKey, PnlDayCostRow,
 } from "../api";
 import { fetchPnl, fetchPnlCosts, savePnlCosts, fetchPnlDayCosts, savePnlDayCosts, importPnlSheet, rangeKey } from "../api";
-import { fmtInt } from "../format";
+import { fmtInt, fmtRub, pctDelta, todayISO } from "../format";
 import { COLORS, PERIODS, weekdayGroup } from "../constants";
 
-const todayISO = () => new Date().toISOString().slice(0, 10);
-const fmtRub = (n: number | undefined) => `${fmtInt(n ?? 0)} ₽`;
 
 const MONTHS_RU = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
 /** «2026-07» → «июл 2026». */
@@ -47,13 +45,8 @@ function fmtMetric(l: PnlLine): string {
   return String(v);
 }
 
-/** Дельта в % между текущим и сопоставимым значением пред. периода (тот же день недели).
- *  Знаменатель — |prev|: направление берём по (cur − prev), иначе при отрицательной базе
- *  (EBITDA у точки отрицательна каждый месяц) знак стрелки инвертируется — рост убытка
- *  показывался бы зелёной ▲. Теперь cur > prev → «+» (лучше), cur < prev → «−» (хуже). */
-const delta = (cur: number, prev: number | null | undefined): number | null =>
-  prev == null || prev === 0 ? null : Math.round(((cur - prev) / Math.abs(prev)) * 1000) / 10;
-
+/** Бейдж дельты к сопоставимому прошлому периоду (`pctDelta`). База там по модулю: EBITDA
+ *  у точки отрицательна каждый месяц, и без модуля рост убытка показывался бы зелёной ▲. */
 function DeltaBadge({ d }: { d: number | null }) {
   if (d == null) return null;
   return (
@@ -195,7 +188,7 @@ export function Pnl() {
               <div style={{ color: COLORS.muted, fontSize: 12 }}>EBITDA за период · {data.date_from} — {data.date_to}</div>
               <div style={{ fontSize: 30, fontWeight: 800, color: data.ebitda >= 0 ? COLORS.good : COLORS.bad, marginTop: 2 }}>
                 {fmtRub(data.ebitda)} <span style={{ fontSize: 16, fontWeight: 600, color: rateColor(data.ebitda_rating) ?? COLORS.muted }}>({data.ebitda_margin}%)</span>
-                {ps && <DeltaBadge d={delta(data.ebitda, ps.ebitda)} />}
+                {ps && <DeltaBadge d={pctDelta(data.ebitda, ps.ebitda)} />}
               </div>
               <div style={{ fontSize: 11, color: COLORS.muted, marginTop: 2 }}>до налога УСН и кап-резерва</div>
             </div>
@@ -203,7 +196,7 @@ export function Pnl() {
               <div style={{ color: COLORS.muted, fontSize: 12 }}>Чистая прибыль</div>
               <div style={{ fontSize: 24, fontWeight: 800, color: data.net_profit >= 0 ? COLORS.good : COLORS.bad, marginTop: 2 }}>
                 {fmtRub(data.net_profit)} <span style={{ fontSize: 14, fontWeight: 600, color: rateColor(data.net_rating) ?? COLORS.muted }}>({data.net_margin}%)</span>
-                {ps && ps.net_profit != null && <DeltaBadge d={delta(data.net_profit, ps.net_profit)} />}
+                {ps && ps.net_profit != null && <DeltaBadge d={pctDelta(data.net_profit, ps.net_profit)} />}
               </div>
               <div style={{ fontSize: 11, color: COLORS.muted, marginTop: 2 }}>EBITDA − налог − кап-резерв</div>
             </div>

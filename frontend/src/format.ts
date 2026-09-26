@@ -5,9 +5,34 @@
 export const fmtInt = (n: number): string =>
   new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 0 }).format(n);
 
-/** Число с двумя знаками после запятой; `null`/`undefined` → «—» (для цен/с-с). */
-export const fmtNum = (n: number | null | undefined): string =>
-  n == null ? "—" : new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(n);
+/** Рубли целым числом: «4 400 ₽» (без сокращений «4.4к»). */
+export const fmtRub = (n: number | null | undefined): string => `${fmtInt(n ?? 0)} ₽`;
+
+/** Изменение к прошлому периоду в процентах с одним знаком; нет базы → `null`.
+ *  База берётся по модулю — так дельта прибыли верна и при убытке в прошлом периоде. */
+export const pctDelta = (cur: number, prev: number | null | undefined): number | null =>
+  prev == null || prev === 0 ? null : Math.round(((cur - prev) / Math.abs(prev)) * 1000) / 10;
+
+/** Часовой пояс точки. «Сегодня» считаем в нём, как бэкенд (`settings.timezone`). */
+export const RESTAURANT_TZ = "Europe/Moscow";
+
+// «sv-SE» форматирует дату ровно как ISO: «2026-09-26».
+const isoDateInTz = (d: Date): string =>
+  new Intl.DateTimeFormat("sv-SE", { timeZone: RESTAURANT_TZ }).format(d);
+
+/** Сегодняшняя дата точки в ISO. Раньше страницы брали `toISOString()` — это дата по UTC,
+ *  и с 00:00 до 03:00 МСК «сегодня» во фронте было ещё вчера: календарь не давал выбрать
+ *  текущий день, а диапазон по умолчанию обрывался вчерашним. */
+export const todayISO = (): string => isoDateInTz(new Date());
+
+/** Дата `n` дней назад в поясе точки, ISO. */
+export const daysAgoISO = (n: number): string => isoDateInTz(new Date(Date.now() - n * 86_400_000));
+
+/** «2026-06-22» → «22.06» (день.месяц). */
+export const dm = (iso: string): string => {
+  const [, mm, dd] = iso.split("-");
+  return `${dd}.${mm}`;
+};
 
 /** Метка часового интервала: «10:00». */
 export const hourLabel = (h: number): string => `${String(h).padStart(2, "0")}:00`;

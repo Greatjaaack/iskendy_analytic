@@ -9,10 +9,8 @@ import type {
   CheckComposition,
   CheckDistribution,
   CheckFullness,
-  ContactInput,
   DaypartSummary,
   DishGroupBy,
-  DishMapping,
   DishResponse,
   Employee,
   LaborSummary,
@@ -22,8 +20,6 @@ import type {
   OpsReport,
   PlanCell,
   PlanMatrix,
-  IngredientBrief,
-  IngredientCard,
   KpiByChannel,
   PaymentStructure,
   PnlCostsResponse,
@@ -33,12 +29,6 @@ import type {
   RangeSel,
   RevenueByChannel,
   RevenueResponse,
-  SupplierBrief,
-  SupplierCard,
-  SupplierContact,
-  SupplierInput,
-  TtkBrief,
-  TtkCard,
   WeekdaySummary,
 } from "./types";
 
@@ -269,81 +259,3 @@ export const fetchCheckFullness = (
       `/api/dishes/check-fullness?${rangeQS(range)}${deliveryQS(includeDelivery)}`,
     )
     .then((r) => r.data);
-
-// ---------- Поставщики ----------
-
-export const fetchSuppliers = (): Promise<SupplierBrief[]> =>
-  api.get<SupplierBrief[]>("/api/suppliers").then((r) => r.data);
-
-export const fetchSupplier = (id: number): Promise<SupplierCard> =>
-  api.get<SupplierCard>(`/api/suppliers/${id}`).then((r) => r.data);
-
-export const createSupplier = (data: SupplierInput): Promise<SupplierBrief> =>
-  api.post<SupplierBrief>("/api/suppliers", data).then((r) => r.data);
-
-export const updateSupplier = (id: number, data: SupplierInput): Promise<SupplierBrief> =>
-  api.put<SupplierBrief>(`/api/suppliers/${id}`, data).then((r) => r.data);
-
-export const deleteSupplier = (id: number) =>
-  api.delete(`/api/suppliers/${id}`).then((r) => r.data);
-
-export const addSupplierContact = (
-  supplierId: number,
-  data: ContactInput,
-): Promise<SupplierContact> =>
-  api.post<SupplierContact>(`/api/suppliers/${supplierId}/contacts`, data).then((r) => r.data);
-
-export const updateSupplierContact = (
-  supplierId: number,
-  contactId: number,
-  data: ContactInput,
-): Promise<SupplierContact> =>
-  api
-    .put<SupplierContact>(`/api/suppliers/${supplierId}/contacts/${contactId}`, data)
-    .then((r) => r.data);
-
-export const deleteSupplierContact = (supplierId: number, contactId: number) =>
-  api.delete(`/api/suppliers/${supplierId}/contacts/${contactId}`).then((r) => r.data);
-
-export const uploadSupplierFile = (id: number, file: File, fileType = "other") => {
-  const form = new FormData();
-  form.append("file", file);
-  form.append("file_type", fileType);
-  return api.post(`/api/suppliers/${id}/files`, form).then((r) => r.data);
-};
-
-export const supplierFileUrl = (supplierId: number, fileId: number) =>
-  `${BASE}/api/suppliers/${supplierId}/files/${fileId}`;
-
-/** URL выгрузки всех поставщиков в Excel (открывается напрямую/скачивается). */
-export const suppliersExportUrl = () => `${BASE}/api/suppliers/export`;
-
-export const updateProductBrand = (supplierId: number, priceId: number, brand: string) =>
-  api.put(`/api/suppliers/${supplierId}/products/${priceId}`, { brand }).then((r) => r.data);
-
-// ---------- Номенклатура / ТТК ----------
-
-export const fetchIngredients = (): Promise<IngredientBrief[]> =>
-  api.get<IngredientBrief[]>("/api/ingredients").then((r) => r.data);
-
-export const fetchIngredient = (id: number): Promise<IngredientCard> =>
-  api.get<IngredientCard>(`/api/ingredients/${id}`).then((r) => r.data);
-
-export const fetchTtkList = (): Promise<TtkBrief[]> =>
-  api.get<TtkBrief[]>("/api/ttk").then((r) => r.data);
-
-export const fetchTtk = (id: number): Promise<TtkCard> =>
-  api.get<TtkCard>(`/api/ttk/${id}`).then((r) => r.data);
-
-export const runImport = () => api.post("/api/import/ttk-matrix").then((r) => r.data);
-
-// ---------- Привязка блюдо ↔ ТТК ----------
-
-export const fetchDishMappings = (): Promise<DishMapping[]> =>
-  api.get<DishMapping[]>("/api/dish-mappings").then((r) => r.data);
-
-export const saveDishMapping = (sale_name: string, ttk_id: number) =>
-  api.post("/api/dish-mappings", { sale_name, ttk_id }).then((r) => r.data);
-
-export const deleteDishMapping = (id: number) =>
-  api.delete(`/api/dish-mappings/${id}`).then((r) => r.data);

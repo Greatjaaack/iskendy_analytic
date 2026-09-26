@@ -11,10 +11,9 @@ import {
   toggleShift,
   fetchLabor,
 } from "../api";
-import { fmtInt } from "../format";
+import { fmtRub } from "../format";
 import { COLORS, EMPLOYEE_ROLES } from "../constants";
 
-const fmtRub = (n: number) => `${fmtInt(n)} ₽`;
 const MONTHS = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
 const WD = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
 

@@ -20,14 +20,13 @@ import {
   COLORS, PERIODS, weatherInfo,
   AUTOSYNC_OPTIONS, AUTOSYNC_DAYS,
 } from "../constants";
-
-const todayISO = () => new Date().toISOString().slice(0, 10);
-const daysAgoISO = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
+import { daysAgoISO, RESTAURANT_TZ, todayISO } from "../format";
+import { tabBtn } from "../styles";
 
 /** ISO-метка синка (UTC) → «14:05 · 23.06» во времени ресторана (Москва): сперва время, затем дата. */
 const fmtSync = (iso: string): string => {
   const d = new Date(iso);
-  const opts = { timeZone: "Europe/Moscow" } as const;
+  const opts = { timeZone: RESTAURANT_TZ } as const;
   const time = d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit", ...opts });
   const date = d.toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit", ...opts });
   return `${time} · ${date}`;
@@ -271,13 +270,6 @@ export function Dashboard() {
     </div>
   );
 }
-
-const tabBtn = (active: boolean): React.CSSProperties => ({
-  padding: "6px 16px", borderRadius: 6, border: "none", cursor: "pointer",
-  fontSize: 13, fontWeight: 600,
-  background: active ? COLORS.primary : "transparent",
-  color: active ? "var(--text)" : COLORS.muted,
-});
 
 const dateInput: React.CSSProperties = {
   padding: "6px 10px", borderRadius: 8, border: `1px solid ${COLORS.grid}`,

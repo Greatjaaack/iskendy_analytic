@@ -10,7 +10,7 @@ import {
   WEEKDAY_GROUPS, WEEKDAYS_ALL, WEEKDAYS_WEEKEND, WEEKDAYS_WORK,
   weekdayGroup,
 } from "../constants";
-import { fmtInt } from "../format";
+import { fmtInt, dm } from "../format";
 
 interface Props {
   data: RevenueDay[];
@@ -29,11 +29,6 @@ const VIEWS: { key: View; label: string }[] = [
 const chColor = (ch: string) =>
   ch === "доставка" ? COLORS.primary : ch === "с собой" ? COLORS.warn : COLORS.good;
 
-// «2026-06-22» → «22.06» (день.месяц — привычный для чтения порядок: видно, какое это число).
-const dm = (iso: string) => {
-  const [, mm, dd] = iso.split("-");
-  return `${dd}.${mm}`;
-};
 // Подпись дня на оси X: «Пн 22.06» (день недели + число).
 const dayLabel = (d: { day_of_week: string; date: string }) => `${d.day_of_week} ${dm(d.date)}`;
 

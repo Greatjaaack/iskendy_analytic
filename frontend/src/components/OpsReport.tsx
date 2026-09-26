@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { useLiveQuery } from "../hooks";
 import { fetchOpsReport, rangeKey, type RangeSel, type OpsCell, type OpsDaypart } from "../api";
-import { COLORS, FOOD_COST_THRESHOLDS, weekdayGroup } from "../constants";
+import { COLORS, weekdayGroup } from "../constants";
 import { fmtInt } from "../format";
 import { PlanEditor } from "./PlanEditor";
+import { foodCostColor } from "../styles";
 
 interface Props {
   range: RangeSel;
@@ -15,14 +16,6 @@ const planPctColor = (v: number | null): string => {
   if (v == null) return "var(--muted)";
   if (v >= 100) return COLORS.good;
   if (v >= 90) return COLORS.warn;
-  return COLORS.bad;
-};
-
-// цвет food cost %: зелёный — норма, жёлтый — пограничный, красный — высокий
-const costColor = (v: number | null): string => {
-  if (v == null) return "var(--muted)";
-  if (v < FOOD_COST_THRESHOLDS.good) return COLORS.good;
-  if (v <= FOOD_COST_THRESHOLDS.warn) return COLORS.warn;
   return COLORS.bad;
 };
 
@@ -142,11 +135,11 @@ export function OpsReport({ range, withDelivery = true }: Props) {
                     {days.map((day) => {
                       const c = dp.cells[day.date];
                       const txt = cellText(c, metric.key);
-                      const col = metric.key === "food_cost_pct" ? costColor(c?.food_cost_pct ?? null)
+                      const col = metric.key === "food_cost_pct" ? foodCostColor(c?.food_cost_pct ?? null)
                         : metric.key === "revenue" ? "var(--text)" : "var(--muted)";
                       return <td key={day.date} style={{ ...TD, color: txt === "—" ? "var(--grid)" : col }}>{txt}</td>;
                     })}
-                    <td style={{ ...TD, color: metric.key === "food_cost_pct" ? costColor(dp.total.food_cost_pct) : "var(--text)", fontWeight: 600, borderLeft: "2px solid var(--grid)" }}>{sumVal(dp, metric.key)}</td>
+                    <td style={{ ...TD, color: metric.key === "food_cost_pct" ? foodCostColor(dp.total.food_cost_pct) : "var(--text)", fontWeight: 600, borderLeft: "2px solid var(--grid)" }}>{sumVal(dp, metric.key)}</td>
                     {hasPlan && <td style={{ ...TD, color: "var(--muted)" }}>{planVal(dp.plan, metric.key)}</td>}
                     {hasPlan && (() => {
                       const pp = pctVal(dp.plan_pct, metric.key);
@@ -201,7 +194,7 @@ export function OpsReport({ range, withDelivery = true }: Props) {
                     if (!c || c.food_cost_pct == null)
                       return <td key={g} style={{ ...TD, color: "var(--grid)" }}>—</td>;
                     return (
-                      <td key={g} style={{ ...TD, color: costColor(c.food_cost_pct) }}
+                      <td key={g} style={{ ...TD, color: foodCostColor(c.food_cost_pct) }}
                         title={`Выручка ${fmtInt(c.revenue)} ₽ · покрыто костом ${c.coverage}%`}>
                         {c.food_cost_pct}%
                       </td>
@@ -214,7 +207,7 @@ export function OpsReport({ range, withDelivery = true }: Props) {
                 {d!.category_groups.map((g) => {
                   const c = d!.category_totals[g];
                   return (
-                    <td key={g} style={{ ...TD, color: costColor(c?.food_cost_pct ?? null), fontWeight: 700 }}
+                    <td key={g} style={{ ...TD, color: foodCostColor(c?.food_cost_pct ?? null), fontWeight: 700 }}
                       title={c ? `Выручка ${fmtInt(c.revenue)} ₽ · доля ${c.revenue_share}% · покрыто костом ${c.coverage}%` : ""}>
                       {c && c.food_cost_pct != null ? `${c.food_cost_pct}%` : "—"}
                     </td>

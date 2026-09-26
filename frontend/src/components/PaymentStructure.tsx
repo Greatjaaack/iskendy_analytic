@@ -4,7 +4,7 @@ import {
 import { useLiveQuery } from "../hooks";
 import { fetchPaymentStructure, rangeKey, type RangeSel } from "../api";
 import { CHART_HEIGHT, COLORS } from "../constants";
-import { fmtInt } from "../format";
+import { fmtInt, dm } from "../format";
 import type { PaymentTotal } from "../types";
 
 interface Props {
@@ -20,12 +20,6 @@ const GROUP_COLORS: Record<string, string> = {
   "Прочее": COLORS.muted,
 };
 const colorFor = (g: string) => GROUP_COLORS[g] ?? COLORS.accent;
-
-// «2026-06-22» → «22.06» (день.месяц).
-const dm = (iso: string) => {
-  const [, mm, dd] = iso.split("-");
-  return `${dd}.${mm}`;
-};
 
 /** Структура выручки по способам оплаты (Карта/Наличные/Агрегатор).
  *  Сверху — две 100%-стопки (Выручка / Чеки) за период; снизу — стек по дням (тренд

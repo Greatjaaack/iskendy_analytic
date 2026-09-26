@@ -5,16 +5,9 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, Legend,
 } from "recharts";
 import { fetchDishes, rangeKey, type RangeSel, type DishRow } from "../api";
-import { CHART_HEIGHT, COLORS, FOOD_COST_THRESHOLDS } from "../constants";
+import { CHART_HEIGHT, COLORS } from "../constants";
 import { fmtInt } from "../format";
-
-// цвет food cost % по порогам (как в OpsReport): дешевле — зелёный, дороже — красный
-const costColor = (v: number | null): string => {
-  if (v == null) return "var(--muted)";
-  if (v < FOOD_COST_THRESHOLDS.good) return COLORS.good;
-  if (v <= FOOD_COST_THRESHOLDS.warn) return COLORS.warn;
-  return COLORS.bad;
-};
+import { foodCostColor, miniBtn } from "../styles";
 
 interface Props {
   range: RangeSel;
@@ -110,13 +103,13 @@ export function MenuEngineering({ range, withDelivery = true }: Props) {
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           {view === "abc" && (
             <div style={{ display: "flex", background: "var(--bg)", borderRadius: 8, padding: 3, gap: 2 }}>
-              <button onClick={() => setAbcBasis("rev")} style={mini(abcBasis === "rev")}>по выручке</button>
-              <button onClick={() => setAbcBasis("margin")} style={mini(abcBasis === "margin")}>по прибыли</button>
+              <button onClick={() => setAbcBasis("rev")} style={miniBtn(abcBasis === "rev")}>по выручке</button>
+              <button onClick={() => setAbcBasis("margin")} style={miniBtn(abcBasis === "margin")}>по прибыли</button>
             </div>
           )}
           <div style={{ display: "flex", background: "var(--bg)", borderRadius: 8, padding: 3, gap: 2 }}>
-            <button onClick={() => setView("matrix")} style={mini(view === "matrix")}>Матрица</button>
-            <button onClick={() => setView("abc")} style={mini(view === "abc")}>ABC</button>
+            <button onClick={() => setView("matrix")} style={miniBtn(view === "matrix")}>Матрица</button>
+            <button onClick={() => setView("abc")} style={miniBtn(view === "abc")}>ABC</button>
           </div>
         </div>
       </div>
@@ -235,7 +228,7 @@ export function MenuEngineering({ range, withDelivery = true }: Props) {
                     </td>
                     <td style={{ ...ABC_TD, textAlign: "right", color: "var(--text)" }}>{fmtInt(r.value)} ₽</td>
                     <td style={{ ...ABC_TD, textAlign: "right", color: "var(--muted)" }}>{r.cum}%</td>
-                    <td style={{ ...ABC_TD, textAlign: "right", color: costColor(r.cost_pct), fontWeight: 600 }}>
+                    <td style={{ ...ABC_TD, textAlign: "right", color: foodCostColor(r.cost_pct), fontWeight: 600 }}>
                       {r.cost_pct == null ? "—" : `${Math.round(r.cost_pct)}%`}
                     </td>
                   </tr>
@@ -255,13 +248,6 @@ export function MenuEngineering({ range, withDelivery = true }: Props) {
     </div>
   );
 }
-
-const mini = (active: boolean): React.CSSProperties => ({
-  padding: "5px 12px", borderRadius: 6, border: "none", cursor: "pointer",
-  fontSize: 12, fontWeight: 600,
-  background: active ? COLORS.primary : "transparent",
-  color: active ? "var(--text)" : "var(--muted)",
-});
 
 const ABC_TH: React.CSSProperties = {
   padding: "8px 12px", textAlign: "center", color: "var(--muted)", fontSize: 12, fontWeight: 600,

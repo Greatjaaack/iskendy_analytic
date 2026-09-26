@@ -6,6 +6,7 @@ import {
 import { fetchHourlyBreakdown, rangeKey, type RangeSel, type DishGroupBy } from "../api";
 import { COLORS } from "../constants";
 import { fmtInt, fillHourGaps, hourLabel } from "../format";
+import { miniBtn } from "../styles";
 
 interface Props {
   range: RangeSel;
@@ -144,16 +145,16 @@ export function HourlyBreakdown({ range, withDelivery = true }: Props) {
         <div style={{ color: "var(--text)", fontWeight: 600 }}>Продажи по часам</div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <div style={{ display: "flex", background: "var(--bg)", borderRadius: 8, padding: 3, gap: 2 }}>
-            <button onClick={() => setMetric("revenue")} style={mini(metric === "revenue")}>Выручка</button>
-            <button onClick={() => setMetric("quantity")} style={mini(metric === "quantity")}>Кол-во</button>
+            <button onClick={() => setMetric("revenue")} style={miniBtn(metric === "revenue")}>Выручка</button>
+            <button onClick={() => setMetric("quantity")} style={miniBtn(metric === "quantity")}>Кол-во</button>
           </div>
           <div style={{ display: "flex", background: "var(--bg)", borderRadius: 8, padding: 3, gap: 2 }}>
-            <button onClick={() => setChartMode("abs")} style={mini(chartMode === "abs")}>Объём</button>
-            <button onClick={() => setChartMode("share")} style={mini(chartMode === "share")}>Доли</button>
+            <button onClick={() => setChartMode("abs")} style={miniBtn(chartMode === "abs")}>Объём</button>
+            <button onClick={() => setChartMode("share")} style={miniBtn(chartMode === "share")}>Доли</button>
           </div>
           <div style={{ display: "flex", background: "var(--bg)", borderRadius: 8, padding: 3, gap: 2 }}>
             {(["category", "dish"] as DishGroupBy[]).map((g) => (
-              <button key={g} onClick={() => setGroup(g)} style={mini(group === g)}>
+              <button key={g} onClick={() => setGroup(g)} style={miniBtn(group === g)}>
                 {g === "category" ? "Категории" : "Блюда"}
               </button>
             ))}
@@ -315,9 +316,3 @@ export function HourlyBreakdown({ range, withDelivery = true }: Props) {
 
 const td: React.CSSProperties = { padding: "7px 10px" };
 const thSort: React.CSSProperties = { padding: "7px 10px", cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" };
-const mini = (active: boolean): React.CSSProperties => ({
-  padding: "5px 12px", borderRadius: 6, border: "none", cursor: "pointer",
-  fontSize: 12, fontWeight: 600,
-  background: active ? COLORS.primary : "transparent",
-  color: active ? "var(--text)" : "var(--muted)",
-});

@@ -4,6 +4,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import { fetchCheckComposition, fetchDishes, rangeKey, type RangeSel } from "../api";
 import { CHART_HEIGHT, COLORS } from "../constants";
 import { fmtInt } from "../format";
+import { miniBtn } from "../styles";
 
 interface Props {
   range: RangeSel;
@@ -87,12 +88,12 @@ export function CheckComposition({ range, withDelivery = true }: Props) {
         <div style={{ color: "var(--text)", fontWeight: 600 }}>Состав чека (доля категорий)</div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <div style={{ display: "flex", background: "var(--bg)", borderRadius: 8, padding: 3, gap: 2 }}>
-            <button onClick={() => setBy("qty")} style={mini(by === "qty")}>по кол-ву</button>
-            <button onClick={() => setBy("rev")} style={mini(by === "rev")}>по выручке</button>
+            <button onClick={() => setBy("qty")} style={miniBtn(by === "qty")}>по кол-ву</button>
+            <button onClick={() => setBy("rev")} style={miniBtn(by === "rev")}>по выручке</button>
           </div>
           <div style={{ display: "flex", background: "var(--bg)", borderRadius: 8, padding: 3, gap: 2 }}>
-            <button onClick={() => setMode("total")} style={mini(mode === "total")}>За период</button>
-            <button onClick={() => setMode("hour")} style={mini(mode === "hour")}>По часам</button>
+            <button onClick={() => setMode("total")} style={miniBtn(mode === "total")}>За период</button>
+            <button onClick={() => setMode("hour")} style={miniBtn(mode === "hour")}>По часам</button>
           </div>
         </div>
       </div>
@@ -157,7 +158,7 @@ export function CheckComposition({ range, withDelivery = true }: Props) {
                 (доля в категории, {by === "qty" ? "по кол-ву" : "по выручке"})
               </span>
             </div>
-            <button onClick={() => setDrillCat(null)} style={mini(false)}>✕ закрыть</button>
+            <button onClick={() => setDrillCat(null)} style={miniBtn(false)}>✕ закрыть</button>
           </div>
 
           {dishQ.isLoading && <div style={{ color: "var(--muted)", padding: 12 }}>Загрузка…</div>}
@@ -186,9 +187,3 @@ export function CheckComposition({ range, withDelivery = true }: Props) {
   );
 }
 
-const mini = (active: boolean): React.CSSProperties => ({
-  padding: "5px 12px", borderRadius: 6, border: "none", cursor: "pointer",
-  fontSize: 12, fontWeight: 600,
-  background: active ? COLORS.primary : "transparent",
-  color: active ? "var(--text)" : "var(--muted)",
-});

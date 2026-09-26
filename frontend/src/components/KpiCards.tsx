@@ -1,14 +1,10 @@
 import { type RevenueSummary } from "../api";
 import { COLORS } from "../constants";
-import { fmtInt } from "../format";
+import { fmtInt, pctDelta } from "../format";
 
 interface Props {
   summary: RevenueSummary;
 }
-
-/** Дельта к прошлому периоду в %, либо null если сравнивать не с чем. */
-const delta = (cur: number, prev: number | null): number | null =>
-  prev == null || prev === 0 ? null : Math.round(((cur - prev) / prev) * 1000) / 10;
 
 /** Верхние KPI: выручка / средний чек / чеки с дельтой к прошлому периоду.
  *  «Выручка» — ЧИСТАЯ (после комиссии агрегатора, то что реально упало в карман);
@@ -23,7 +19,7 @@ export function KpiCards({ summary }: Props) {
       label: "Выручка (чистая)",
       value: fmtInt(summary.total_revenue) + " ₽",
       color: COLORS.primary,
-      delta: delta(summary.total_revenue, p.total_revenue),
+      delta: pctDelta(summary.total_revenue, p.total_revenue),
       // подстрока: сырая выручка и сколько удержал агрегатор (только если была доставка)
       sub:
         commission > 0
@@ -34,14 +30,14 @@ export function KpiCards({ summary }: Props) {
       label: "Средний чек",
       value: fmtInt(summary.avg_check) + " ₽",
       color: COLORS.good,
-      delta: delta(summary.avg_check, p.avg_check),
+      delta: pctDelta(summary.avg_check, p.avg_check),
       sub: null,
     },
     {
       label: "Чеков",
       value: fmtInt(summary.total_checks),
       color: COLORS.warn,
-      delta: delta(summary.total_checks, p.total_checks),
+      delta: pctDelta(summary.total_checks, p.total_checks),
       sub: null,
     },
   ];
