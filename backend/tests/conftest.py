@@ -37,7 +37,11 @@ from routers import revenue as rev_router  # noqa: E402
 from routers import schedule as sched_router  # noqa: E402
 from routers import suppliers as sup_router  # noqa: E402
 from services import aggregator as aggregator_service  # noqa: E402
+from services import ops_report as ops_report_service  # noqa: E402
 from services import order_store  # noqa: E402
+from services import revenue_source  # noqa: E402
+from services import pnl_calc as pnl_calc_service  # noqa: E402
+from services import schedule_labor as labor_service  # noqa: E402
 
 PASSWORD = "test-pass"
 INTERNAL_TOKEN = "test-internal"
@@ -268,6 +272,10 @@ def фикстурная_бд(tmp_path, monkeypatch):
         main,
         scheduler,
         order_store,
+        revenue_source,
+        ops_report_service,
+        pnl_calc_service,
+        labor_service,
         aggregator_service,
         rev_router,
         pnl_router,
@@ -292,7 +300,7 @@ def без_сети(monkeypatch):
     касса = КассаНедоступна()
     monkeypatch.setattr(pos, "_client", касса, raising=False)
     monkeypatch.setattr(pos, "get_pos", lambda: касса)
-    for модуль in (scheduler, order_store, rev_router, main):
+    for модуль in (scheduler, order_store, revenue_source, rev_router, main):
         monkeypatch.setattr(модуль, "get_pos", lambda: касса, raising=False)
 
     async def погода(date_from, date_to):

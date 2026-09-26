@@ -251,7 +251,13 @@ backend/
   weather.py              погода Москвы (Open-Meteo, без ключа; свежие дни — forecast-API, старые — archive)
   utils.py                хелперы: today/period_range/prev_period_range, normalize_phone/email, classify_channel
   importers/ttk_matrix.py импорт Excel «ТТК и матрица продуктов»
-  routers/                revenue, dishes, suppliers, nomenclature, imports
+  routers/                тонкие ручки API: revenue, dishes, pnl, plan, schedule,
+                          suppliers, nomenclature, imports, auth
+  services/               расчёты (после этапа 7а весь счёт живёт здесь):
+                          revenue_source (дни/часы), channels, ops_report, dish_cuts,
+                          dish_catalog, pnl_calc, schedule_labor, order_store,
+                          ops_aggregation, daypart, delivery, olap_parse, aggregator
+  tools/bench_loop.py     замер: держит ли тяжёлая ручка event loop
   seed/ttk_matrix.xlsx    исходные ТТК/прайс для импорта
 frontend/
   src/pages/              Dashboard (вкладки Пульс/Операции/Меню), Delivery (дашборд

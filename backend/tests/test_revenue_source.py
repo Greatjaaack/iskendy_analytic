@@ -1,5 +1,7 @@
 """Откуда берутся дни периода: БД, позиции заказов или живая касса.
 
+Логика живёт в `services/revenue_source.py` (вынесена из роутера на этапе 7а).
+
 Раньше признаком был `is_custom`: любой выбор дат календарём уходил живым запросом в
 кассу, даже когда все дни лежали в БД. Это стоило 8,4 секунды на `/api/pnl` за месяц
 (против 0,36 с из БД) и делало календарь заложником доступности кассы.
@@ -21,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import models  # noqa: E402
 from constants import ORDER_STATUS_CATEGORY  # noqa: E402
-from routers import revenue as rev  # noqa: E402
+from services import revenue_source as rev  # noqa: E402
 
 
 def _asyncio_run(coro):
@@ -51,22 +53,22 @@ def spy(monkeypatch):
         calls["live"].append((df, dt))
         return [d for d in data["live"] if df.isoformat() <= d["date"] <= dt.isoformat()]
 
-    monkeypatch.setattr(rev, "_days_from_db", from_db)
-    monkeypatch.setattr(rev, "_days_from_items", from_items)
-    monkeypatch.setattr(rev, "_days_live", live)
+    monkeypatch.setattr(rev, "days_from_db", from_db)
+    monkeypatch.setattr(rev, "days_from_items", from_items)
+    monkeypatch.setattr(rev, "days_live", live)
     monkeypatch.setattr(rev, "today", lambda: date(2026, 9, 20))
-    monkeypatch.setattr(rev, "_history_start", lambda: date(2026, 9, 1))
+    monkeypatch.setattr(rev, "history_start", lambda: date(2026, 9, 1))
     return calls, data
 
 
 def _day(iso: str, total: float = 100.0) -> dict:
-    return rev._day_dict(date.fromisoformat(iso), total, 1, total, 0, 0, 30.0)
+    return rev.day_dict(date.fromisoformat(iso), total, 1, total, 0, 0, 30.0)
 
 
 def test_период_целиком_в_сводке_кассу_не_дёргает(spy):
     calls, data = spy
     data["db"] = [_day("2026-09-10"), _day("2026-09-11")]
-    days = _asyncio_run(rev._load_days(date(2026, 9, 10), date(2026, 9, 11), is_custom=True))
+    days = _asyncio_run(rev.load_days(date(2026, 9, 10), date(2026, 9, 11), is_custom=True))
     assert [d["date"] for d in days] == ["2026-09-10", "2026-09-11"]
     assert calls["live"] == []  # главное: календарный диапазон больше не идёт в кассу
     assert calls["items"] == []  # и позиции не нужны, сводка всё покрыла
@@ -77,7 +79,7 @@ def test_пробел_в_сводке_закрывается_позициями(
     calls, data = spy
     data["db"] = [_day("2026-09-11")]
     data["items"] = [_day("2026-09-10", 500.0)]
-    days = _asyncio_run(rev._load_days(date(2026, 9, 10), date(2026, 9, 11), is_custom=True))
+    days = _asyncio_run(rev.load_days(date(2026, 9, 10), date(2026, 9, 11), is_custom=True))
     assert [d["date"] for d in days] == ["2026-09-10", "2026-09-11"]
     assert [d["total_sum"] for d in days] == [500.0, 100.0]
     assert calls["items"] == [(date(2026, 9, 10), date(2026, 9, 10))]
@@ -89,7 +91,7 @@ def test_дни_раньше_истории_берём_у_кассы(spy):
     calls, data = spy
     data["db"] = [_day("2026-09-01")]
     data["live"] = [_day("2026-08-30", 700.0), _day("2026-08-31", 800.0)]
-    days = _asyncio_run(rev._load_days(date(2026, 8, 30), date(2026, 9, 1), is_custom=True))
+    days = _asyncio_run(rev.load_days(date(2026, 8, 30), date(2026, 9, 1), is_custom=True))
     assert [d["date"] for d in days] == ["2026-08-30", "2026-08-31", "2026-09-01"]
     assert calls["live"] == [(date(2026, 8, 30), date(2026, 8, 31))]  # только пробел
 
@@ -98,7 +100,7 @@ def test_закрытый_день_внутри_истории_кассу_не_�
     """День без заказов — это выходной. Касса вернёт по нему те же нули, незачем спрашивать."""
     calls, data = spy
     data["db"] = [_day("2026-09-10"), _day("2026-09-12")]
-    days = _asyncio_run(rev._load_days(date(2026, 9, 10), date(2026, 9, 12), is_custom=True))
+    days = _asyncio_run(rev.load_days(date(2026, 9, 10), date(2026, 9, 12), is_custom=True))
     assert [d["date"] for d in days] == ["2026-09-10", "2026-09-12"]
     assert calls["live"] == []
 
@@ -108,7 +110,7 @@ def test_сегодня_доберём_живым_если_синк_не_усп�
     calls, data = spy
     data["db"] = [_day("2026-09-19")]
     data["live"] = [_day("2026-09-20", 1234.0)]
-    days = _asyncio_run(rev._load_days(date(2026, 9, 19), date(2026, 9, 20), is_custom=False))
+    days = _asyncio_run(rev.load_days(date(2026, 9, 19), date(2026, 9, 20), is_custom=False))
     assert [d["date"] for d in days] == ["2026-09-19", "2026-09-20"]
     assert (date(2026, 9, 20), date(2026, 9, 20)) in calls["live"]
 
@@ -116,7 +118,7 @@ def test_сегодня_доберём_живым_если_синк_не_усп�
 def test_сегодня_из_бд_живым_не_дёргаем(spy):
     calls, data = spy
     data["db"] = [_day("2026-09-19"), _day("2026-09-20")]
-    _asyncio_run(rev._load_days(date(2026, 9, 19), date(2026, 9, 20), is_custom=False))
+    _asyncio_run(rev.load_days(date(2026, 9, 19), date(2026, 9, 20), is_custom=False))
     assert calls["live"] == []
 
 
@@ -177,7 +179,7 @@ def db_with_items(tmp_path, monkeypatch):
 
 def test_день_из_позиций_считает_как_сводка(db_with_items):
     """Выручка без служебных строк, чек = заказ, скидка = брутто − нетто, с/с — по позициям."""
-    (day,) = rev._days_from_items(date(2026, 3, 1), date(2026, 3, 1))
+    (day,) = rev.days_from_items(date(2026, 3, 1), date(2026, 3, 1))
     assert day["date"] == "2026-03-01"
     assert day["total_sum"] == 800.0  # 600 + 200, строка «Статус» не считается
     assert day["check_count"] == 2  # два заказа
@@ -188,7 +190,7 @@ def test_день_из_позиций_считает_как_сводка(db_with
 
 
 def test_день_без_позиций_не_появляется(db_with_items):
-    assert rev._days_from_items(date(2026, 3, 2), date(2026, 3, 3)) == []
+    assert rev.days_from_items(date(2026, 3, 2), date(2026, 3, 3)) == []
 
 
 def test_прошлый_период_тоже_из_бд(spy, monkeypatch):
@@ -247,12 +249,12 @@ def test_час_берётся_по_закрытию_заказа(db_with_orders
 
     Заказ 10:59 → 11:01 у кассы попадает в 11-й час, а не в 10-й.
     """
-    rev_by_hour, checks_by_hour = rev._hours_from_db(date(2026, 3, 1), date(2026, 3, 1))
+    rev_by_hour, checks_by_hour = rev.hours_from_db(date(2026, 3, 1), date(2026, 3, 1))
     assert rev_by_hour == {11: 500.0, 19: 300.0}
     assert checks_by_hour == {11: 1, 19: 1}
 
 
 def test_без_времени_закрытия_берём_час_открытия(db_with_orders):
     """Второй заказ закрытия не имеет — он остаётся в своём 19-м часе."""
-    rev_by_hour, _ = rev._hours_from_db(date(2026, 3, 1), date(2026, 3, 1))
+    rev_by_hour, _ = rev.hours_from_db(date(2026, 3, 1), date(2026, 3, 1))
     assert rev_by_hour[19] == 300.0

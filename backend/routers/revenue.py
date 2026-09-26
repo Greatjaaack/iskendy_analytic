@@ -1,16 +1,11 @@
 """Роутер выручки: по дням (из БД либо живой за произвольный диапазон) и по часам."""
 
-import asyncio
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 
 from fastapi import APIRouter, Query
-from sqlalchemy import func, select
 
 from constants import (
-    CATEGORY_GROUP_ORDER,
     CHANNEL_DELIVERY,
-    CHANNEL_DINEIN,
-    CHANNEL_TAKEAWAY,
     DAY_NAMES_RU,
     DAYPARTS,
     OLAP_FIELD_COST,
@@ -25,260 +20,29 @@ from constants import (
     ORDER_STATUS_CATEGORY,
     ORDER_STATUS_CHANNELS,
     PAYMENT_GROUP_ORDER,
-    WEEKDAY_TO_GROUP,
 )
-from models import DaypartPlan, Order, OrderItem, OrderPayment, RevenueDaily, SessionLocal
-from pos import get_pos
+from models import Order, OrderPayment, SessionLocal
 from services.aggregator import net_revenue
-from services.daypart import category_group, hour_to_daypart
+from services.channels import CHANNELS, channel_revenue
 from services.delivery import delivery_buckets, exclude_delivery
-from services.olap_parse import order_group_fields, split_field_5, split_order_row
-from services.ops_aggregation import (
-    blank_bucket,
-    finalize,
-    finalize_cat,
-    period_plan,
-    plan_pct,
+from services.olap_parse import order_group_fields, split_order_row
+from services.ops_report import build_ops_report
+from services.order_store import order_rows
+from services.revenue_source import (
+    days_stored_or_live,
+    hours_for_period,
+    load_days,
+    ru_dow,
 )
-from services.order_store import order_rows, stored_covers
 from utils import (
     is_delivery,
     payment_group,
     period_range,
     prev_period_range,
-    stronger_channel,
-    today,
 )
 from weather import get_weather
 
-CHANNELS = (CHANNEL_DINEIN, CHANNEL_TAKEAWAY, CHANNEL_DELIVERY)
-
-
-def _channel_revenue(rows: list[dict], bucket_field: str) -> dict[str, dict[str, float]]:
-    """{корзина → {канал: выручка}}. Корзина — дата или час (`bucket_field`).
-
-    Канал: категория «Доставка» → доставка; иначе «Статус» заказа (по умолчанию зал).
-    Заказ опознаётся парой (дата, номер) — по одному номеру «Статус» одного дня
-    приписывался бы заказам того же номера из других дней.
-    """
-    order_channel: dict[str, str] = {}
-    for r in rows:
-        ordernum, _b, category, name = split_order_row(
-            r.get("field0", {}).get("value", ""), bucket_field
-        )
-        if category == ORDER_STATUS_CATEGORY:
-            # несколько «Статусов» на заказе → сильнейший (доставка > с собой > зал)
-            order_channel[ordernum] = stronger_channel(
-                order_channel.get(ordernum), ORDER_STATUS_CHANNELS.get(name.strip().lower())
-            )
-    out: dict[str, dict[str, float]] = {}
-    for r in rows:
-        ordernum, bucket, category, name = split_order_row(
-            r.get("field0", {}).get("value", ""), bucket_field
-        )
-        if not name or category == ORDER_STATUS_CATEGORY:
-            continue
-        rev = float(r.get("field1", {}).get("value", 0) or 0)
-        ch = (
-            CHANNEL_DELIVERY
-            if is_delivery(category, name)
-            else (order_channel.get(ordernum) or CHANNEL_DINEIN)
-        )
-        out.setdefault(bucket, {c: 0.0 for c in CHANNELS})[ch] += rev
-    return out
-
-
 router = APIRouter(prefix="/api/revenue", tags=["revenue"])
-
-
-def _daterange(start: date, end: date):
-    """Дни периода включительно."""
-    day = start
-    while day <= end:
-        yield day
-        day += timedelta(days=1)
-
-
-def _ru_dow(d: date) -> str:
-    """Русское сокращение дня недели для даты."""
-    return DAY_NAMES_RU[d.weekday()]
-
-
-def _day_dict(d: date, total, checks, avg, disc, refunds, cost) -> dict:
-    total = float(total or 0)
-    cost = float(cost or 0)
-    return {
-        "date": d.isoformat(),
-        "day_of_week": _ru_dow(d),
-        "total_sum": total,
-        "discount_sum": float(disc or 0),
-        "refund_count": int(refunds or 0),
-        "cost_sum": round(cost, 2),
-        "check_count": int(checks or 0),
-        "avg_check": round(float(avg or 0), 2),
-        "food_cost_pct": round(cost / total * 100, 1) if total else 0,
-    }
-
-
-def _days_from_db(date_from: date, date_to: date) -> list[dict]:
-    with SessionLocal() as db:
-        rows = (
-            db.execute(
-                select(RevenueDaily)
-                .where(RevenueDaily.date >= date_from, RevenueDaily.date <= date_to)
-                .order_by(RevenueDaily.date)
-            )
-            .scalars()
-            .all()
-        )
-        # food cost — единый iiko-кост позиций (order_items.cost = ProductCostBase),
-        # суммарно по дню. Fallback на revenue_daily.cost_sum (теоретич. расход iiko),
-        # если позиционный кост за день пуст (день вне окна бэкафилла) — чтобы P&L и
-        # food cost не обнулялись на неполных данных.
-        item_cost = dict(
-            db.execute(
-                select(OrderItem.date, func.sum(OrderItem.cost))
-                .where(OrderItem.date >= date_from, OrderItem.date <= date_to)
-                .group_by(OrderItem.date)
-            ).all()
-        )
-    return [
-        _day_dict(
-            r.date,
-            r.total_sum,
-            r.check_count,
-            r.avg_check,
-            r.discount_sum,
-            r.refund_count,
-            item_cost.get(r.date) or r.cost_sum,
-        )
-        for r in rows
-    ]
-
-
-def _days_from_items(date_from: date, date_to: date) -> list[dict]:
-    """Дни периода, собранные из позиций заказов (`order_items`).
-
-    Нужны там, где `revenue_daily` пуст, а заказы есть: сводка по дням синкается только
-    за последний месяц, а позиции — за всю историю (бэкафилл). Раньше такие периоды
-    уходили живым запросом в кассу — 8,4 секунды на месяц и полная зависимость от её
-    доступности, хотя данные лежали в двух таблицах рядом.
-
-    Числа те же, что в сводке: выручка — сумма позиций без служебных строк («Статус»),
-    чек — заказ с хотя бы одной товарной позицией (номер уникален внутри дня), скидка —
-    разница брутто и нетто. Возвратов в позициях нет, поэтому 0.
-    """
-    товарные = OrderItem.category != ORDER_STATUS_CATEGORY
-    window = (OrderItem.date >= date_from, OrderItem.date <= date_to)
-    with SessionLocal() as db:
-        sums = db.execute(
-            select(
-                OrderItem.date,
-                func.sum(OrderItem.sum),
-                func.sum(OrderItem.net),
-                func.sum(OrderItem.cost),
-            )
-            .where(*window, товарные)
-            .group_by(OrderItem.date)
-        ).all()
-        checks = dict(
-            db.execute(
-                select(OrderItem.date, func.count(func.distinct(OrderItem.order_num)))
-                .where(*window, товарные)
-                .group_by(OrderItem.date)
-            ).all()
-        )
-    days = []
-    for day, gross, net, cost in sums:
-        gross = float(gross or 0)
-        count = int(checks.get(day, 0))
-        days.append(
-            _day_dict(
-                day,
-                gross,
-                count,
-                gross / count if count else 0,
-                max(0.0, gross - float(net or 0)),
-                0,
-                cost,
-            )
-        )
-    return days
-
-
-async def _days_live(date_from: date, date_to: date) -> list[dict]:
-    """Живой запрос сводки по дням у кассы (для произвольного диапазона вне БД)."""
-    days = await get_pos().revenue_days(date_from, date_to)
-    return [
-        _day_dict(
-            d.date,
-            d.revenue,
-            d.checks,
-            d.avg_check,
-            d.discount_sum,
-            d.refund_count,
-            d.cost_sum,
-        )
-        for d in days
-    ]
-
-
-def _history_start() -> date | None:
-    """Первый день, о котором в БД вообще что-то есть (сводка или позиции)."""
-    with SessionLocal() as db:
-        starts = [
-            db.execute(select(func.min(RevenueDaily.date))).scalar(),
-            db.execute(select(func.min(OrderItem.date))).scalar(),
-        ]
-    known = [d for d in starts if d]
-    return min(known) if known else None
-
-
-async def days_stored_or_live(df: date, dt: date) -> list[dict]:
-    """Дни периода: из БД, насколько она их покрывает; живой запрос — только за пределами.
-
-    Источники по порядку: `revenue_daily` (сводка, синкается за месяц) → `order_items`
-    (позиции, есть за всю историю) → живая касса. Раньше признаком был `is_custom`:
-    любой выбор дат календарём уходил в кассу, даже когда все дни лежали в БД. Это
-    стоило 8,4 секунды на `/api/pnl` за месяц (против 0,36 с из БД) и делало календарь
-    заложником доступности кассы. Тот же путь нужен и для ПРОШЛОГО периода в KPI-дельтах:
-    прошлый месяц почти всегда за окном сводки, но внутри истории позиций.
-
-    Пробелы ВНУТРИ истории живым запросом не добираем: день без заказов — это закрытый
-    день (у точки таких семь за год), и касса вернёт по нему те же нули.
-    """
-    days = _days_from_db(df, dt)
-    have = {d["date"] for d in days}
-
-    gaps = [d for d in _daterange(df, dt) if d.isoformat() not in have]
-    if gaps:
-        from_items = await asyncio.to_thread(_days_from_items, min(gaps), max(gaps))
-        days += [d for d in from_items if d["date"] not in have]
-        have = {d["date"] for d in days}
-        gaps = [d for d in _daterange(df, dt) if d.isoformat() not in have]
-
-    start = _history_start()
-    # дни старше сохранённой истории — их в БД нет и не будет, только касса их помнит
-    before_history = [d for d in gaps if start is None or d < start]
-    if before_history:
-        live = await _days_live(min(before_history), max(before_history))
-        days += [d for d in live if d["date"] not in have]
-
-    return sorted(days, key=lambda d: d["date"])
-
-
-async def _load_days(df: date, dt: date, is_custom: bool) -> list[dict]:
-    """Дни периода для дашборда: `days_stored_or_live` + страховка на «сегодня».
-
-    Сегодня держит в БД частый синк (`sync_today`), но в первые минуты после полуночи
-    его там ещё нет — тогда добираем день живым запросом.
-    """
-    days = await days_stored_or_live(df, dt)
-    have = {d["date"] for d in days}
-    if dt >= today() and today().isoformat() not in have:
-        live_today = await _days_live(today(), today())
-        days = sorted(days + live_today, key=lambda d: d["date"])
-    return days
 
 
 @router.get("")
@@ -290,7 +54,7 @@ async def get_revenue(
 ):
     df, dt = period_range(period, date_from, date_to)
     is_custom = bool(date_from and date_to)
-    days = await _load_days(df, dt, is_custom)
+    days = await load_days(df, dt, is_custom)
 
     # галка «без доставки»: вычитаем выручку/чеки доставки (OLAP) из REV_GROSS-дней
     if not include_delivery:
@@ -391,7 +155,7 @@ async def get_revenue_by_weekday(
     """
     df, dt = period_range(period, date_from, date_to)
     is_custom = bool(date_from and date_to)
-    days = await _load_days(df, dt, is_custom)
+    days = await load_days(df, dt, is_custom)
 
     # food cost считаем от полной выручки дня (с/с по каналам не делится) — фиксируем до вычета
     full_rev = {d["date"]: d["total_sum"] for d in days}
@@ -438,53 +202,6 @@ async def get_revenue_by_weekday(
     }
 
 
-def _hours_from_db(df: date, dt: date) -> tuple[dict[int, float], dict[int, int]]:
-    """Выручка и чеки по часам суток из таблицы `orders`.
-
-    Час берём по **закрытию** заказа, а не по открытию: именно так считает iiko, и это
-    проверено на боевых данных за 01–20.09.2026 — все 12 часов сошлись с ответом кассы
-    до рубля и до чека, тогда как по часу открытия расхождение было 1–2 % в каждом часе
-    (чек, открытый в 10:59 и закрытый в 11:01, у кассы попадает в 11). У этой точки заказы
-    короткие (в среднем 0,6 минуты), поэтому расхождение и было небольшим — но оно было.
-
-    Если время закрытия не записано, используем час открытия (`orders.hour`).
-    """
-    rev: dict[int, float] = {}
-    trn: dict[int, int] = {}
-    with SessionLocal() as db:
-        rows = db.execute(
-            select(Order.hour, Order.close_time, Order.total_sum).where(
-                Order.date >= df, Order.date <= dt
-            )
-        ).all()
-    for open_hour, close_time, total in rows:
-        hour = open_hour
-        if close_time:
-            try:
-                hour = datetime.fromisoformat(str(close_time)).hour
-            except ValueError:
-                pass
-        if hour is None:
-            continue
-        rev[hour] = round(rev.get(hour, 0.0) + float(total or 0), 2)
-        trn[hour] = trn.get(hour, 0) + 1
-    return rev, trn
-
-
-async def _hours(df: date, dt: date) -> tuple[dict[int, float], dict[int, int]]:
-    """Выручка и чеки по часам суток за период: {час: выручка}, {час: чеки}.
-
-    Из БД, если период покрыт сохранёнными заказами; иначе — живой почасовой разрез
-    кассы. Раньше ходили в кассу всегда, хотя те же заказы лежат в БД.
-    """
-    if stored_covers(Order, df.isoformat(), dt.isoformat()):
-        return await asyncio.to_thread(_hours_from_db, df, dt)
-    hours = await get_pos().hourly(df, dt)
-    rev = {h: v.revenue for h, v in hours.items()}
-    trn = {h: v.checks for h, v in hours.items()}
-    return rev, trn
-
-
 @router.get("/hourly")
 async def get_hourly(
     period: str = Query("week", enum=["day", "week", "month"]),
@@ -495,7 +212,7 @@ async def get_hourly(
     """Продажи по часам (интервалы 11-12, 12-13, …) — почасовой разрез кассы."""
     df, dt = period_range(period, date_from, date_to)
 
-    rev, trn = await _hours(df, dt)
+    rev, trn = await hours_for_period(df, dt)
 
     hours = sorted(set(rev) | set(trn))
     data = [
@@ -543,7 +260,7 @@ async def get_by_daypart(
     """
     df, dt = period_range(period, date_from, date_to)
 
-    rev, trn = await _hours(df, dt)
+    rev, trn = await hours_for_period(df, dt)
 
     if not include_delivery:
         del_h = await delivery_buckets(df, dt, OLAP_FIELD_HOUR)
@@ -588,16 +305,10 @@ async def get_ops_report(
 ):
     """Ежедневный операционный отчёт: дни (столбцы) × дейпарты (строки).
 
-    Аналог исторического Excel-свода «Ежедневный ОП». По каждому дню × дейпарту —
-    выручка, чеки, гости (`GuestNum`), средний чек и food cost % (iiko-с/с позиций
-    `ProductCostBase` ÷ выручка окна). Справа — Факт (сумма за период), Среднее (на
-    активный день) и доля % дейпарта. Один OLAP-запрос по [дата, час, заказ, категория,
-    имя] + DishSumInt/Qty/GuestNum/ProductCost.
-    План пока не показываем (нет источника в iiko). `include_delivery=false` — отсев
-    доставочных позиций (`utils.is_delivery`).
+    Расчёт — в `services/ops_report.py`; здесь только период, один запрос разреза и
+    добавление границ периода к ответу.
     """
     df, dt = period_range(period, date_from, date_to)
-
     rows = await order_rows(
         group_fields=[
             OLAP_FIELD_OPEN_DATE,
@@ -610,205 +321,12 @@ async def get_ops_report(
         date_from=df.isoformat(),
         date_to=dt.isoformat(),
     )
-
-    h2dp = hour_to_daypart()
-    # накопитель: (дата, ключ дейпарта) → bucket
-    agg: dict[tuple[str, str], dict] = {}
-    # food cost по группам категорий (Еда/Напитки/Алкоголь) на дейпарт — нижний блок свода
-    cat_agg: dict[tuple[str, str], dict] = (
-        {}
-    )  # (ключ дейпарта, группа) → {revenue,cost,rev_with_cost}
-
-    for r in rows:
-        ds, hs, ordernum, category, name = split_field_5(r.get("field0", {}).get("value", ""))
-        if not name or category == ORDER_STATUS_CATEGORY:
-            continue
-        if not include_delivery and is_delivery(category, name):
-            continue
-        try:
-            hour = int(hs)
-        except ValueError:
-            continue
-        dp = h2dp.get(hour)
-        if dp is None:
-            continue
-        rev = float(r.get("field1", {}).get("value", 0) or 0)
-        guests = float(r.get("field3", {}).get("value", 0) or 0)
-        cost = float(r.get("field4", {}).get("value", 0) or 0)
-        key = (ds, dp)
-        b = agg.get(key)
-        if b is None:
-            b = agg[key] = blank_bucket()
-        b["revenue"] += rev
-        # Ключ заказа — ПАРА (дата, номер): номер уникален только внутри дня, а корзины
-        # дней сворачиваются в «Факт за период» объединением множеств. По одному номеру
-        # 20 дней давали 237 «чеков» вместо 3 310 и средний чек 14 312 ₽ вместо 1 025 ₽
-        # (выручка при этом была верной, поэтому ошибку никто не замечал).
-        b["orders"].add((ds, ordernum))
-        b["guests"].setdefault((ds, ordernum), guests)
-        # группа категории для food cost (дейпарт × Еда/Напитки/Алкоголь)
-        ck = (dp, category_group(category))
-        cb = cat_agg.get(ck)
-        if cb is None:
-            cb = cat_agg[ck] = {"revenue": 0.0, "cost": 0.0, "rev_with_cost": 0.0}
-        cb["revenue"] += rev
-        # food cost % считаем от ВСЕЙ выручки окна (честный P&L-знаменатель, сходится
-        # с P&L). rev_with_cost копит только прокостованную выручку (cost>0) → coverage
-        # показывает дыру: у доставочных дублей («…доставка»/«_д») iiko не ставит
-        # ProductCostBase, поэтому на окнах с доставкой coverage < 100%.
-        b["cost"] += cost
-        cb["cost"] += cost
-        if cost > 0:
-            b["rev_with_cost"] += rev
-            cb["rev_with_cost"] += rev
-
-    # столбцы — все календарные дни периода
-    days = []
-    d = df
-    while d <= dt:
-        days.append(
-            {
-                "date": d.isoformat(),
-                "dom": d.day,
-                "weekday": DAY_NAMES_RU[d.weekday()],
-            }
-        )
-        d += timedelta(days=1)
-    day_keys = [x["date"] for x in days]
-
-    # число дней каждой группы дня недели в периоде — для масштабирования плана
-    group_day_count: dict[str, int] = {}
-    for x in days:
-        grp = WEEKDAY_TO_GROUP.get(date.fromisoformat(x["date"]).weekday())
-        if grp:
-            group_day_count[grp] = group_day_count.get(grp, 0) + 1
-    total_days = len(days)
-    with SessionLocal() as db:
-        plan_rows = {
-            (r.daypart_key, r.weekday_group): r for r in db.execute(select(DaypartPlan)).scalars()
-        }
-    has_plan = any((r.revenue or 0) for r in plan_rows.values())
-
-    grand_revenue = sum(b["revenue"] for b in agg.values()) or 0.0
-
-    dayparts = []
-    for dp in DAYPARTS:
-        cells = {}
-        tot = blank_bucket()
-        active = 0
-        for dk in day_keys:
-            b = agg.get((dk, dp["key"]))
-            if b is None:
-                continue
-            cells[dk] = finalize(b)
-            if b["revenue"] > 0 or b["orders"]:
-                active += 1
-            # копим в total
-            tot["revenue"] += b["revenue"]
-            tot["cost"] += b["cost"]
-            tot["rev_with_cost"] += b["rev_with_cost"]
-            tot["orders"] |= b["orders"]
-            tot["guests"].update(b["guests"])
-        total = finalize(tot)
-        # Среднее — на активный день (как в Excel «Среднее»)
-        avg_per_day = {
-            "revenue": round(total["revenue"] / active, 2) if active else 0,
-            "checks": round(total["checks"] / active, 1) if active else 0,
-            "guests": round(total["guests"] / active, 1) if active else 0,
-            "avg_check": total["avg_check"],
-        }
-        # food cost по группам категорий внутри дейпарта (Еда/Напитки/Алкоголь)
-        cats = {}
-        for grp in CATEGORY_GROUP_ORDER:
-            cb = cat_agg.get((dp["key"], grp))
-            if cb and cb["revenue"] > 0:
-                cats[grp] = finalize_cat(cb, total["revenue"])
-        dp_plan = period_plan(plan_rows, dp["key"], group_day_count, total_days)
-        dayparts.append(
-            {
-                "key": dp["key"],
-                "label": dp["label"],
-                "range": dp["range"],
-                "cells": cells,
-                "total": total,
-                "avg_per_day": avg_per_day,
-                "active_days": active,
-                "revenue_share": (
-                    round(total["revenue"] / grand_revenue * 100, 1) if grand_revenue else 0
-                ),
-                "categories": cats,
-                "plan": dp_plan,
-                "plan_pct": plan_pct(total, dp_plan),
-            }
-        )
-
-    # строка Итого — сумма по всем дейпартам в каждый день
-    tot_cells = {}
-    grand = blank_bucket()
-    active_total = 0
-    for dk in day_keys:
-        acc = blank_bucket()
-        has = False
-        for dp in DAYPARTS:
-            b = agg.get((dk, dp["key"]))
-            if b is None:
-                continue
-            has = True
-            acc["revenue"] += b["revenue"]
-            acc["cost"] += b["cost"]
-            acc["rev_with_cost"] += b["rev_with_cost"]
-            acc["orders"] |= b["orders"]
-            acc["guests"].update(b["guests"])
-        if has:
-            tot_cells[dk] = finalize(acc)
-            active_total += 1
-            grand["revenue"] += acc["revenue"]
-            grand["cost"] += acc["cost"]
-            grand["rev_with_cost"] += acc["rev_with_cost"]
-            grand["orders"] |= acc["orders"]
-            grand["guests"].update(acc["guests"])
-    grand_total = finalize(grand)
-    # план на период по всей точке = сумма планов дейпартов
-    grand_plan = {m: round(sum(dp["plan"][m] for dp in dayparts), 2) for m in ("revenue", "guests")}
-    grand_plan["avg_check"] = (
-        round(grand_plan["revenue"] / grand_plan["guests"], 2) if grand_plan["guests"] else 0
-    )
-    totals = {
-        "cells": tot_cells,
-        "total": grand_total,
-        "avg_per_day": {
-            "revenue": round(grand_total["revenue"] / active_total, 2) if active_total else 0,
-            "checks": round(grand_total["checks"] / active_total, 1) if active_total else 0,
-            "guests": round(grand_total["guests"] / active_total, 1) if active_total else 0,
-            "avg_check": grand_total["avg_check"],
-        },
-        "plan": grand_plan,
-        "plan_pct": plan_pct(grand_total, grand_plan),
-    }
-
-    # сводный блок food cost по группам категорий (нижний блок Excel-свода «ОП»)
-    cat_total_acc: dict[str, dict] = {}
-    for (_dpk, grp), cb in cat_agg.items():
-        a = cat_total_acc.setdefault(grp, {"revenue": 0.0, "cost": 0.0, "rev_with_cost": 0.0})
-        a["revenue"] += cb["revenue"]
-        a["cost"] += cb["cost"]
-        a["rev_with_cost"] += cb["rev_with_cost"]
-    cat_grand_rev = sum(a["revenue"] for a in cat_total_acc.values()) or 0.0
-    category_groups = [
-        g for g in CATEGORY_GROUP_ORDER if cat_total_acc.get(g, {}).get("revenue", 0)
-    ]
-    category_totals = {g: finalize_cat(cat_total_acc[g], cat_grand_rev) for g in category_groups}
-
+    отчёт = await build_ops_report(rows, df, dt, include_delivery)
     return {
         "period": "custom" if (date_from and date_to) else period,
         "date_from": df.isoformat(),
         "date_to": dt.isoformat(),
-        "days": days,
-        "dayparts": dayparts,
-        "totals": totals,
-        "category_groups": category_groups,
-        "category_totals": category_totals,
-        "has_plan": has_plan,
+        **отчёт,
     }
 
 
@@ -832,7 +350,7 @@ async def get_revenue_by_channel(
         date_from=df.isoformat(),
         date_to=dt.isoformat(),
     )
-    buckets = _channel_revenue(rows, OLAP_FIELD_OPEN_DATE)
+    buckets = channel_revenue(rows, OLAP_FIELD_OPEN_DATE)
     data = []
     for ds in sorted(buckets):
         try:
@@ -842,7 +360,7 @@ async def get_revenue_by_channel(
         b = buckets[ds]
         row = {
             "date": ds,
-            "day_of_week": _ru_dow(d),
+            "day_of_week": ru_dow(d),
             "total": round(sum(b[c] for c in channels), 2),
         }
         row.update({c: round(b[c], 2) for c in channels})
@@ -870,7 +388,7 @@ async def get_hourly_by_channel(
         date_from=df.isoformat(),
         date_to=dt.isoformat(),
     )
-    buckets = _channel_revenue(rows, OLAP_FIELD_HOUR)
+    buckets = channel_revenue(rows, OLAP_FIELD_HOUR)
     data = []
     for hk in sorted((h for h in buckets if h.isdigit()), key=int):
         h = int(hk)

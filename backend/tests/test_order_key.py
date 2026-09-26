@@ -95,7 +95,7 @@ async def fake_modifier_filters(date_from, date_to):
 def client(monkeypatch):
     monkeypatch.setattr(settings, "auth_password", "t")
     monkeypatch.setattr(dishes_router, "order_rows", fake_order_rows)
-    monkeypatch.setattr(dishes_router, "_modifier_filters", fake_modifier_filters)
+    monkeypatch.setattr(dishes_router, "modifier_filters", fake_modifier_filters)
     monkeypatch.setattr(revenue_router, "order_rows", fake_order_rows)
     monkeypatch.setattr(delivery_service, "order_rows", fake_order_rows)
     c = TestClient(main.app)
