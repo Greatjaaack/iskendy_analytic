@@ -11,11 +11,12 @@ P&L, а сервис не должен зависеть от роутера.
 """
 
 import calendar
-from datetime import date, timedelta
+from datetime import date
 
 from sqlalchemy import select
 
 from models import Employee, SessionLocal, Shift
+from utils import daterange
 
 LABOR_GROUPS = ("operational", "admin")
 PAY_TYPES = ("shift", "month")
@@ -50,13 +51,11 @@ def labor_for_period(df: date, dt: date) -> dict[str, float]:
         # month (оклад): только активные — уволенный окладник больше не начисляется
         month_emps = [e for e in emps.values() if e.pay_type == "month" and e.active]
         if month_emps:
-            d = df
-            while d <= dt:
+            for d in daterange(df, dt):
                 dim = calendar.monthrange(d.year, d.month)[1]
                 for e in month_emps:
                     grp = e.labor_group if e.labor_group in out else "operational"
                     out[grp] += float(e.rate or 0) / dim
-                d += timedelta(days=1)
     return {k: round(v, 2) for k, v in out.items()}
 
 
@@ -67,10 +66,8 @@ def labor_by_day(df: date, dt: date) -> dict[date, dict[str, float]]:
     P&L на каждый день диапазона (неделя/месяц), а не только суммарно.
     """
     out: dict[date, dict[str, float]] = {}
-    d = df
-    while d <= dt:
+    for d in daterange(df, dt):
         out[d] = {"operational": 0.0, "admin": 0.0}
-        d += timedelta(days=1)
     with SessionLocal() as db:
         # ВСЕ сотрудники (в т.ч. неактивные) — сменный ФОТ по факту смен (см.
         # labor_for_period); `active` ограничивает только окладников.
@@ -84,13 +81,11 @@ def labor_by_day(df: date, dt: date) -> dict[date, dict[str, float]]:
                 grp = e.labor_group if e.labor_group in out[sdate] else "operational"
                 out[sdate][grp] += float(e.rate or 0)
         month_emps = [e for e in emps.values() if e.pay_type == "month" and e.active]
-        d = df
-        while d <= dt:
+        for d in daterange(df, dt):
             dim = calendar.monthrange(d.year, d.month)[1]
             for e in month_emps:
                 grp = e.labor_group if e.labor_group in out[d] else "operational"
                 out[d][grp] += float(e.rate or 0) / dim
-            d += timedelta(days=1)
     return {k: {kk: round(vv, 2) for kk, vv in v.items()} for k, v in out.items()}
 
 

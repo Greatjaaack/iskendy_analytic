@@ -39,7 +39,7 @@ from models import PnlDayCost, PnlMonth, SessionLocal
 from services.delivery import delivery_buckets
 from services.revenue_source import days_stored_or_live, load_days
 from services.schedule_labor import labor_by_day, labor_for_period, operational_shifts
-from utils import is_delivery  # noqa: F401
+from utils import daterange, is_delivery, months_in  # noqa: F401
 
 
 def _rate(key: str, pct: float, absval: float) -> str | None:
@@ -76,11 +76,7 @@ def row_to_dict(row: PnlMonth) -> dict:
 
 def load_months(df: date, dt: date) -> dict[tuple[int, int], dict]:
     """PnlMonth-строки (как dict) для всех месяцев, которые пересекает период."""
-    needed = set()
-    d = df
-    while d <= dt:
-        needed.add((d.year, d.month))
-        d += timedelta(days=1)
+    needed = set(months_in(df, dt))
     out: dict[tuple[int, int], dict] = {}
     with SessionLocal() as db:
         for r in db.execute(select(PnlMonth)).scalars():
@@ -358,25 +354,21 @@ async def build_pnl(
     # ручные затраты (месячные суммы) аллоцируем на дни периода
     months = load_months(df, dt)
     manual = {f: 0.0 for f, _ in PNL_MANUAL_FIELDS}
-    d = df
-    while d <= dt:
+    for d in daterange(df, dt):
         m = months.get((d.year, d.month))
         dim = calendar.monthrange(d.year, d.month)[1]
         if m:
             for f, _ in PNL_MANUAL_FIELDS:
                 manual[f] += m[f] / dim
-        d += timedelta(days=1)
 
     # переменные статьи (списания/упаковка/химия/расходники) — по дням из PnlDayCost
     # (или помесячный резерв), суммируем за период — единый источник для сумм и матрицы
     day_costs = load_day_costs(df, dt)
     var_sum = {k: 0.0 for k, _ in PNL_DAY_COST_FIELDS}
-    d = df
-    while d <= dt:
+    for d in daterange(df, dt):
         vc = day_var_costs(d, day_costs, months)
         for k in var_sum:
             var_sum[k] += vc[k]
-        d += timedelta(days=1)
 
     # #5: если период раньше данных об оплатах — базы агрегатора нет (order_payments
     # только в пределах сохранённой истории). Тогда оцениваем базу по выручке доставки.
@@ -737,11 +729,7 @@ async def build_pnl(
     labor_missing_days = sum(1 for d in daily if d["revenue"] > 0 and d["labor"] == 0)
     # Постоянные затраты (PnlMonth) заданы помесячно: месяцы периода без строки дают
     # нулевые аренду/коммуналку/… — недооценка расходов. Собираем непокрытые месяцы.
-    period_months = set()
-    d = df
-    while d <= dt:
-        period_months.add((d.year, d.month))
-        d += timedelta(days=1)
+    period_months = set(months_in(df, dt))
     costs_missing_months = [f"{y:04d}-{m:02d}" for (y, m) in sorted(period_months - set(months))]
 
     return {

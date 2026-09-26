@@ -42,7 +42,6 @@ MTD/диапазона). Ставки-% (налог УСН, комиссия а�
 
 from datetime import date
 from datetime import date as Date
-from datetime import timedelta
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query, status
@@ -64,7 +63,7 @@ from services.pnl_calc import (
     load_months,
     row_to_dict,
 )
-from utils import period_range
+from utils import daterange, period_range
 
 router = APIRouter(prefix="/api/pnl", tags=["pnl"])
 
@@ -163,8 +162,7 @@ def get_day_costs(date_from: str = Query(...), date_to: str = Query(...)):
     stored = load_day_costs(df, dt)
     months = load_months(df, dt)
     days = []
-    d = df
-    while d <= dt:
+    for d in daterange(df, dt):
         iso = d.isoformat()
         row = stored.get(iso)
         vals = row if row is not None else day_var_costs(d, {}, months)
@@ -176,7 +174,6 @@ def get_day_costs(date_from: str = Query(...), date_to: str = Query(...)):
                 **{k: round(vals[k], 0) for k, _ in PNL_DAY_COST_FIELDS},
             }
         )
-        d += timedelta(days=1)
     return {
         "date_from": df.isoformat(),
         "date_to": dt.isoformat(),

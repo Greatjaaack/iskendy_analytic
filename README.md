@@ -187,13 +187,11 @@
 ## Флоу работы (как пользоваться)
 
 1. **Запустить**: `docker compose up -d --build`.
-2. **Наполнить данными**: открыть http://localhost:5173 → **Поставщики** →
-   «**Импорт из файла**» (или `POST /api/import/ttk-matrix`). Подтянутся поставщики,
-   ингредиенты, цены и тех-карты из `backend/seed/ttk_matrix.xlsx`.
-3. **Поставщики**: смотреть/редактировать карточки, цены, загружать накладные и прайсы.
-4. **Номенклатура ↔ ТТК**: смотреть тех-карты, состав и себестоимость; переходить в
-   полуфабрикаты; вести каталог ингредиентов.
-5. **Дашборд**: продажи/выручка обновляются из iiko автоматически (серверный синк раз в
+2. **Наполнить ТТК** (для food cost): `POST /api/import/ttk-matrix` — подтянутся
+   поставщики, ингредиенты, цены и тех-карты из `backend/seed/ttk_matrix.xlsx`. Страниц
+   «Поставщики» и «Номенклатура» во фронте нет с 07.07.2026: ручки бэкенда остались, потому
+   что ТТК из БД питают food cost. После переезда на Saby ТТК ведёт шеф-повар в Saby.
+3. **Дашборд**: продажи/выручка обновляются из iiko автоматически (серверный синк раз в
    час + ночью; кнопка «Синхронизировать» — вручную; селектор «Автосинк» в шапке —
    клиентская автосинхронизация раз в 5/15/30 мин или час).
 
@@ -261,14 +259,16 @@ backend/
   seed/ttk_matrix.xlsx    исходные ТТК/прайс для импорта
 frontend/
   src/pages/              Dashboard (вкладки Пульс/Операции/Меню), Delivery (дашборд
-                          доставки), Suppliers, SupplierCard, NewSupplier, Nomenclature, TtkCard
+                          доставки), Pnl (P&L), Schedule (график и ФОТ), Login
   src/components/         Sidebar, KpiCards, RevenueChart, WeekdaySummary,
                           DaypartBreakdown, HourlyChart, HourlyBreakdown, ChecksDistribution,
-                          PaymentStructure, CheckComposition, MenuBasket, CheckFullness, MenuEngineering, DishTable, DishTtkMapping
+                          PaymentStructure, CheckComposition, MenuBasket, CheckFullness, MenuEngineering, DishTable, OpsReport, PlanEditor, TopBar
   src/api.ts              вызовы API (реэкспорт типов)
   src/types.ts            доменные типы (DTO бэкенда)
   src/constants.ts        пороги/интервалы/палитра/списки (без «магических» чисел)
-  src/format.ts           форматтеры чисел + выравнивание часовых осей (fillHourGaps/hourLabel); src/validation.ts — телефон/email
+  src/format.ts           форматтеры (fmtInt/fmtRub/pctDelta/dm), даты в поясе точки
+                          (todayISO/daysAgoISO), выравнивание часовых осей (fillHourGaps)
+  src/styles.ts           общие стили кнопок (tabBtn/miniBtn) и цвет food cost
   src/theme.ts            переключение светлой/тёмной темы
   nginx.conf              раздача SPA + прокси /api
 ```
@@ -424,7 +424,7 @@ pip install -r requirements-dev.txt
 python -m pytest tests/ -q
 ```
 
-**170 тестов**, прогон ~5 секунд, сеть не нужна. Обвязка — `tests/conftest.py`: фикстурная
+**174 теста**, прогон ~5 секунд, сеть не нужна. Обвязка — `tests/conftest.py`: фикстурная
 БД на 14 дней и касса-заглушка, которая падает при любом обращении (так тест доказывает,
 что ручка за период внутри истории читает БД, а не кассу).
 

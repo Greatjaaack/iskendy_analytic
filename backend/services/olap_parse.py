@@ -26,12 +26,6 @@ def split_field(value: str, n: int) -> tuple[str, ...]:
     return (*parts[: n - 1], ", ".join(parts[n - 1 :]))
 
 
-def split_field_3(value: str) -> tuple[str, str, str]:
-    """field0 «OrderNum, Категория, Имя» → 3 части (имя может содержать «, »)."""
-    a, b, c = split_field(value, 3)
-    return a, b, c
-
-
 def split_field_4(value: str) -> tuple[str, str, str, str]:
     """field0 «bucket/дата, OrderNum/час, Категория, Имя/Категория» → 4 части."""
     a, b, c, d = split_field(value, 4)
@@ -84,8 +78,3 @@ def split_order_row(value: str, bucket: str | None = None) -> tuple[str, str, st
     if not day or not num:
         return "", "", "", ""
     return f"{day}{ORDER_KEY_SEP}{num}", bucket_value, category, name
-
-
-def order_key_date(order_key: str) -> str:
-    """Дата из ключа заказа `«дата|номер»` (пустая строка, если ключ битый)."""
-    return order_key.split(ORDER_KEY_SEP, 1)[0] if ORDER_KEY_SEP in order_key else ""

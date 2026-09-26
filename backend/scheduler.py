@@ -31,20 +31,13 @@ from models import (
     SyncLog,
 )
 from pos import get_pos, to_item_rows, to_order_rows, to_payment_rows
-from utils import today
+from utils import daterange, today
 
 logger = logging.getLogger(__name__)
 
 # Тот же пояс, что у границ «сегодня» (settings.timezone) — синки и определение
 # текущего дня живут в одном времени, иначе ночной full_sync ловил бы не тот день.
 scheduler = AsyncIOScheduler(timezone=settings.timezone)
-
-
-def _daterange(start: date, end: date):
-    d = start
-    while d <= end:
-        yield d
-        d += timedelta(days=1)
 
 
 def sync_window(date_from: date, date_to: date) -> tuple[date, date] | None:
@@ -224,7 +217,7 @@ async def sync_orders_recent(days_back: int = 7):
     date_from = date_to - timedelta(days=days_back - 1)
     try:
         written = await sync_orders_range(date_from, date_to)
-        for d in _daterange(date_from, date_to):
+        for d in daterange(date_from, date_to):
             await sync_dish_detail_day(d)
         with SessionLocal() as db:
             if written is None:
@@ -302,7 +295,7 @@ async def backfill():
     days = sorted(
         (
             d
-            for d in _daterange(real_start, date_to)
+            for d in daterange(real_start, date_to)
             if d not in have and not (switch and d < switch)
         ),
         reverse=True,

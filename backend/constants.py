@@ -85,21 +85,6 @@ METRICS_TOTALS = [
     METRIC_COST,
     METRIC_FOODCOST_PCT,
 ]
-METRICS_HOURLY = [METRIC_REV_GROSS, METRIC_TRN_ALL]
-
-# Человекочитаемые названия метрик (для UI/отладки)
-METRIC_LABELS = {
-    METRIC_REV_GROSS: "Выручка",
-    METRIC_TRN_ALL: "Чеки",
-    METRIC_AVG_SPEND: "Средний чек",
-    METRIC_DISCOUNT: "Скидки",
-    METRIC_REFUNDS: "Возвраты",
-    METRIC_COST: "Себестоимость",
-    METRIC_FOODCOST_PCT: "Food cost %",
-    METRIC_ITEM_QTY: "Продано, кол-во",
-    METRIC_ITEM_AMT: "Продано, выручка",
-}
-
 
 # ─── Типы номенклатуры iiko (productType) ────────────────────────────────────
 PRODUCT_TYPE_DISH = "DISH"  # блюдо
@@ -282,7 +267,6 @@ PNL_DAY_COST_FIELDS = [
     ("supplies", "Расходники (салфетки/перчатки)"),
 ]
 
-PNL_VARIABLE_MANUAL = ["packaging", "writeoffs"]
 PNL_FIXED_MANUAL = [
     "rent",
     "utilities",

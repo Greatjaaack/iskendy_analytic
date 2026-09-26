@@ -12,7 +12,7 @@
 """
 
 import asyncio
-from datetime import date, timedelta
+from datetime import date
 
 from sqlalchemy import func, select
 
@@ -31,6 +31,7 @@ from constants import (
 )
 from models import DishDetail, OrderItem, SessionLocal
 from pos import get_pos, to_item_rows
+from utils import daterange
 
 # OLAP-поле группировки → как достать его строковое значение из строки order_items
 _GROUP_GETTERS = {
@@ -134,8 +135,7 @@ async def dish_detail_rows(date_from, date_to):
         # Живой добор по дням: продажи по номенклатуре касса отдаёт за день.
         pos = get_pos()
         live: list[dict] = []
-        day = df
-        while day <= dt:
+        for day in daterange(df, dt):
             live += [
                 {
                     "dish_id": p.product_id,
@@ -148,7 +148,6 @@ async def dish_detail_rows(date_from, date_to):
                 }
                 for p in await pos.products(day)
             ]
-            day += timedelta(days=1)
         return _merge_products(live)
 
     return await asyncio.to_thread(_dish_detail_from_db, df, dt)

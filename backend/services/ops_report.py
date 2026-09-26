@@ -14,7 +14,7 @@
 читать остальные разрезы, а тестировать их можно было только через HTTP.
 """
 
-from datetime import date, timedelta
+from datetime import date
 
 from sqlalchemy import select
 
@@ -35,7 +35,7 @@ from services.ops_aggregation import (
     period_plan,
     plan_pct,
 )
-from utils import is_delivery
+from utils import daterange, is_delivery
 
 
 async def build_ops_report(rows: list[dict], df: date, dt: date, include_delivery: bool) -> dict:
@@ -97,8 +97,7 @@ async def build_ops_report(rows: list[dict], df: date, dt: date, include_deliver
 
     # столбцы — все календарные дни периода
     days = []
-    d = df
-    while d <= dt:
+    for d in daterange(df, dt):
         days.append(
             {
                 "date": d.isoformat(),
@@ -106,7 +105,6 @@ async def build_ops_report(rows: list[dict], df: date, dt: date, include_deliver
                 "weekday": DAY_NAMES_RU[d.weekday()],
             }
         )
-        d += timedelta(days=1)
     day_keys = [x["date"] for x in days]
 
     # число дней каждой группы дня недели в периоде — для масштабирования плана

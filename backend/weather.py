@@ -16,7 +16,7 @@ from datetime import date, timedelta
 
 import httpx
 
-from utils import today
+from utils import daterange, today
 
 logger = logging.getLogger(__name__)
 
@@ -89,12 +89,9 @@ async def prewarm() -> None:
 
 
 def _date_range(date_from: str, date_to: str) -> list[str]:
-    d0, d1 = date.fromisoformat(date_from), date.fromisoformat(date_to)
-    out, d = [], d0
-    while d <= d1:
-        out.append(d.isoformat())
-        d += timedelta(days=1)
-    return out
+    return [
+        d.isoformat() for d in daterange(date.fromisoformat(date_from), date.fromisoformat(date_to))
+    ]
 
 
 def _fetchable_dates(date_from: str, date_to: str) -> list[str]:

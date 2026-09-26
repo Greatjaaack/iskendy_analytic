@@ -48,17 +48,6 @@ def _safe_target(original_name: str) -> tuple[str, str]:
     return os.path.join(FILES_DIR, f"{uuid.uuid4().hex}{ext}"), ext
 
 
-def save_bytes(data: bytes, original_name: str) -> tuple[str, str]:
-    """Сохранить готовые байты под уникальным именем. Возвращает (путь, оригинальное имя)."""
-    limit = settings.max_upload_mb * 1024 * 1024
-    if len(data) > limit:
-        raise UploadTooLarge(len(data))
-    path, _ = _safe_target(original_name)
-    with open(path, "wb") as out_file:
-        out_file.write(data)
-    return path, original_name
-
-
 async def save_upload(upload, original_name: str) -> tuple[str, str]:
     """Сохранить загружаемый файл ПОТОКОВО, не держа его целиком в памяти.
 

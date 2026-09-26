@@ -21,7 +21,7 @@
 """
 
 import asyncio
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 
 from sqlalchemy import func, select
 
@@ -29,15 +29,7 @@ from constants import DAY_NAMES_RU, ORDER_STATUS_CATEGORY
 from models import Order, OrderItem, RevenueDaily, SessionLocal
 from pos import get_pos
 from services.order_store import stored_covers
-from utils import today
-
-
-def daterange(start: date, end: date):
-    """Дни периода включительно."""
-    day = start
-    while day <= end:
-        yield day
-        day += timedelta(days=1)
+from utils import daterange, today
 
 
 def ru_dow(d: date) -> str:

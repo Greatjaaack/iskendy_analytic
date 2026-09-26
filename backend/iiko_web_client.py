@@ -19,10 +19,8 @@ from config import settings
 from constants import (
     DATA_DETAILS,
     DATA_SUMMARY_BY_DATE,
-    DATA_SUMMARY_BY_HOURS,
     DATA_TOTAL,
     METRICS_DISHES,
-    METRICS_HOURLY,
     METRICS_REVENUE_DAILY,
     METRICS_TOTALS,
     OLAP_FILTER_DATE,
@@ -209,15 +207,6 @@ class IikoWebClient:
             data_type=DATA_SUMMARY_BY_DATE,
         )
 
-    async def revenue_by_hour(self, date_from: str, date_to: str) -> dict:
-        """Выручка/чеки по часам (матрица часы×даты, см. `_parse_hour_matrix` в роутере)."""
-        return await self.get_metrics(
-            METRICS_HOURLY,
-            date_from,
-            date_to,
-            data_type=DATA_SUMMARY_BY_HOURS,
-        )
-
     async def dishes_detail(self, date_from: str, date_to: str) -> list[dict]:
         """Продажи по позициям номенклатуры с названиями/категориями/типом.
 
@@ -326,11 +315,6 @@ class IikoWebClient:
             return resp.get("result", {}).get("rows", [])
 
         return await cached_or_call(cache_key, _fetch, ttl=cache_ttl)
-
-    # Каталог всех метрик (408 шт) — справочник кодов/названий
-    async def metrics_catalog(self) -> list[dict]:
-        resp = await self._post("/api/kpi/directory/bystores", {"storeIds": [self.store_id]})
-        return resp if isinstance(resp, list) else list(resp.values())
 
 
 iiko_web = IikoWebClient()

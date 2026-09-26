@@ -1,6 +1,7 @@
 """Мелкие общие хелперы, переиспользуемые роутерами/синком."""
 
 import re
+from collections.abc import Iterator
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -61,6 +62,28 @@ def is_delivery(category: str | None, name: str | None) -> bool:
     if category == DELIVERY_CATEGORY:
         return True
     return DELIVERY_NAME_MARKER in str(name or "").lower()
+
+
+def daterange(start: date, end: date) -> Iterator[date]:
+    """Дни периода включительно (пустой, если `start > end`).
+
+    Единственная реализация на проект: раньше тот же цикл `while d <= dt` был
+    переписан руками в 14 местах (синк, погода, P&L, ФОТ, ОП-отчёт…).
+    """
+    day = start
+    while day <= end:
+        yield day
+        day += timedelta(days=1)
+
+
+def months_in(start: date, end: date) -> list[tuple[int, int]]:
+    """Месяцы `(год, месяц)`, которые задевает период, по порядку."""
+    out: list[tuple[int, int]] = []
+    year, month = start.year, start.month
+    while (year, month) <= (end.year, end.month):
+        out.append((year, month))
+        year, month = (year + 1, 1) if month == 12 else (year, month + 1)
+    return out
 
 
 def today() -> date:
