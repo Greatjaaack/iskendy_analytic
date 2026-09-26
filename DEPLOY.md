@@ -169,8 +169,8 @@ docker compose -f docker-compose.prod.yml start backend
 
 ## Ночной деплой 26–27.09.2026 (накопленный рефакторинг)
 
-Копится с 26.08: **17 коммитов аналитики** (`dd745c2` → `763ef3c`; последний с кодом —
-`3409676`, адаптер Saby: на iiko задевает только передачу TTL в ручке табло) и **10 коммитов табло**
+Копится с 26.08: **19 коммитов аналитики** (`dd745c2` → `1c8a1e4`; свежие с кодом — `3409676`, адаптер
+Saby: на iiko задевает только передачу TTL в ручке табло; `1c8a1e4` — журнал и проверка сессии iiko) и **10 коммитов табло**
 (`b6ef2bb` → `7ab20f0`). Деплой днём не делаем: точка работает, сборка на одном ядре
 тормозит машину, пересоздание контейнера роняет сервис.
 
@@ -190,13 +190,14 @@ docker compose -f docker-compose.prod.yml start backend
 ### 1. Аналитика (`/root/dashboards`)
 
 ```bash
-cd /root/dashboards && git pull && git log --oneline -1     # не старше 763ef3c
+cd /root/dashboards && git pull && git log --oneline -1     # не старше 1c8a1e4
 docker compose -f docker-compose.prod.yml up -d --build      # ~5-10 минут на одном ядре
 docker compose -f docker-compose.prod.yml logs --tail 80 backend
 curl -fsS https://analytics.iskendy.ru/api/health
 ```
 
-- [ ] Коммит на сервере не старше `763ef3c`
+- [ ] Коммит на сервере не старше `1c8a1e4`
+- [ ] Через час: `docker logs --since 1h dashboards-backend-1 | wc -l` — порядка 150–200 строк (было 2 196), строки `Синк заказов …: N заказов` есть
 - [ ] Табло получает заказы: `curl` на `/api/orders/today` с internal-токеном отдаёт сегодняшние номера
 - [ ] В логе старта нет traceback; видно `Касса: iiko`, `Синк выручки завершён`
 - [ ] `docker ps` показывает `dashboards-backend-1 ... (healthy)` — **это новое**, healthcheck
