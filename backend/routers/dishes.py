@@ -88,7 +88,7 @@ async def get_dishes(
     if group_by == "category":
         agg: dict[str, dict] = {}
         for r in rows:
-            cat = display_category(r.get("category") or "Без категории")
+            cat = display_category(r.get("category"))
             a = agg.setdefault(
                 cat,
                 {

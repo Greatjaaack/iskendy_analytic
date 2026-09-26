@@ -350,7 +350,7 @@ async def get_revenue_by_channel(
         date_from=df.isoformat(),
         date_to=dt.isoformat(),
     )
-    buckets = channel_revenue(rows, OLAP_FIELD_OPEN_DATE)
+    buckets = channel_revenue(rows, OLAP_FIELD_OPEN_DATE, include_delivery)
     data = []
     for ds in sorted(buckets):
         try:

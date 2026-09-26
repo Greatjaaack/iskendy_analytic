@@ -21,6 +21,7 @@
 """
 
 import asyncio
+import logging
 from datetime import date, datetime
 
 from sqlalchemy import func, select
@@ -30,6 +31,8 @@ from models import Order, OrderItem, RevenueDaily, SessionLocal
 from pos import get_pos
 from services.order_store import stored_covers
 from utils import daterange, today
+
+logger = logging.getLogger(__name__)
 
 
 def ru_dow(d: date) -> str:
@@ -205,11 +208,20 @@ async def load_days(df: date, dt: date, is_custom: bool) -> list[dict]:
 
     Сегодня держит в БД частый синк (`sync_today`), но в первые минуты после полуночи
     его там ещё нет — тогда добираем день живым запросом.
+
+    Добор — страховка, а не источник: если касса не ответила, отдаём то, что есть в БД.
+    Раньше сбой кассы здесь ронял всю ручку (500), и вкладка «Сегодня» — та, что
+    открывается по умолчанию, — не показывала даже прошлые дни периода. Сегодняшний
+    день появится со следующим удачным синком.
     """
     days = await days_stored_or_live(df, dt)
     have = {d["date"] for d in days}
     if dt >= today() and today().isoformat() not in have:
-        live_today = await days_live(today(), today())
+        try:
+            live_today = await days_live(today(), today())
+        except Exception as error:
+            logger.warning("Сегодня нет в БД, а касса не ответила (%s) — отдаю из БД", error)
+            return days
         days = sorted(days + live_today, key=lambda d: d["date"])
     return days
 

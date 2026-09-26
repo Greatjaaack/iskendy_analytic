@@ -99,6 +99,11 @@ async def cached_or_call(
         _inflight.pop(key, None)
         if not fut.done():
             fut.set_exception(error)
+            # Ошибку получит и этот вызов (`raise`), и все, кто ждёт `fut`. Если ждущих
+            # нет, asyncio при сборке future пишет ERROR «Future exception was never
+            # retrieved» с полным трейсом — лишний шум на каждый сбой кассы. Помечаем
+            # исключение прочитанным: ждущие его всё равно получат через `await fut`.
+            fut.exception()
         raise
     cache_set(key, value, ttl)
     _inflight.pop(key, None)

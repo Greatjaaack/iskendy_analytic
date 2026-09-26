@@ -28,7 +28,24 @@ from utils import is_delivery, stronger_channel
 CHANNELS = (CHANNEL_DINEIN, CHANNEL_TAKEAWAY, CHANNEL_DELIVERY)
 
 
-def channel_revenue(rows: list[dict], bucket_field: str) -> dict[str, dict[str, float]]:
+def status_channel(current: str | None, status_name: str, include_delivery: bool) -> str | None:
+    """Канал заказа с учётом ещё одной «Статус»-строки: сильнейший из отмеченных.
+
+    При выключенной галке «С доставкой» статус «Доставка» канал не определяет. Доставку
+    галка отсекает по ТОВАРАМ (`utils.is_delivery` — единое правило для KPI, оплат и
+    разрезов), а статус кассир ставит руками и ошибается: 20.09.2026 заказ «Балык + Кола»
+    получил и «Доставку», и «С собой». Раньше такой заказ выпадал из разреза по каналам
+    целиком, и разрез расходился с KPI на чек (3 726 против 3 727 за сентябрь).
+    """
+    channel = ORDER_STATUS_CHANNELS.get(status_name.strip().lower())
+    if not include_delivery and channel == CHANNEL_DELIVERY:
+        return current
+    return stronger_channel(current, channel)
+
+
+def channel_revenue(
+    rows: list[dict], bucket_field: str, include_delivery: bool = True
+) -> dict[str, dict[str, float]]:
     """{корзина → {канал: выручка}}. Корзина — дата или час (`bucket_field`).
 
     Канал: категория «Доставка» → доставка; иначе «Статус» заказа (по умолчанию зал).
@@ -42,9 +59,9 @@ def channel_revenue(rows: list[dict], bucket_field: str) -> dict[str, dict[str, 
         )
         if category == ORDER_STATUS_CATEGORY:
             # несколько «Статусов» на заказе → сильнейший (доставка > с собой > зал)
-            order_channel[ordernum] = stronger_channel(
-                order_channel.get(ordernum), ORDER_STATUS_CHANNELS.get(name.strip().lower())
-            )
+            ch = status_channel(order_channel.get(ordernum), name, include_delivery)
+            if ch:
+                order_channel[ordernum] = ch
     out: dict[str, dict[str, float]] = {}
     for r in rows:
         ordernum, bucket, category, name = split_order_row(

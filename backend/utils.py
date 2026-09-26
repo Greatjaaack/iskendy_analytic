@@ -11,6 +11,7 @@ from constants import (
     CHANNEL_PRIORITY,
     DELIVERY_CATEGORY,
     DELIVERY_NAME_MARKER,
+    NO_CATEGORY,
     PAYMENT_GROUP_RULES,
     PAYMENT_OTHER,
 )
@@ -47,9 +48,12 @@ def display_category(name: str | None) -> str:
     """Отображаемое имя меню-категории (переименование на дашборде, см. CATEGORY_DISPLAY).
 
     Применяется на выходе разрезов и к подписям, и к ключам (чтобы drill-down и матч
-    категорий между виджетами не ломались). Неизвестные имена возвращаются как есть.
+    категорий между виджетами не ломались). Неизвестные имена возвращаются как есть,
+    пустое — `NO_CATEGORY`: иначе в легендах и таблицах была строка без подписи.
     """
-    return CATEGORY_DISPLAY.get(name or "", name or "")
+    if not name:
+        return NO_CATEGORY
+    return CATEGORY_DISPLAY.get(name, name)
 
 
 def is_delivery(category: str | None, name: str | None) -> bool:
