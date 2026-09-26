@@ -169,7 +169,7 @@ docker compose -f docker-compose.prod.yml start backend
 
 ## Ночной деплой 26–27.09.2026 (накопленный рефакторинг)
 
-Копится с 26.08: **12 коммитов аналитики** (`dd745c2` → `60e5439`) и **10 коммитов табло**
+Копится с 26.08: **14 коммитов аналитики** (`dd745c2` → `95b650b`) и **10 коммитов табло**
 (`b6ef2bb` → `7ab20f0`). Деплой днём не делаем: точка работает, сборка на одном ядре
 тормозит машину, пересоздание контейнера роняет сервис.
 
@@ -189,13 +189,13 @@ docker compose -f docker-compose.prod.yml start backend
 ### 1. Аналитика (`/root/dashboards`)
 
 ```bash
-cd /root/dashboards && git pull && git log --oneline -1     # должен стать 60e5439
+cd /root/dashboards && git pull && git log --oneline -1     # должен стать 95b650b
 docker compose -f docker-compose.prod.yml up -d --build      # ~5-10 минут на одном ядре
 docker compose -f docker-compose.prod.yml logs --tail 80 backend
 curl -fsS https://analytics.iskendy.ru/api/health
 ```
 
-- [ ] Коммит на сервере стал `60e5439`
+- [ ] Коммит на сервере стал `95b650b`
 - [ ] В логе старта нет traceback; видно `Касса: iiko`, `Синк выручки завершён`
 - [ ] `docker ps` показывает `dashboards-backend-1 ... (healthy)` — **это новое**, healthcheck
       добавлен в этом деплое (даёт статус через ~2 минуты после старта)
