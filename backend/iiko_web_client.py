@@ -10,6 +10,7 @@
 
 import asyncio
 import logging
+import time
 
 import httpx
 
@@ -35,6 +36,9 @@ logger = logging.getLogger(__name__)
 
 LOGIN_URL = f"{settings.iiko_web_url}/navigator/index.html#/auth/login"
 
+# Сколько секунд доверять подтверждённой сессии без повторной проверки (см. `_ensure_session`).
+_SESSION_TRUST_SECONDS = 60
+
 
 class IikoWebClient:
     def __init__(self):
@@ -42,6 +46,7 @@ class IikoWebClient:
         self.store_id = settings.iiko_store_id
         self._cookies: dict[str, str] = {}
         self._lock = asyncio.Lock()
+        self._checked_at: float = 0.0  # когда сессия последний раз подтвердилась
 
     # ---------- Авторизация ----------
 
@@ -94,12 +99,24 @@ class IikoWebClient:
         logger.info("iikoweb: сессия получена (%d cookies)", len(self._cookies))
 
     async def _ensure_session(self) -> None:
+        """Живая ли сессия; проверка `/api/auth` — не чаще раза в `_SESSION_TRUST_SECONDS`.
+
+        Раньше проверка шла перед КАЖДЫМ запросом: на проде 717 лишних запросов в час
+        (26.09.2026), и опрос табло платил лишним сетевым кругом за каждый ответ.
+        Доверять недавно подтверждённой сессии безопасно: протухшую выдаст 401/403 на
+        самом запросе, и `_post`/`_get` перелогинятся и повторят его один раз.
+        """
+        if self._cookies and time.monotonic() - self._checked_at < _SESSION_TRUST_SECONDS:
+            return
         if self._cookies and await self._check_auth():
+            self._checked_at = time.monotonic()
             return
         async with self._lock:
             if self._cookies and await self._check_auth():
+                self._checked_at = time.monotonic()
                 return
             await self._login()
+            self._checked_at = time.monotonic()
 
     async def _check_auth(self) -> bool:
         try:
@@ -116,7 +133,7 @@ class IikoWebClient:
         async with httpx.AsyncClient(cookies=self._cookies, timeout=60) as c:
             r = await c.post(f"{self.base_url}{path}", json=payload)
             if r.status_code in (401, 403) and _retry:
-                self._cookies = {}
+                self._cookies, self._checked_at = {}, 0.0
                 return await self._post(path, payload, _retry=False)
             r.raise_for_status()
             return r.json()
@@ -126,7 +143,7 @@ class IikoWebClient:
         async with httpx.AsyncClient(cookies=self._cookies, timeout=60) as c:
             r = await c.get(f"{self.base_url}{path}")
             if r.status_code in (401, 403) and _retry:
-                self._cookies = {}
+                self._cookies, self._checked_at = {}, 0.0
                 return await self._get(path, _retry=False)
             r.raise_for_status()
             return r.json()

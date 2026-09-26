@@ -11,6 +11,7 @@
 """
 
 import logging
+import time
 from dataclasses import asdict
 from datetime import date, datetime, timedelta, timezone
 
@@ -74,7 +75,7 @@ def sync_window(date_from: date, date_to: date) -> tuple[date, date] | None:
 
 async def sync_revenue(days_back: int = 7):
     """Выручка/чеки/средний чек/себестоимость по дням (upsert по дате)."""
-    logger.info(f"Синк выручки за {days_back} дн...")
+    started = time.monotonic()
     window = sync_window(today() - timedelta(days=days_back - 1), today())
     if window is None:
         logger.info("Синк выручки: окно раньше даты переключения кассы — пропускаю")
@@ -102,7 +103,13 @@ async def sync_revenue(days_back: int = 7):
 
             db.add(SyncLog(sync_type="revenue", status="ok"))
             db.commit()
-        logger.info("Синк выручки завершён")
+        logger.info(
+            "Синк выручки %s..%s: %d дн., %.1f с",
+            date_from,
+            date_to,
+            len(days),
+            time.monotonic() - started,
+        )
     except Exception as error:
         logger.exception("Синк выручки упал")  # traceback прикрепится сам
         with SessionLocal() as db:
@@ -113,7 +120,7 @@ async def sync_revenue(days_back: int = 7):
 # ---------- Заказы (order_items / orders / order_payments / dish_detail) ----------
 
 
-async def sync_orders_range(date_from: date, date_to: date):
+async def sync_orders_range(date_from: date, date_to: date) -> int | None:
     """Заполнить `order_items`/`orders`/`order_payments` за диапазон (replace по дням).
 
     Заказы приходят от адаптера кассы уже разобранными (`pos.PosOrder`); здесь только
@@ -126,11 +133,14 @@ async def sync_orders_range(date_from: date, date_to: date):
        «продаж не было»: данные остаются как есть. Иначе одна кривая выборка (у iiko
        OLAP умеет отвечать пустотой вместо ошибки) обнуляла бы день на дашборде и в
        запасном ответе табло — до следующего удачного синка.
+
+    Возвращает число записанных заказов, либо `None`, если сработал предохранитель
+    пустого ответа (данные НЕ обновлены — вызывающий пишет это в `sync_log`).
     """
     window = sync_window(date_from, date_to)
     if window is None:
         logger.info("Синк заказов: окно раньше даты переключения кассы — пропускаю")
-        return
+        return 0
     date_from, date_to = window
 
     orders = await get_pos().orders(date_from, date_to)
@@ -153,7 +163,7 @@ async def sync_orders_range(date_from: date, date_to: date):
                 date_to,
                 have,
             )
-            return
+            return None
 
     with SessionLocal() as db:
         db.query(OrderItem).filter(OrderItem.date >= date_from, OrderItem.date <= date_to).delete()
@@ -165,6 +175,7 @@ async def sync_orders_range(date_from: date, date_to: date):
         db.bulk_save_objects([Order(**o) for o in order_rows])
         db.bulk_save_objects([OrderPayment(**p) for p in payments])
         db.commit()
+    return len(order_rows)
 
 
 async def sync_dish_detail_day(day: date):
@@ -202,18 +213,38 @@ async def sync_dish_detail_day(day: date):
 
 
 async def sync_orders_recent(days_back: int = 7):
-    """Пере-синк свежих дней: order_items одним запросом + dish_detail по дню."""
-    logger.info(f"Синк заказов за {days_back} дн...")
+    """Пере-синк свежих дней: order_items одним запросом + dish_detail по дню.
+
+    Если предохранитель не дал записать пустой ответ кассы, в журнал идёт `skipped`, а
+    не `ok`: `/api/sync/last` показывает время последней УДАЧНОЙ синхронизации, и
+    «синхронизировано только что» при не обновлённых данных было бы неправдой.
+    """
+    started = time.monotonic()
     date_to = today()
     date_from = date_to - timedelta(days=days_back - 1)
     try:
-        await sync_orders_range(date_from, date_to)
+        written = await sync_orders_range(date_from, date_to)
         for d in _daterange(date_from, date_to):
             await sync_dish_detail_day(d)
         with SessionLocal() as db:
-            db.add(SyncLog(sync_type="orders", status="ok"))
+            if written is None:
+                db.add(
+                    SyncLog(
+                        sync_type="orders",
+                        status="skipped",
+                        message=f"касса отдала пусто за {date_from}..{date_to}, данные не тронуты",
+                    )
+                )
+            else:
+                db.add(SyncLog(sync_type="orders", status="ok"))
             db.commit()
-        logger.info("Синк заказов завершён")
+        logger.info(
+            "Синк заказов %s..%s: %s, %.1f с",
+            date_from,
+            date_to,
+            "пропущен (пустой ответ кассы)" if written is None else f"{written} заказов",
+            time.monotonic() - started,
+        )
     except Exception as error:
         logger.exception("Синк заказов упал")
         with SessionLocal() as db:
@@ -251,10 +282,11 @@ async def backfill():
 
     date_to = today()
     try:
-        await sync_orders_range(start, date_to)
-        logger.info("backfill: order_items заполнены (%s..%s)", start, date_to)
-    except Exception:
+        written = await sync_orders_range(start, date_to)
+        logger.info("backfill: order_items %s..%s — %s заказов", start, date_to, written)
+    except Exception as error:
         logger.exception("backfill: order_items упал")
+        _journal("backfill", "error", f"order_items: {error}")
 
     # dish_detail заполняем только за дни, где реально есть заказы: начало истории
     # из probe может быть завышено (сводка по дням отдаёт стартовую дату окна), а
@@ -276,14 +308,32 @@ async def backfill():
         reverse=True,
     )
     logger.info("backfill: dish_detail — %d дней (с %s)", len(days), real_start)
+    failed: list[date] = []
     for i, d in enumerate(days, 1):
         try:
             await sync_dish_detail_day(d)
         except Exception:
             logger.exception("backfill: dish_detail %s упал", d)
+            failed.append(d)
         if i % 20 == 0:
             logger.info("backfill dish_detail: %d/%d", i, len(days))
-    logger.info("backfill завершён")
+    # Бэкафилл идёт ночью, и падение отдельных дней видно только в логе, который
+    # ротируется за несколько дней. В журнале синков оно доживёт до разбора.
+    if failed:
+        _journal(
+            "backfill",
+            "error",
+            f"dish_detail не заполнен за {len(failed)} дн.: "
+            + ", ".join(d.isoformat() for d in sorted(failed)[:10]),
+        )
+    logger.info("backfill завершён: %d дн., с ошибкой %d", len(days), len(failed))
+
+
+def _journal(sync_type: str, status: str, message: str | None = None) -> None:
+    """Строка в `sync_log` — журнал синков, который живёт дольше ротации docker-логов."""
+    with SessionLocal() as db:
+        db.add(SyncLog(sync_type=sync_type, status=status, message=(message or "")[:500]))
+        db.commit()
 
 
 async def sync_today():

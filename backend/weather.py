@@ -67,7 +67,11 @@ async def get_weather(date_from: str, date_to: str) -> dict[str, dict]:
                 continue
             try:
                 await _fetch_range(url, min(dates), max(dates))
-            except Exception as error:  # погода не критична — не роняем дашборд, но логируем трейс
+            except (httpx.TransportError, httpx.HTTPStatusError) as error:
+                # Сеть и ответы Open-Meteo — ожидаемые сбои (на проде ~5 таймаутов в час),
+                # трейс из десяти строк httpx ничего к ним не добавляет.
+                logger.warning("weather: запрос не удался (%s): %s", url, type(error).__name__)
+            except Exception as error:  # погода не критична — не роняем дашборд
                 logger.warning("weather: запрос не удался (%s)", url, exc_info=error)
 
     return {d: _cache[d] for d in _date_range(date_from, date_to) if d in _cache}

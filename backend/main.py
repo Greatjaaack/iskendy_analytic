@@ -19,6 +19,7 @@ import storage
 from auth import require_auth
 from cache import cache_clear
 from config import settings
+from log_setup import setup_logging
 from models import Order, RevenueDaily, SessionLocal, SyncLog, init_db
 from pos import get_pos
 from routers import (
@@ -41,7 +42,7 @@ from scheduler import (
 )
 from services.aggregator import net_revenue
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+setup_logging()
 
 logger = logging.getLogger(__name__)
 
