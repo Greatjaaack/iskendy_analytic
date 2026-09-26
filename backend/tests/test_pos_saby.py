@@ -30,7 +30,7 @@ from pos.base import (  # noqa: E402
     aggregate_products,
     to_order_rows,
 )
-from pos.saby import SabyPos  # noqa: E402
+from pos.saby import SabyPos, build_menu  # noqa: E402
 
 # id номенклатуры → (категория, тип позиции): так его отдаёт каталог Presto
 MENU = {
@@ -121,7 +121,7 @@ def saby(monkeypatch):
     async def fake_menu():
         return MENU
 
-    async def fake_sales(date_from, date_to):
+    async def fake_sales(date_from, date_to, cache_ttl=None):
         # Удалённые продажи отбрасывает сам `_fetch_sales`, здесь их уже нет.
         return [SALE, RETURN_SALE]
 
@@ -228,7 +228,7 @@ def test_канал_из_служебной_позиции_статус(saby, mo
         ],
     }
 
-    async def sales(date_from, date_to):
+    async def sales(date_from, date_to, cache_ttl=None):
         return [s_собой]
 
     monkeypatch.setattr(saby, "_fetch_sales", sales)
@@ -260,3 +260,138 @@ def test_неизвестная_точка_это_ошибка_а_не_пуст�
     monkeypatch.setattr(settings, "saby_point_id", 283)
     run(pos._ensure_point())  # верная точка — проходит молча
     assert pos._point_ok is True
+
+
+# ─── Белые пятна документации: адаптер обязан пережить любой из вариантов ────────
+
+
+def test_время_с_поясом_переводится_в_пояс_точки(saby, monkeypatch):
+    """`*WTZ` — «with time zone». Пришло в UTC — час продажи всё равно московский."""
+    monkeypatch.setattr(settings, "timezone", "Europe/Moscow")
+    utc = {
+        **SALE,
+        "OpenedWTZ": "2026-09-24T10:42:10.500+00:00",
+        "ClosedWTZ": "2026-09-24 10:47:40+00",
+    }
+
+    async def sales(date_from, date_to, cache_ttl=None):
+        return [utc]
+
+    monkeypatch.setattr(saby, "_fetch_sales", sales)
+    (o,) = run(saby.orders(date(2026, 9, 24), date(2026, 9, 24)))
+    assert o.hour == 13
+    assert (o.open_time, o.close_time) == ("2026-09-24T13:42:10", "2026-09-24T13:47:40")
+    assert o.date == date(2026, 9, 24)
+
+
+def test_пагинация_не_удваивает_чеки_при_нумерации_с_единицы(monkeypatch):
+    """Если страницы Saby считаются с 1, `page=0` и `page=1` вернут одно и то же.
+
+    Без дедупа первая сотня чеков удвоилась бы в выручке.
+    """
+    pos = SabyPos()
+    first = [{"Sale": i, "Number": str(i)} for i in range(1, 4)]
+    second = [{"Sale": i, "Number": str(i)} for i in range(4, 6)]
+    pages = {0: first, 1: first, 2: second}
+    calls = []
+
+    async def fake_get(path, params, _retry=True):
+        calls.append(params["page"])
+        return {"orders": pages[params["page"]], "outcome": {"hasMore": params["page"] < 2}}
+
+    monkeypatch.setattr(pos, "_get", fake_get)
+    got = run(pos._paged("/retail/order/list", {}, "orders", 10))
+    assert [s["Sale"] for s in got] == [1, 2, 3, 4, 5]
+
+
+def test_пагинация_останавливается_на_повторе_последней_страницы(monkeypatch):
+    """API, который за краем снова отдаёт последнюю страницу с hasMore, не зацикливает."""
+    pos = SabyPos()
+    calls = []
+
+    async def fake_get(path, params, _retry=True):
+        calls.append(params["page"])
+        return {"orders": [{"Sale": 1}], "outcome": {"hasMore": True}}
+
+    monkeypatch.setattr(pos, "_get", fake_get)
+    got = run(pos._paged("/retail/order/list", {}, "orders", 500))
+    assert len(got) == 1 and calls == [0, 1, 2]
+
+
+def test_оплата_без_разбивки_не_теряется(saby):
+    """Платёж только с `Amount` (агрегатор и т. п.) попадает в «Прочее», Σ = выручке."""
+    sale = {**SALE, "Payments": [{"Amount": 690.0}]}
+    (o,) = [saby._to_order(sale, MENU)]
+    assert [(p.pay_type, p.amount) for p in o.payments] == [("Прочее", 690.0)]
+
+
+def test_статус_модификатором_вне_каталога(saby, monkeypatch):
+    """«С собой» модификатором блюда без позиции в каталоге — канал всё равно найден."""
+    sale = {
+        **SALE,
+        "SaleNomenclatures": SALE["SaleNomenclatures"]
+        + [{"Nomenclature": 999, "Name": "С собой", "Quantity": 1, "IsModifier": True}],
+    }
+    o = saby._to_order(sale, MENU)
+    assert o.channel == "с собой"
+    row = to_order_rows([o])[0]
+    assert row["item_count"] == 4  # служебная строка не считается позицией чека
+    assert row["total_sum"] == 700.0
+
+
+def test_платное_блюдо_с_именем_статуса_остаётся_товаром(saby):
+    """Отсев по имени — только для строк по 0 ₽: платная «Доставка» — это товар."""
+    sale = {
+        **SALE,
+        "SaleNomenclatures": [
+            {"Nomenclature": 999, "Name": "Доставка", "Quantity": 1, "TotalPrice": 150.0}
+        ],
+    }
+    o = saby._to_order(sale, MENU)
+    assert o.channel is None
+    assert o.items[0].category == ""
+
+
+def test_каталог_по_uuid_если_id_не_совпал():
+    """Категория находится по `NomenclatureUUID`, если числовые id продажи и каталога разные."""
+    menu = build_menu(
+        [
+            {"id": 1, "name": "Блюда", "isParent": True},
+            {"id": 2, "name": "Дюрюмы", "isParent": True, "hierarchicalParent": 1},
+            {"id": 3, "name": "Дюрюм", "hierarchicalParent": 2, "externalId": "u-3"},
+            {"id": 4, "name": "Товары", "isParent": True},
+            {"id": 5, "name": "Вода", "hierarchicalParent": 4},
+        ]
+    )
+    assert menu[3] == menu["u-3"] == ("Дюрюмы", PRODUCT_TYPE_DISH)
+    assert menu[5] == ("Товары", PRODUCT_TYPE_GOODS)
+    pos = SabyPos()
+    sale = {
+        **SALE,
+        "SaleNomenclatures": [
+            {"Nomenclature": 777, "NomenclatureUUID": "u-3", "Name": "Дюрюм", "Quantity": 1}
+        ],
+    }
+    assert pos._to_order(sale, menu).items[0].category == "Дюрюмы"
+
+
+def test_часы_по_закрытию_как_в_бд(saby):
+    """Живой почасовой разрез совпадает с `hours_from_db`: час — по закрытию чека."""
+    sale = {**SALE, "OpenedWTZ": "2026-09-24 13:59:30", "ClosedWTZ": "2026-09-24 14:00:40"}
+    o = saby._to_order(sale, MENU)
+    assert o.hour == 13  # в `orders.hour` остаётся час открытия
+    assert list(aggregate_hours([o])) == [14]
+
+
+def test_табло_передаёт_ttl_в_кэш(monkeypatch):
+    """Ночная экономия запросов табло работает и на Saby: TTL доходит до кэша."""
+    pos = SabyPos()
+    seen = {}
+
+    async def fake_cached(key, factory, ttl=None):
+        seen["ttl"] = ttl
+        return []
+
+    monkeypatch.setattr("pos.saby.cached_or_call", fake_cached)
+    run(pos.open_orders(date(2026, 9, 24), cache_ttl=60))
+    assert seen["ttl"] == 60

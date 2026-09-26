@@ -21,6 +21,7 @@ import logging
 import time
 from datetime import date as Date
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -31,6 +32,7 @@ from constants import (
     ORDER_STATUS_CHANNELS,
     PAYMENT_CARD,
     PAYMENT_CASH,
+    PAYMENT_OTHER,
     PRODUCT_TYPE_DISH,
     PRODUCT_TYPE_GOODS,
     PRODUCT_TYPE_MODIFIER,
@@ -67,22 +69,38 @@ _PAY_CARD = PAYMENT_CARD
 _PAY_CERTIFICATE = "Сертификат"
 _PAY_SALARY = "Под зарплату"
 
+# Каталог: id номенклатуры (int) или её UUID (str) → (категория, тип позиции).
+Menu = dict[int | str, tuple[str, str]]
 
-def _iso(value: str | None) -> str | None:
-    """`YYYY-MM-DD hh:mm:ss` от Saby → ISO `YYYY-MM-DDThh:mm:ss` (как в БД)."""
-    if not value:
-        return None
-    return str(value).strip().replace(" ", "T")
+# Страховки от бесконечной пагинации: ~50 000 чеков / 50 000 позиций каталога.
+_MAX_SALE_PAGES = 500
+_MAX_MENU_PAGES = 50
 
 
 def _dt(value: str | None) -> datetime | None:
-    iso = _iso(value)
-    if not iso:
+    """Время от Saby → наивное время В ПОЯСЕ ТОЧКИ (как iiko кладёт его в БД).
+
+    Поля `*WTZ` — «with time zone», а формат документация не показывает (пример запроса
+    передаёт `YYYY-MM-DD hh:mm:ss`). Принимаем оба вида. Если смещение пришло, переводим
+    в `settings.timezone` и отбрасываем его: иначе при UTC все часы продаж съехали бы
+    на 3, а строка с `+03:00` в БД не сравнивалась бы с наивными таймстампами iiko.
+    """
+    if not value:
         return None
+    text = str(value).strip().replace(" ", "T", 1).replace(" ", "")
     try:
-        return datetime.fromisoformat(iso)
+        moment = datetime.fromisoformat(text)
     except ValueError:
         return None
+    if moment.tzinfo is not None:
+        moment = moment.astimezone(ZoneInfo(settings.timezone)).replace(tzinfo=None)
+    return moment.replace(microsecond=0)
+
+
+def _iso(value: str | None) -> str | None:
+    """Время от Saby → ISO `YYYY-MM-DDThh:mm:ss` в поясе точки (как в БД)."""
+    moment = _dt(value)
+    return moment.isoformat() if moment else None
 
 
 def _num(value) -> float:
@@ -101,6 +119,40 @@ def _as_list(block) -> list:
     return []
 
 
+def build_menu(items: list[dict]) -> Menu:
+    """Позиции каталога Presto → `id / UUID → (категория, тип позиции)`.
+
+    Категория — имя папки, в которой лежит позиция (у Presto вложенность до трёх
+    уровней, напр. «Блюда/Дюрюмы/Дюрюм Балык» → категория «Дюрюмы»). Тип позиции
+    выводится из КОРНЕВОЙ папки: то, что лежит в «Блюда», — блюдо.
+
+    Ключей два — числовой `id` и `externalId` (UUID): в продаже есть и `Nomenclature`,
+    и `NomenclatureUUID`, а совпадают ли числовые id продажи и каталога v2, документация
+    не говорит. Второй ключ страхует категорию от этого белого пятна.
+    """
+    by_id = {i.get("id"): i for i in items if i.get("id") is not None}
+
+    def root_name(item: dict, depth: int = 0) -> str:
+        parent = by_id.get(item.get("hierarchicalParent"))
+        if parent is None or depth > 5:
+            return str(item.get("name") or "")
+        return root_name(parent, depth + 1)
+
+    menu: Menu = {}
+    for item in items:
+        if item.get("isParent") or item.get("id") is None:
+            continue
+        parent = by_id.get(item.get("hierarchicalParent")) or {}
+        entry = (
+            str(parent.get("name") or ""),
+            _ROOT_PRODUCT_TYPE.get(root_name(item), PRODUCT_TYPE_DISH),
+        )
+        menu[item["id"]] = entry
+        if item.get("externalId"):
+            menu[str(item["externalId"])] = entry
+    return menu
+
+
 class SabyPos:
     """Реализация `PosClient` поверх Saby Retail/Presto API."""
 
@@ -110,7 +162,7 @@ class SabyPos:
         self._token: str = ""
         self._token_at: float = 0.0
         self._lock = asyncio.Lock()
-        self._menu: dict[int, tuple[str, str]] = {}  # id → (категория, тип позиции)
+        self._menu: Menu = {}  # id / UUID → (категория, тип позиции)
         self._menu_at: float = 0.0
         self._point_ok = False
 
@@ -172,6 +224,35 @@ class SabyPos:
             r.raise_for_status()
             return r.json() or {}
 
+    async def _paged(self, path: str, params: dict, key: str, max_pages: int) -> list[dict]:
+        """Все страницы выборки: `page` = 0, 1, … пока `outcome.hasMore`.
+
+        С какого номера считаются страницы (0 или 1), документация не говорит. Если с 1,
+        то `page=0` и `page=1` отдадут одно и то же, и первая сотня чеков удвоилась бы в
+        выручке. Поэтому записи склеиваются без повторов (по `Sale`/`Key`/`id`).
+        Страница без новых записей останавливает цикл — это спасает от API, который за
+        краем выборки снова отдаёт последнюю страницу. Исключение — страница 1: при
+        нумерации с единицы она законно повторяет страницу 0, а за ней идут новые.
+        """
+        out: list[dict] = []
+        seen: set = set()
+        for page in range(max_pages):
+            resp = await self._get(path, {**params, "page": page})
+            fresh = 0
+            for rec in _as_list(resp.get(key)):
+                ident = rec.get("Sale") or rec.get("Key") or rec.get("id")
+                if ident is not None:
+                    if ident in seen:
+                        continue
+                    seen.add(ident)
+                out.append(rec)
+                fresh += 1
+            has_more = (resp.get("outcome") or {}).get("hasMore")
+            if not has_more or (not fresh and page != 1):
+                return out
+        logger.warning("Saby: выборка %s оборвана на %d-й странице", path, max_pages)
+        return out
+
     # ---------- Точка продаж ----------
 
     async def _ensure_point(self) -> None:
@@ -197,84 +278,45 @@ class SabyPos:
 
     # ---------- Каталог номенклатуры (категории и тип позиции) ----------
 
-    async def _ensure_menu(self) -> dict[int, tuple[str, str]]:
-        """Каталог `id → (категория, тип позиции)`; обновляется не чаще TTL.
-
-        Категория — имя папки, в которой лежит позиция (у Presto вложенность до трёх
-        уровней, напр. «Блюда/Дюрюмы/Дюрюм Балык» → категория «Дюрюмы»). Тип позиции
-        выводится из КОРНЕВОЙ папки: то, что лежит в «Блюда», — блюдо.
-        """
+    async def _ensure_menu(self) -> Menu:
+        """Каталог `id / UUID → (категория, тип позиции)`; обновляется не чаще TTL."""
         if self._menu and (time.monotonic() - self._menu_at) < settings.saby_menu_ttl_seconds:
             return self._menu
-
-        items: list[dict] = []
-        page = 0
-        while True:
-            resp = await self._get(
-                "/retail/v2/nomenclature/list",
-                {"pointId": settings.saby_point_id, "pageSize": 1000, "page": page},
-            )
-            items += _as_list(resp.get("nomenclatures"))
-            if not (resp.get("outcome") or {}).get("hasMore"):
-                break
-            page += 1
-            if page > 50:  # страховка от бесконечной пагинации
-                logger.warning("Saby: каталог оборван на 50-й странице")
-                break
-
-        by_id = {i.get("id"): i for i in items if i.get("id") is not None}
-
-        def root_name(item: dict, depth: int = 0) -> str:
-            parent = by_id.get(item.get("hierarchicalParent"))
-            if parent is None or depth > 5:
-                return str(item.get("name") or "")
-            return root_name(parent, depth + 1)
-
-        menu: dict[int, tuple[str, str]] = {}
-        for item in items:
-            if item.get("isParent"):
-                continue
-            parent = by_id.get(item.get("hierarchicalParent")) or {}
-            category = str(parent.get("name") or "")
-            product_type = _ROOT_PRODUCT_TYPE.get(root_name(item), PRODUCT_TYPE_DISH)
-            menu[item["id"]] = (category, product_type)
-
-        self._menu, self._menu_at = menu, time.monotonic()
-        logger.info("Saby: каталог обновлён — %d позиций", len(menu))
-        return menu
+        items = await self._paged(
+            "/retail/v2/nomenclature/list",
+            {"pointId": settings.saby_point_id, "pageSize": 1000},
+            "nomenclatures",
+            _MAX_MENU_PAGES,
+        )
+        self._menu, self._menu_at = build_menu(items), time.monotonic()
+        logger.info("Saby: каталог обновлён — %d позиций", len(self._menu))
+        return self._menu
 
     # ---------- Продажи ----------
 
-    async def _fetch_sales(self, date_from: Date, date_to: Date) -> list[dict]:
+    async def _fetch_sales(
+        self, date_from: Date, date_to: Date, cache_ttl: int | None = None
+    ) -> list[dict]:
         """Все продажи за диапазон (пагинация по 100). Удалённые отбрасываем."""
         key = f"saby:sales:{date_from}:{date_to}"
 
         async def _load() -> list[dict]:
             await self._ensure_point()
-            out: list[dict] = []
-            page = 0
-            while True:
-                resp = await self._get(
-                    "/retail/order/list",
-                    {
-                        "pointId": settings.saby_point_id,
-                        "fromDateTime": f"{date_from.isoformat()} 00:00:00",
-                        "toDateTime": f"{date_to.isoformat()} 23:59:59",
-                        "page": page,
-                        "pageSize": 100,
-                        "needDiscountInfo": "true",
-                    },
-                )
-                out += [s for s in _as_list(resp.get("orders")) if not s.get("Deleted")]
-                if not (resp.get("outcome") or {}).get("hasMore"):
-                    break
-                page += 1
-                if page > 500:  # ~50 000 чеков за один запрос — дальше явно цикл
-                    logger.warning("Saby: выборка продаж оборвана на 500-й странице")
-                    break
-            return out
+            sales = await self._paged(
+                "/retail/order/list",
+                {
+                    "pointId": settings.saby_point_id,
+                    "fromDateTime": f"{date_from.isoformat()} 00:00:00",
+                    "toDateTime": f"{date_to.isoformat()} 23:59:59",
+                    "pageSize": 100,
+                    "needDiscountInfo": "true",
+                },
+                "orders",
+                _MAX_SALE_PAGES,
+            )
+            return [s for s in sales if not s.get("Deleted")]
 
-        return await cached_or_call(key, _load)
+        return await cached_or_call(key, _load, ttl=cache_ttl)
 
     async def orders(self, date_from: Date, date_to: Date) -> list[PosOrder]:
         """Продажи за диапазон → `PosOrder`. Возвраты не заказы, их здесь нет."""
@@ -282,7 +324,7 @@ class SabyPos:
         menu = await self._ensure_menu()
         return [self._to_order(s, menu) for s in sales if not s.get("Return")]
 
-    def _to_order(self, sale: dict, menu: dict[int, tuple[str, str]]) -> PosOrder:
+    def _to_order(self, sale: dict, menu: Menu) -> PosOrder:
         opened = _dt(sale.get("OpenedWTZ")) or _dt(sale.get("DateWTZ"))
         closed = _dt(sale.get("ClosedWTZ"))
         day = (opened or closed or datetime.min).date()
@@ -330,18 +372,30 @@ class SabyPos:
             )
         return found
 
-    def _collect_items(
-        self, pos: dict, menu: dict[int, tuple[str, str]], out: list[PosItem], depth: int = 0
-    ) -> None:
+    def _collect_items(self, pos: dict, menu: Menu, out: list[PosItem], depth: int = 0) -> None:
         """Позиция продажи (и её дочерние: модификаторы, состав комплекта) → `PosItem`."""
-        category, product_type = menu.get(pos.get("Nomenclature"), ("", PRODUCT_TYPE_DISH))
+        category, product_type = (
+            menu.get(pos.get("Nomenclature"))
+            or menu.get(str(pos.get("NomenclatureUUID") or ""))
+            or ("", PRODUCT_TYPE_DISH)
+        )
         if pos.get("IsModifier"):
             product_type = PRODUCT_TYPE_MODIFIER
+        name = str(pos.get("Name") or pos.get("ShortName") or "").strip()
         net = _num(pos.get("TotalPrice"))
         discount = _num(pos.get("TotalDiscount"))
+        # В Presto «Статус» удобнее завести модификатором блюда, а модификаторы могут не
+        # попасть в каталог как отдельные позиции — тогда категории у строки нет, и канал
+        # потерялся бы, а строка по 0 ₽ раздула бы число позиций чека. Узнаём её по имени.
+        if (
+            category != ORDER_STATUS_CATEGORY
+            and name.lower() in ORDER_STATUS_CHANNELS
+            and not (net + discount)
+        ):
+            category = ORDER_STATUS_CATEGORY
         out.append(
             PosItem(
-                name=str(pos.get("Name") or pos.get("ShortName") or "").strip(),
+                name=name,
                 category=category,
                 dish_type=product_type,
                 qty=_num(pos.get("Quantity")),
@@ -369,16 +423,22 @@ class SabyPos:
 
         for pay in _as_list(sale.get("Payments")):
             bank_type = str(pay.get("BankType") or "").strip()
-            add(_PAY_CASH, _num(pay.get("CashSum")) or _num(pay.get("PayCash")))
-            add(
-                f"{_PAY_CARD} ({bank_type})" if bank_type else _PAY_CARD,
-                _num(pay.get("BankSum")) or _num(pay.get("PayBank")),
-            )
-            add(
-                _PAY_CERTIFICATE,
-                _num(pay.get("CertificateSum")) or _num(pay.get("PayCertificate")),
-            )
-            add(_PAY_SALARY, _num(pay.get("PaySalary")) or _num(pay.get("SalarySum")))
+            parts = {
+                _PAY_CASH: _num(pay.get("CashSum")) or _num(pay.get("PayCash")),
+                f"{_PAY_CARD} ({bank_type})" if bank_type else _PAY_CARD: (
+                    _num(pay.get("BankSum")) or _num(pay.get("PayBank"))
+                ),
+                _PAY_CERTIFICATE: (
+                    _num(pay.get("CertificateSum")) or _num(pay.get("PayCertificate"))
+                ),
+                _PAY_SALARY: _num(pay.get("PaySalary")) or _num(pay.get("SalarySum")),
+            }
+            for pay_type, amount in parts.items():
+                add(pay_type, amount)
+            # Платёж только с общей суммой, без разбивки на нал/безнал (например, оплата
+            # через агрегатор), иначе пропал бы, и Σ оплат не сошлась бы с выручкой.
+            if not any(parts.values()):
+                add(PAYMENT_OTHER, _num(pay.get("Amount")))
         return [PosPayment(pay_type=p, amount=a) for p, a in agg.items()]
 
     # ---------- Агрегаты: считаем сами, касса их не умеет ----------
@@ -407,9 +467,12 @@ class SabyPos:
     async def hourly(self, date_from: Date, date_to: Date) -> dict[int, PosHour]:
         return aggregate_hours(await self.orders(date_from, date_to))
 
-    async def open_orders(self, day: Date) -> list[PosOpenOrder]:
-        """Заказы дня для табло. Дешевле, чем полная выборка, Saby не умеет."""
-        sales = await self._fetch_sales(day, day)
+    async def open_orders(self, day: Date, cache_ttl: int | None = None) -> list[PosOpenOrder]:
+        """Заказы дня для табло. Дешевле, чем полная выборка, Saby не умеет.
+
+        `cache_ttl` задаёт ручка табло: пока за день нет заказов, кассу спрашиваем реже.
+        """
+        sales = await self._fetch_sales(day, day, cache_ttl=cache_ttl)
         out = []
         for sale in sales:
             if sale.get("Return"):

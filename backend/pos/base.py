@@ -161,8 +161,12 @@ class PosClient(Protocol):
     async def hourly(self, date_from: Date, date_to: Date) -> dict[int, PosHour]:
         """Выручка и чеки по часам суток, суммарно за период."""
 
-    async def open_orders(self, day: Date) -> list[PosOpenOrder]:
-        """Заказы дня для табло — самый дешёвый запрос, какой умеет касса."""
+    async def open_orders(self, day: Date, cache_ttl: int | None = None) -> list[PosOpenOrder]:
+        """Заказы дня для табло — самый дешёвый запрос, какой умеет касса.
+
+        `cache_ttl` — сколько держать ответ в кэше (`None` — общий TTL): пока за день
+        нет ни одного заказа, ручка табло спрашивает кассу реже.
+        """
 
     async def history_start(self) -> Date | None:
         """Первая дата с продажами (для бэкафилла). `None` — определить не удалось."""
@@ -307,8 +311,24 @@ def aggregate_days(orders: list[PosOrder]) -> list[PosDay]:
     return sorted(by_day.values(), key=lambda d: d.date)
 
 
+def _close_hour(close_t: str | None) -> int | None:
+    """Час закрытия заказа из ISO-таймстампа; `None`, если времени нет или оно битое."""
+    if not close_t:
+        return None
+    try:
+        return datetime.fromisoformat(close_t).hour
+    except ValueError:
+        return None
+
+
 def aggregate_hours(orders: list[PosOrder]) -> dict[int, PosHour]:
-    """Выручка/чеки по часам суток из заказов — для касс без почасовых агрегатов."""
+    """Выручка/чеки по часам суток из заказов — для касс без почасовых агрегатов.
+
+    Час — по ЗАКРЫТИЮ заказа, как в `revenue_source.hours_from_db` и в почасовом отчёте
+    iiko: иначе живой разрез (период старше истории) и разрез из БД для одних и тех же
+    заказов расходились бы на чеки, открытые в конце часа и закрытые в следующем.
+    Нет времени закрытия — берём час открытия.
+    """
     out: dict[int, PosHour] = {}
     for o in orders:
         hour = o.hour
@@ -319,6 +339,9 @@ def aggregate_hours(orders: list[PosOrder]) -> dict[int, PosHour]:
             gross += it.sum
             if it.hour is not None:
                 hour = it.hour if hour is None else min(hour, it.hour)
+        closed = _close_hour(o.close_time)
+        if closed is not None:
+            hour = closed
         if hour is None:
             continue
         bucket = out.get(hour)

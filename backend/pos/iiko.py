@@ -311,7 +311,7 @@ class IikoPos:
             for h in sorted(set(rev) | set(trn))
         }
 
-    async def open_orders(self, day: Date) -> list[PosOpenOrder]:
+    async def open_orders(self, day: Date, cache_ttl: int | None = None) -> list[PosOpenOrder]:
         """Заказы дня для табло: OLAP `[OrderNum, OpenTime]` — самый дешёвый разрез.
 
         TTL кэша задаёт вызывающий: пока за сегодня заказов нет, табло опрашивает
@@ -322,7 +322,7 @@ class IikoPos:
             data_fields=[OLAP_FIELD_SUM],
             date_from=day.isoformat(),
             date_to=day.isoformat(),
-            cache_ttl=self._open_orders_ttl,
+            cache_ttl=cache_ttl,
         )
         out = []
         for r in rows:
@@ -331,15 +331,6 @@ class IikoPos:
                 continue
             out.append(PosOpenOrder(number=num.strip(), open_time=open_t.strip()))
         return out
-
-    # TTL живого чтения заказов табло: ставится ручкой перед вызовом (None — общий кэш).
-    _open_orders_ttl: int | None = None
-
-    def with_open_orders_ttl(self, ttl: int | None) -> "IikoPos":
-        """Вернуть клиент с заданным TTL кэша для `open_orders` (не мутируя общий)."""
-        clone = IikoPos()
-        clone._open_orders_ttl = ttl
-        return clone
 
     async def history_start(self) -> Date | None:
         """Probe первой даты с продажами по метрике выручки за ~10 лет назад."""

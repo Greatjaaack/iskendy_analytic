@@ -142,12 +142,10 @@ async def orders_today():
     ttl = None if day_started else (settings.idle_poll_seconds or None)
 
     pos = get_pos()
-    # Пока за сегодня нет ни одного заказа, живые чтения кэшируются дольше (см. ниже).
-    if ttl is not None and hasattr(pos, "with_open_orders_ttl"):
-        pos = pos.with_open_orders_ttl(ttl)
 
     async def fetch_live() -> list[dict]:
-        found = await pos.open_orders(today)
+        # Пока за сегодня нет ни одного заказа, живые чтения кэшируются дольше (п. 1).
+        found = await pos.open_orders(today, cache_ttl=ttl)
         return [{"number": o.number, "openTime": o.open_time} for o in found]
 
     async def fetch_live_s_povtorom() -> list[dict]:
