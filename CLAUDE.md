@@ -16,7 +16,7 @@ Backend (из `backend/`):
 - `pip install -r requirements.txt && python -m playwright install chromium`
 - `uvicorn main:app --reload --port 8000`
 - Триггер ручной синхронизации: `POST /api/sync`; здоровье: `GET /api/health`.
-- Тесты: `pip install -r requirements-dev.txt && python -m pytest tests/ -q` — **145 тестов**. Общая обвязка в `tests/conftest.py`: фикстурная БД на 14 дней (повторяющиеся номера заказов, «Статус», модификатор, сплит-оплата, ТТК с привязкой), погода из словаря и **касса-заглушка, падающая при любом обращении** — так смоук доказывает, что ручки за период внутри истории читают БД, а не кассу. `tests/test_smoke_api.py` прогоняет **каждую** читающую ручку и сверяет **инварианты** (число чеков одинаково во всех разрезах, Σ по часам/каналам/дейпартам/оплатам = выручке, P&L и ОП-отчёт берут ту же выручку); `test_все_ручки_покрыты` сверяется с OpenAPI, поэтому новая ручка без теста валит сборку. Остальные файлы: `test_orders_today.py`/`test_summary.py` (контракты ручек табло), `test_order_key.py` (ключ заказа), `test_revenue_source.py` (источник дней и час закрытия), `test_security.py` (защита ручек), `test_sync_guards.py` (предохранители синка), `test_housekeeping.py` (уборка), `test_db_runtime.py` (режим SQLite), `test_pos_iiko.py`/`test_pos_saby.py` (адаптеры кассы).
+- Тесты: `pip install -r requirements-dev.txt && python -m pytest tests/ -q` — **154 теста**. Общая обвязка в `tests/conftest.py`: фикстурная БД на 14 дней (повторяющиеся номера заказов, «Статус», модификатор, сплит-оплата, ТТК с привязкой), погода из словаря и **касса-заглушка, падающая при любом обращении** — так смоук доказывает, что ручки за период внутри истории читают БД, а не кассу. `tests/test_smoke_api.py` прогоняет **каждую** читающую ручку и сверяет **инварианты** (число чеков одинаково во всех разрезах, Σ по часам/каналам/дейпартам/оплатам = выручке, P&L и ОП-отчёт берут ту же выручку); `test_все_ручки_покрыты` сверяется с OpenAPI, поэтому новая ручка без теста валит сборку. Остальные файлы: `test_orders_today.py`/`test_summary.py` (контракты ручек табло), `test_order_key.py` (ключ заказа), `test_revenue_source.py` (источник дней и час закрытия), `test_security.py` (защита ручек), `test_sync_guards.py` (предохранители синка), `test_housekeeping.py` (уборка), `test_db_runtime.py` (режим SQLite), `test_pos_iiko.py`/`test_pos_saby.py` (адаптеры кассы).
 
 Frontend (из `frontend/`):
 - `npm install`, `npm run dev`, `npm run build` (`tsc -b && vite build`), `npm run lint`.
@@ -76,7 +76,12 @@ localhost для dev; на проде фронт и API за одним адре
 `aggregate_products`). Реализации: **`pos/iiko.py`** (разбор OLAP-строк `field0`, метрики
 get-data, матрица часов — переехало из `scheduler`/`revenue.py`) и **`pos/saby.py`**
 (сервисный токен, `retail/order/list` с пагинацией, каталог `retail/v2/nomenclature/list`
-для категорий, агрегаты считаются у нас — у Saby агрегатов нет вообще). Выбор — `get_pos()`
+для категорий, агрегаты считаются у нас — у Saby агрегатов нет вообще). Адаптер Saby заранее
+переживает белые пятна документации (пояс в `*WTZ`, страницы с 0 или с 1 — дедуп по `Sale`,
+оплата без разбивки → «Прочее», «Статус» модификатором вне каталога — по имени строки 0 ₽,
+категория по `id` или UUID) — таблица в `SABY_API.md`. TTL кэша табло — параметр
+`open_orders(day, cache_ttl)` контракта, а не метод конкретного адаптера. Живой почасовой
+агрегат (`aggregate_hours`) считает по часу ЗАКРЫТИЯ, как `hours_from_db`. Выбор — `get_pos()`
 по `settings.pos_provider` (`POS_PROVIDER=iiko|saby`). Кассу дёргают только `scheduler`,
 ручка табло `/api/orders/today`, живой fallback `order_store` и `_days_live`/`_hours` в
 `revenue.py` — все через порт. Единственное исключение — диагностика `/api/dishes/order-types`
