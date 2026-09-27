@@ -51,6 +51,14 @@ internal-токен (`main._require_internal`; обычное `!=` сравни�
 справочниками роутера — это проверяет тест. **CORS** — только `CORS_ORIGINS` (по умолчанию
 localhost для dev; на проде фронт и API за одним адресом, CORS не участвует), было `*`.
 
+### Закрыто от поисковиков (27.09.2026)
+Дашборд — служебный, в выдаче его быть не должно. `frontend/nginx.conf` ставит
+`X-Robots-Tag: noindex, nofollow, noarchive` на **все** ответы (страницы, `/api`, статика),
+`index.html` дублирует `<meta name="robots">`. Не `robots.txt` с `Disallow`: он запрещает
+обход, и поисковик оставил бы адрес в выдаче по внешней ссылке, не увидев noindex. Людям
+ничего не закрывает. Правило по всем доменам: в поиске только главная `iskendy.ru/`, у
+табло то же сделано в его middleware; чужой `bot.iskendy.ru` пока открыт.
+
 ### Авторизация дашборда (логин/пароль)
 Весь дашборд закрыт за экраном входа. **Бэкенд** (`backend/auth.py`): один общий логин/пароль из `.env` (`AUTH_USERNAME`/`AUTH_PASSWORD`; пустой пароль = вход выключен, сверка в константное время через `hmac.compare_digest`). Сессия — **JWT (HS256), подписан вручную на `hmac`** (без внешних зависимостей), TTL `JWT_TTL_HOURS` (дефолт 12 ч); секрет подписи — `JWT_SECRET`, при пустом выводится из пароля (`iskendy:<auth_password>`). Роутер `backend/routers/auth.py`: `POST /api/auth/login` (логин/пароль → `{token, username}`), `GET /api/auth/me` (проверка токена). Зависимость **`require_auth`** (Bearer-JWT, иначе 401) навешена в `main.py` на **все роутеры и `/api/sync*`**; публичны только `/api/health` и `/api/auth/login`. **Фронт**: токен в localStorage (`src/token.ts`), axios-перехватчики (`src/api.ts`) добавляют `Authorization: Bearer` и при 401 чистят токен + редиректят на `/login`; guard `RequireAuth` (`src/auth.tsx`) оборачивает защищённые роуты в `App.tsx`; экран входа — `src/pages/Login.tsx`; кнопка «Выйти» — в `Sidebar`. Это **локальная авторизация дашборда**, не путать с cookie-сессией iikoweb выше.
 

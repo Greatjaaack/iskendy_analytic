@@ -277,6 +277,9 @@ cd /root/dashboards && git reset --hard dd745c2 && \
 
 ### 5. После деплоя
 
+- [ ] Индексация (оба сайта): `https://iskendy.ru/` без `x-robots-tag`, а `iskendy.ru/board`,
+      `/tv`, `/staff`, `/stats`, `www.iskendy.ru`, `analytics.iskendy.ru` — с
+      `x-robots-tag: noindex, nofollow, noarchive` (цикл curl — в `RELEASE.md`)
 - [ ] Удалить временные копии `.env`, если делались
 - [ ] Место на диске не ушло за 88 % (`df -h /`)
 - [ ] Через сутки: журнал синков почищен ночным заданием
