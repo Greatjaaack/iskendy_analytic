@@ -279,3 +279,38 @@ def test_cors_только_для_своих_origin(client):
         headers={"Origin": "https://evil.example", "Access-Control-Request-Method": "GET"},
     )
     assert "access-control-allow-origin" not in чужой.headers
+
+
+class _Req:
+    """Минимальный запрос для `ratelimit.client_ip`: адрес соединения и заголовки."""
+
+    def __init__(self, peer: str, forwarded: str = ""):
+        self.client = type("C", (), {"host": peer})()
+        self.headers = {"x-forwarded-for": forwarded} if forwarded else {}
+
+
+def test_адрес_клиента_за_caddy_и_nginx():
+    """Боевая цепочка: Caddy дописал клиента, nginx — Caddy. Нужен клиент, не Caddy.
+
+    До 01.10.2026 брался последний элемент (адрес Caddy): весь интернет делил одну
+    корзину лимита, и чужие неверные пароли запирали вход владельцу.
+    """
+    import ratelimit
+
+    req = _Req("172.20.0.5", "93.184.216.34, 172.20.0.3")
+    assert ratelimit.client_ip(req) == "93.184.216.34"
+
+
+def test_подделанный_адрес_слева_не_помогает():
+    """Клиент сам прислал X-Forwarded-For: его выдумка левее настоящего адреса."""
+    import ratelimit
+
+    req = _Req("172.20.0.5", "1.2.3.4, 93.184.216.34, 172.20.0.3")
+    assert ratelimit.client_ip(req) == "93.184.216.34"
+
+
+def test_прямое_обращение_заголовку_не_верим():
+    import ratelimit
+
+    req = _Req("77.88.55.88", "1.2.3.4")
+    assert ratelimit.client_ip(req) == "77.88.55.88"

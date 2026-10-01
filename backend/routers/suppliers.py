@@ -308,8 +308,10 @@ async def upload_file(
         try:
             path, original = await storage.save_upload(file, file.filename or "file")
         except storage.UploadTooLarge:
+            # Старое имя, а не HTTP_413_CONTENT_TOO_LARGE: в образе прода starlette 0.38
+            # (fastapi 0.115), новое имя там ещё не появилось — была бы 500 вместо 413.
             raise HTTPException(
-                status.HTTP_413_CONTENT_TOO_LARGE,
+                status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                 f"файл больше {settings.max_upload_mb} МБ",
             )
         except storage.UploadNotAllowed as exc:

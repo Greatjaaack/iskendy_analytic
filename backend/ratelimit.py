@@ -10,6 +10,7 @@
 перебора это приемлемо, а лишней зависимости (Redis) в проекте нет.
 """
 
+import ipaddress
 import logging
 import time
 
@@ -31,18 +32,24 @@ _SWEEP_AT = 512
 def client_ip(request: Request) -> str:
     """Адрес клиента с учётом прокси.
 
-    Наружу стоит Caddy, за ним nginx фронта — оба добавляют себя в `X-Forwarded-For`.
-    Доверяем заголовку только если запрос пришёл из приватной сети (то есть от нашего
-    же прокси), иначе любой клиент мог бы подделать адрес и обойти лимит. Берём
-    **последний** элемент цепочки: его подставил ближайший прокси, а первые могли
-    прийти от самого клиента.
+    Наружу стоит Caddy, за ним nginx фронта — каждый дописывает в `X-Forwarded-For`
+    адрес, с которого к нему пришли: Caddy — клиента, nginx — самого Caddy. Доверяем
+    заголовку только если запрос пришёл из приватной сети (то есть от нашего же
+    прокси), иначе любой клиент мог бы подделать адрес и обойти лимит. Идём по цепочке
+    **справа** и берём первый публичный адрес: правее него только наши прокси, левее —
+    то, что мог сочинить сам клиент. ⚠️ До 01.10.2026 брался просто последний элемент —
+    а это адрес Caddy, так что весь интернет делил одну корзину, и 10 чужих неверных
+    паролей в минуту запирали вход владельцу.
     """
     peer = request.client.host if request.client else ""
     forwarded = request.headers.get("x-forwarded-for", "")
     if forwarded and _is_private(peer):
         chain = [part.strip() for part in forwarded.split(",") if part.strip()]
+        for hop in reversed(chain):
+            if not _is_private(hop):
+                return hop
         if chain:
-            return chain[-1]
+            return chain[0]
     return peer or "unknown"
 
 
@@ -50,9 +57,13 @@ def _is_private(ip: str) -> bool:
     """Приватный/локальный адрес — значит это наш прокси, а не клиент из интернета."""
     if not ip:
         return False
-    if ip in ("127.0.0.1", "::1", "testclient"):
+    if ip == "testclient":
         return True
-    return ip.startswith(("10.", "192.168.", "172.16.", "172.17.", "172.18.", "172.19."))
+    try:
+        # Вся 172.16.0.0/12, а не четыре подсети руками: docker раздаёт и 172.20+.
+        return ipaddress.ip_address(ip).is_private
+    except ValueError:
+        return False
 
 
 def rate_ok(key: str, limit: int) -> bool:
