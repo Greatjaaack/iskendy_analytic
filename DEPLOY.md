@@ -195,15 +195,20 @@ Saby, `1c8a1e4` журнал и проверка сессии iiko, `07cd90c` ф
       см. раздел «Бэкапы БД» — снимок через `.backup()`, не `cp`
 - [ ] Код запушен: сервер тянет из GitHub, локальные коммиты до него не доедут
 
+> ⚠️ Перед шагом 1 — `cd /root/iskendy && git pull && chmod +x guard.sh backup-to-drive.sh`:
+> новый сторож не трогает аналитику моложе 3 минут, старый перезапустил бы её посреди старта.
+> Контейнер табло при этом не пересобирается — это шаг 2.
+
 ### 1. Аналитика (`/root/dashboards`)
 
 ```bash
 cd /root/dashboards && git pull && git log --oneline -1     # последний коммит master
-docker compose -f docker-compose.prod.yml up -d --build      # ~5-10 минут на одном ядре
-# тесты в собранном образе: локальный .venv на других версиях библиотек (starlette 1.6
-# против 0.38 на проде) — так чуть не выкатили 500 вместо 413. Красное — откат.
-# Без боевого тома и .env: база тестов в /tmp. Имя образа — docker images | grep dashboards.
+docker compose -f docker-compose.prod.yml build              # ~5-10 минут; старая версия пока работает
+# тесты в собранном образе ДО переключения: локальный .venv на других версиях библиотек
+# (starlette 1.6 против 0.38 на проде) — так чуть не выкатили 500 вместо 413.
+# Без боевого тома и .env: база тестов в /tmp. Красное — НЕ переключаем.
 docker run --rm -e DATABASE_URL=sqlite:////tmp/test.db -e FILES_DIR=/tmp/files dashboards-backend sh -c "pip install -q -r requirements-dev.txt && python -m pytest tests/ -q"
+docker compose -f docker-compose.prod.yml up -d              # переключение на новую версию
 docker compose -f docker-compose.prod.yml logs --tail 80 backend
 curl -fsS https://analytics.iskendy.ru/api/health
 ```
