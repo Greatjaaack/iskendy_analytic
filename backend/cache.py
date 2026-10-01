@@ -95,10 +95,20 @@ async def cached_or_call(
     _inflight[key] = fut
     try:
         value = await factory()
-    except Exception as error:
+    except BaseException as error:
+        # BaseException, а не Exception: `asyncio.wait_for` (потолок живого пути ручки
+        # табло) отменяет запрос через CancelledError. Ловя только Exception, мы
+        # оставляли ключ в `_inflight` навсегда — каждый следующий опрос табло ждал
+        # мёртвый future весь потолок и получал заказы из БД с отставанием до полуночи.
         _inflight.pop(key, None)
         if not fut.done():
-            fut.set_exception(error)
+            # Ждущим отдаём обычную ошибку, а не отмену: их отменять никто не просил,
+            # а CancelledError прошёл бы мимо `except Exception` вызывающего кода.
+            fut.set_exception(
+                error
+                if isinstance(error, Exception)
+                else RuntimeError(f"живой запрос {key} прерван ({type(error).__name__})")
+            )
             # Ошибку получит и этот вызов (`raise`), и все, кто ждёт `fut`. Если ждущих
             # нет, asyncio при сборке future пишет ERROR «Future exception was never
             # retrieved» с полным трейсом — лишний шум на каждый сбой кассы. Помечаем

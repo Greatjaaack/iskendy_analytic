@@ -53,6 +53,49 @@ def test_ждущие_получают_ту_же_ошибку():
     assert [type(r) for r in results] == [RuntimeError, RuntimeError]
 
 
+def test_отмена_по_таймауту_не_залипает_в_single_flight():
+    """`wait_for` отменяет живой запрос ручки табло — ключ не должен остаться «в полёте».
+
+    Найдено аудитом 01.10.2026: CancelledError не ловился как Exception, ключ навсегда
+    оставался в `_inflight`, и каждый следующий вызов ждал мёртвый future весь потолок.
+    """
+
+    async def hang():
+        await asyncio.sleep(10)
+
+    async def fast():
+        return ["заказ"]
+
+    async def scenario():
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(cache.cached_or_call("test:hang", hang), timeout=0.01)
+        assert "test:hang" not in cache._inflight
+        return await asyncio.wait_for(cache.cached_or_call("test:hang", fast), timeout=1)
+
+    assert asyncio.run(scenario()) == ["заказ"]
+
+
+def test_ждущий_при_отмене_владельца_получает_обычную_ошибку():
+    """Отмена запроса-владельца не пробрасывает CancelledError в чужие запросы."""
+
+    async def hang():
+        await asyncio.sleep(10)
+
+    async def scenario():
+        owner = asyncio.ensure_future(cache.cached_or_call("test:owner", hang))
+        await asyncio.sleep(0)
+        waiter = asyncio.ensure_future(cache.cached_or_call("test:owner", hang))
+        await asyncio.sleep(0)
+        owner.cancel()
+        # Потолок, чтобы регрессия валила тест, а не вешала прогон.
+        results = await asyncio.wait_for(
+            asyncio.gather(owner, waiter, return_exceptions=True), timeout=2
+        )
+        return [type(r) for r in results]
+
+    assert asyncio.run(scenario()) == [asyncio.CancelledError, RuntimeError]
+
+
 def test_сегодня_без_кассы_отдаёт_дни_из_бд(monkeypatch, caplog):
     stored = [{"date": "2026-09-25", "total_sum": 100.0}]
 
