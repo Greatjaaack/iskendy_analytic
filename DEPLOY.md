@@ -151,6 +151,9 @@ print([(n[0], c.execute('SELECT count(*) FROM \"%s\"' % n[0]).fetchone()[0]) \
 
 # 3. вернуть в бой (только при остановленном backend — иначе снимок разъедется)
 docker compose -f docker-compose.prod.yml stop backend
+# база в WAL: старые -wal/-shm рядом с подложенной копией SQLite «доиграет» в неё,
+# и база выйдет смешанной — удалить их до старта
+docker run --rm -v dashboards_backend-data:/data alpine rm -f /data/iskendi.db-wal /data/iskendi.db-shm
 docker cp /tmp/restore/iskendi-<стамп>.db dashboards-backend-1:/data/iskendi.db
 docker compose -f docker-compose.prod.yml start backend
 ```
@@ -167,7 +170,10 @@ docker compose -f docker-compose.prod.yml start backend
 развёрнута, `integrity_check=ok`, число строк во всех 20 таблицах совпало с
 боевой базой.
 
-## Ночной деплой 26–27.09.2026 (накопленный рефакторинг)
+## Ночной деплой накопленного рефакторинга (собран 26–27.09, дополнен 01.10.2026)
+
+> Единый план релиза обоих проектов, с фиксами из аудита 01.10 и порядком действий, —
+> `~/Desktop/iskendi/RELEASE.md`. Этот раздел — подробный чек-лист аналитики.
 
 Копится с 26.08: **коммиты аналитики** (`dd745c2` → последний `master`; единый список релиза — `~/Desktop/iskendi/RELEASE.md`; свежие с кодом — `3409676` адаптер
 Saby, `1c8a1e4` журнал и проверка сессии iiko, `07cd90c` фронт: «сегодня» по Москве и
@@ -194,6 +200,10 @@ Saby, `1c8a1e4` журнал и проверка сессии iiko, `07cd90c` ф
 ```bash
 cd /root/dashboards && git pull && git log --oneline -1     # последний коммит master
 docker compose -f docker-compose.prod.yml up -d --build      # ~5-10 минут на одном ядре
+# тесты в собранном образе: локальный .venv на других версиях библиотек (starlette 1.6
+# против 0.38 на проде) — так чуть не выкатили 500 вместо 413. Красное — откат.
+# Без боевого тома и .env: база тестов в /tmp. Имя образа — docker images | grep dashboards.
+docker run --rm -e DATABASE_URL=sqlite:////tmp/test.db -e FILES_DIR=/tmp/files dashboards-backend sh -c "pip install -q -r requirements-dev.txt && python -m pytest tests/ -q"
 docker compose -f docker-compose.prod.yml logs --tail 80 backend
 curl -fsS https://analytics.iskendy.ru/api/health
 ```
