@@ -436,7 +436,7 @@ export type PnlDayKey =
   | "revenue" | "revenue_gross" | "revenue_hall" | "revenue_delivery" | "agg_revenue"
   | "food_cost" | "writeoffs" | "packaging" | "cogs"
   | "labor" | "chemicals" | "supplies"
-  | "rent" | "utilities" | "admin_fot" | "other_opex" | "contingency" | "cap_reserve"
+  | "rent" | "utilities" | "marketing" | "admin_fot" | "other_opex" | "contingency" | "cap_reserve"
   | "tax" | "aggregator" | "total_expenses" | "ebitda" | "net_profit";
 
 // ─── Дневные затраты (редактор «Затраты по дням») ─────────────────────────────

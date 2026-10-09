@@ -5,7 +5,7 @@ import type {
   Period, RangeSel, PnlLine, PnlRating, PnlSection, PnlBreakeven, PnlDay, PnlDayKey, PnlDayCostRow,
 } from "../api";
 import { fetchPnl, fetchPnlCosts, savePnlCosts, fetchPnlDayCosts, savePnlDayCosts, importPnlSheet, rangeKey } from "../api";
-import { fmtInt, fmtRub, pctDelta, todayISO } from "../format";
+import { dm, fmtInt, fmtRub, pctDelta, shiftISO, todayISO } from "../format";
 import { COLORS, PERIODS, weekdayGroup } from "../constants";
 import { profitLevel } from "../quality";
 import { levelColor } from "../styles";
@@ -60,10 +60,12 @@ function fmtMetric(l: PnlLine): string {
 
 /** Бейдж дельты к сопоставимому прошлому периоду (`pctDelta`). База там по модулю: EBITDA
  *  у точки отрицательна каждый месяц, и без модуля рост убытка показывался бы зелёной ▲. */
-function DeltaBadge({ d }: { d: number | null }) {
-  if (d == null) return null;
+function DeltaBadge({ d, cost = false }: { d: number | null; cost?: boolean }) {
+  if (d == null || d === 0) return null;
+  // у расходов рост — плохо: ▲ красная, ▼ зелёная
+  const good = cost ? d < 0 : d >= 0;
   return (
-    <span style={{ fontSize: 11, color: d >= 0 ? COLORS.good : COLORS.bad, marginLeft: 6 }}>
+    <span style={{ fontSize: 11, color: good ? COLORS.good : COLORS.bad, marginLeft: 6 }}>
       {d >= 0 ? "▲" : "▼"}{Math.abs(d)}%
     </span>
   );
@@ -81,6 +83,8 @@ export function Pnl() {
   const [importMsg, setImportMsg] = useState<string | null>(null);
 
   const isCustom = "from" in sel;
+  // режим «День» — диапазон из одного дня: P&L одного дня с переходом ◀ ▶
+  const day = isCustom && sel.from === sel.to ? sel.from : null;
 
   const pnlQ = useQuery({
     queryKey: ["pnl", rangeKey(sel)],
@@ -99,6 +103,10 @@ export function Pnl() {
 
   const pickPreset = (p: Period) => {
     setSel({ period: p });
+    setShowCustom(false);
+  };
+  const pickDay = (iso: string) => {
+    if (iso && iso <= todayISO()) setSel({ from: iso, to: iso });
     setShowCustom(false);
   };
   const applyCustom = () => {
@@ -123,7 +131,10 @@ export function Pnl() {
         <div style={{ fontSize: 22, fontWeight: 700 }}>P&L дня</div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <div style={{ display: "flex", background: COLORS.card, borderRadius: 8, padding: 4, gap: 4 }}>
-            {PERIODS.map((p) => {
+            <button onClick={() => pickDay(day ?? todayISO())} style={tabBtn(day != null)}>
+              День
+            </button>
+            {PERIODS.filter((p) => p.key !== "day").map((p) => {
               const active = !isCustom && sel.period === p.key;
               return (
                 <button key={p.key} onClick={() => pickPreset(p.key)} style={tabBtn(active)}>
@@ -131,10 +142,24 @@ export function Pnl() {
                 </button>
               );
             })}
-            <button onClick={() => setShowCustom((v) => !v)} style={tabBtn(isCustom)}>
+            <button onClick={() => setShowCustom((v) => !v)} style={tabBtn(isCustom && day == null)}>
               Период
             </button>
           </div>
+          {day != null && (
+            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+              <button onClick={() => pickDay(shiftISO(day, -1))} style={tabBtn(false)} title="Предыдущий день">◀</button>
+              <input type="date" value={day} max={todayISO()} onChange={(e) => pickDay(e.target.value)} style={dateInput} />
+              <button
+                onClick={() => pickDay(shiftISO(day, 1))}
+                disabled={day >= todayISO()}
+                style={{ ...tabBtn(false), opacity: day >= todayISO() ? 0.4 : 1 }}
+                title="Следующий день"
+              >
+                ▶
+              </button>
+            </div>
+          )}
           <button
             onClick={() => { setImportMsg(null); importMut.mutate(); }}
             disabled={importMut.isPending}
@@ -208,7 +233,9 @@ export function Pnl() {
           {/* Хедер: EBITDA → Чистая прибыль + вердикт по безубыточности */}
           <div style={{ display: "flex", gap: 24, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 16 }}>
             <div>
-              <div style={{ color: COLORS.muted, fontSize: 12 }}>EBITDA за период · {data.date_from} — {data.date_to}</div>
+              <div style={{ color: COLORS.muted, fontSize: 12 }}>
+                {day != null ? `EBITDA за день · ${dm(day)}` : `EBITDA за период · ${dm(data.date_from)} — ${dm(data.date_to)}`}
+              </div>
               <div style={{ fontSize: 30, fontWeight: 800, color: profitColor(data.ebitda, partial), marginTop: 2 }}>
                 {fmtRub(data.ebitda)} <span style={{ fontSize: 16, fontWeight: 600, color: rateColor(data.ebitda_rating) ?? COLORS.muted }}>({data.ebitda_margin}%)</span>
                 {ps && <DeltaBadge d={pctDelta(data.ebitda, ps.ebitda)} />}
@@ -227,6 +254,9 @@ export function Pnl() {
             </div>
             <BreakevenVerdict be={data.breakeven} />
           </div>
+
+          {/* Режим «День»: P&L одного дня целиком + тот же день недели неделей раньше */}
+          {data.daily.length === 1 && <DayPnl d={data.daily[0]} partial={partial} />}
 
           {/* Подневный P&L — главный вид: дни × все статьи (только период дольше дня) */}
           {data.daily.length > 1 && <DailyMatrix days={data.daily} />}
@@ -342,6 +372,71 @@ function BreakevenVerdict({ be }: { be: PnlBreakeven }) {
   );
 }
 
+// ─── P&L одного дня: все статьи, доля от выручки дня и тот же день неделей раньше ──
+function DayPnl({ d, partial }: { d: PnlDay; partial: string }) {
+  const p = d.prev;
+  const share = (v: number) => (d.revenue ? `${Math.round((v / d.revenue) * 1000) / 10}%` : "—");
+  return (
+    <div style={{ background: COLORS.card, borderRadius: 12, padding: "20px 24px", maxWidth: 720 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+        <div style={{ color: "var(--text)", fontWeight: 600 }}>
+          P&L дня · {d.day_of_week} {dm(d.date)}
+        </div>
+        <div style={{ color: COLORS.muted, fontSize: 12 }}>
+          {d.checks ? `${fmtInt(d.checks)} чеков · ср. чек ${fmtRub(d.revenue / d.checks)}` : "продаж не было"}
+          {p && <> · сравнение: {p.day_of_week} {dm(p.date)}</>}
+        </div>
+      </div>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+        <thead>
+          <tr style={{ color: COLORS.muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.4 }}>
+            <th style={{ ...mTH, textAlign: "left" }}>Статья</th>
+            <th style={{ ...mTH, textAlign: "right" }}>₽</th>
+            <th style={{ ...mTH, textAlign: "right" }}>% выручки</th>
+            {p && <th style={{ ...mTH, textAlign: "right" }}>Неделю назад</th>}
+            {p && <th style={{ ...mTH, textAlign: "right" }}>Δ</th>}
+          </tr>
+        </thead>
+        <tbody>
+          {MATRIX.map((g) => (
+            <Fragment key={g.title}>
+              <tr>
+                <td colSpan={p ? 5 : 3} style={{ ...mTD, textAlign: "left", color: COLORS.muted, fontSize: 11, paddingTop: 10, textTransform: "uppercase", letterSpacing: 0.4 }}>
+                  {g.title}
+                </td>
+              </tr>
+              {g.rows.map((r) => {
+                const v = d[r.key] as number;
+                const pv = p ? (p[r.key] as number) : null;
+                const color = r.profit ? profitColor(v, partial) : "var(--text)";
+                return (
+                  <tr key={r.key} style={{ borderTop: r.strong ? `1px solid ${COLORS.grid}` : undefined }}>
+                    <td style={{ ...mTD, textAlign: "left", paddingLeft: r.indent ? 20 : 7, color: r.indent ? COLORS.muted : "var(--text)", fontWeight: r.strong ? 700 : 400 }}>
+                      {r.label}
+                    </td>
+                    <td style={{ ...mTD, color, fontWeight: r.strong ? 700 : 400 }}>{fmtRub(v)}</td>
+                    <td style={{ ...mTD, color: COLORS.muted }}>{r.key === "revenue" ? "" : share(v)}</td>
+                    {p && <td style={{ ...mTD, color: COLORS.muted }}>{fmtRub(pv)}</td>}
+                    {p && (
+                      <td style={mTD}>
+                        <DeltaBadge d={pctDelta(v, pv)} cost={g.title !== "Выручка" && !r.profit} />
+                      </td>
+                    )}
+                  </tr>
+                );
+              })}
+            </Fragment>
+          ))}
+        </tbody>
+      </table>
+      <div style={{ color: COLORS.muted, fontSize: 11, marginTop: 8 }}>
+        Постоянные затраты (аренда, коммуналка, маркетинг, админ-ФОТ…) — доля месяца на этот день;
+        ФОТ — смены дня из графика; переменные — «Затраты по дням».
+      </div>
+    </div>
+  );
+}
+
 // ─── Подневная матрица (#1, #3): дни по горизонтали, ВСЕ статьи P&L по вертикали ──
 type MatrixRow = {
   key: PnlDayKey;
@@ -377,14 +472,15 @@ const MATRIX: MatrixGroup[] = [
     { key: "supplies", label: "Расходники", variable: true },
     { key: "rent", label: "Аренда" },
     { key: "utilities", label: "Коммуналка" },
+    { key: "marketing", label: "Маркетинг" },
     { key: "other_opex", label: "Прочие (IT/ОФД/эквайр/аморт)" },
     { key: "contingency", label: "Непредвиденные" },
   ] },
   { title: "Результат", rows: [
-    { key: "ebitda", label: "EBITDA (без маркетинга)", strong: true, profit: true },
+    { key: "ebitda", label: "EBITDA", strong: true, profit: true },
     { key: "tax", label: "− Налог (УСН)" },
     { key: "cap_reserve", label: "− Кап-резерв" },
-    { key: "net_profit", label: "Чистая прибыль (без марк.)", strong: true, profit: true },
+    { key: "net_profit", label: "Чистая прибыль", strong: true, profit: true },
   ] },
 ];
 
@@ -434,7 +530,7 @@ function DailyMatrix({ days }: { days: PnlDay[] }) {
       </div>
       <div style={{ color: COLORS.muted, fontSize: 12, marginBottom: 14 }}>
         Дни по горизонтали, статьи расходов по вертикали. В клетке — <b style={{ color: "var(--text)" }}>₽ за день</b> и <b style={{ color: "var(--text)" }}>доля от выручки дня</b>; тумблер «Крупно» выбирает, что крупнее и цветом. Справа — Факт за период, Среднее на активный день и доля от выручки.
-        Переменные статьи (списания, упаковка, химия, расходники) вводятся по дням — <b style={{ color: COLORS.warn }}>всплеск</b> выше нормы подсвечен. <b style={{ color: "var(--text)" }}>EBITDA</b> — до налога УСН и кап-резерва; ниже них — <b style={{ color: "var(--text)" }}>чистая прибыль</b>. Маркетинг не разносится по дням (учтён в EBITDA за период сверху), поэтому EBITDA/чистая прибыль в матрице — «без маркетинга» и выше итоговых ровно на сумму маркетинга. <b style={{ color: "var(--text)" }}>Выручка — чистая</b> (сырая брутто − удержание агрегатора 35%): доставочный чек в айке нефискальный, налог платится с того, что реально пришло на счёт. Поэтому налог и food cost считаются от чистой.
+        Переменные статьи (списания, упаковка, химия, расходники) вводятся по дням — <b style={{ color: COLORS.warn }}>всплеск</b> выше нормы подсвечен. <b style={{ color: "var(--text)" }}>EBITDA</b> — до налога УСН и кап-резерва; ниже них — <b style={{ color: "var(--text)" }}>чистая прибыль</b>. Постоянные затраты, включая маркетинг, — доля месяца на каждый день, в том числе на дни без продаж, поэтому сумма по дням равна итогу периода. <b style={{ color: "var(--text)" }}>Выручка — чистая</b> (сырая брутто − удержание агрегатора 35%): доставочный чек в айке нефискальный, налог платится с того, что реально пришло на счёт. Поэтому налог и food cost считаются от чистой.
       </div>
       <div style={{ overflowX: "auto" }}>
         <table style={{ borderCollapse: "collapse", minWidth: "100%", fontVariantNumeric: "tabular-nums" }}>

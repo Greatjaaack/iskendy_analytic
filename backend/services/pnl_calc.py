@@ -227,6 +227,11 @@ def _make_prev_mapper(period: str, df: date, dt: date, is_custom: bool):
     return lambda d: d - timedelta(days=shift)
 
 
+def _empty_day(d_str: str) -> dict:
+    """День без продаж (закрыт или данных нет) — для P&L: выручка 0, затраты дня остаются."""
+    return {"date": d_str, "total_sum": 0.0, "cost_sum": 0.0, "check_count": 0}
+
+
 def _day_pnl(
     d_str: str,
     day_data: dict,
@@ -244,10 +249,11 @@ def _day_pnl(
     постоянные — из `PnlMonth` ÷ дней месяца. Каждая статья — отдельным ключом-₽,
     чтобы фронт-матрица рисовала строки и считала долю от выручки дня.
 
-    **Маркетинг исключён из подневного разреза** (решение пользователя — это лумповый
-    месячный расход, не операционный расход дня). **Комиссия агрегатора** считается от
-    ФАКТИЧЕСКОЙ выручки через агрегатора (`agg_rev` — платежи «Яндекс Еда» за день из
-    `order_payments`), а не от всей категории «доставка».
+    **Маркетинг входит в день**, как и остальные постоянные (÷ дней месяца): так P&L дня —
+    экономика всего дня, а сумма дней равна итогу периода. До 09.10.2026 маркетинг из дней
+    исключали (июльское решение), и дневная EBITDA не сходилась с итогом.
+    **Комиссия агрегатора** считается от ФАКТИЧЕСКОЙ выручки через агрегатора (`agg_rev` —
+    платежи «Яндекс Еда» за день из `order_payments`), а не от всей категории «доставка».
     """
     d = date.fromisoformat(d_str)
     revenue_gross = float(day_data["total_sum"])
@@ -268,7 +274,7 @@ def _day_pnl(
     labor_op = labor_day.get(d, {}).get("operational", 0.0)
     rent = m["rent"] / dim
     utilities = m["utilities"] / dim
-    marketing = m["marketing"] / dim  # возвращаем для справки, в дневной расход НЕ входит
+    marketing = m["marketing"] / dim
     admin_fot = m["labor_admin"] / dim
     other_opex = m["other_opex"] / dim
     contingency = m["contingency"] / dim
@@ -278,11 +284,13 @@ def _day_pnl(
     # Комиссия зашита в выручку, поэтому в OPEX её больше НЕТ (иначе двойной счёт).
     revenue = revenue_gross - aggregator
     tax = revenue * m["tax_pct"] / 100  # налог с поступлений (чистой), не с брутто
-    # операционный OPEX дня (над EBITDA) — БЕЗ налога, кап-резерва, маркетинга и комиссии
-    opex = chemicals + supplies + rent + utilities + admin_fot + other_opex + contingency
-    ebitda = revenue - cogs - labor_op - opex  # EBITDA до налога/кап-резерва (и без марк.)
-    net_profit = ebitda - tax - cap_reserve  # чистая прибыль дня (без марк.)
-    total_expenses = cogs + labor_op + opex + tax + cap_reserve  # без маркетинга
+    # операционный OPEX дня (над EBITDA) — БЕЗ налога, кап-резерва и комиссии
+    opex = (
+        chemicals + supplies + rent + utilities + marketing + admin_fot + other_opex + contingency
+    )
+    ebitda = revenue - cogs - labor_op - opex  # EBITDA до налога и кап-резерва
+    net_profit = ebitda - tax - cap_reserve  # чистая прибыль дня
+    total_expenses = cogs + labor_op + opex + tax + cap_reserve
 
     return {
         "date": d_str,
@@ -415,8 +423,6 @@ async def build_pnl(
     production_cost = cogs + labor_op + labor_admin_rub
 
     # ── OPEX ── (tax/aggregator посчитаны выше суммой по дням — #4)
-    # маркетинг учитывается в ИТОГЕ за период (EBITDA/безубыточность), но НЕ в подневной
-    # матрице (решение пользователя — лумповый месячный расход не размазываем по дням).
     # ОПЕРАЦИОННЫЙ OPEX — всё, что НАД EBITDA: налог УСН и кап-резерв сюда НЕ входят,
     # они вычитаются ниже, в лесенке EBITDA → Чистая прибыль (см. `profit`).
     opex_manual = (
@@ -512,7 +518,8 @@ async def build_pnl(
     # С/с с кассы неполная или мусорная (`services.cost_quality`) — всё, что на ней стоит,
     # не оцениваем: food cost 5 % при с/с «Балыка» 3 % цены — не «отлично», а «нет данных».
     food_cost_coverage = cost_coverage(df, dt)
-    food_cost_ok = cost_reliable(food_cost_coverage)
+    # нет продаж — оценивать нечего, и «с/с у 0 % выручки» было бы ложной тревогой
+    food_cost_ok = food_cost_coverage is None or cost_reliable(food_cost_coverage)
     if not food_cost_ok:
         unrated |= {"food_cost", "cogs", "prime_cost", "production_cost"}
     if labor_op <= 0:
@@ -645,22 +652,25 @@ async def build_pnl(
 
     # ── Подневная матрица + сравнение с пред. периодом день-в-день (#1, #4) ──
     # Правило сравнения: тот же тип дня недели (пн↔пн, чт↔чт, сб↔сб), см. _make_prev_mapper.
+    # Каждый календарный день, в том числе без продаж: аренда и ФОТ закрытого дня — тоже
+    # расход, и без таких дней сумма по дням не сходилась с итогом периода.
     labor_day = labor_by_day(df, dt)
+    by_date = {d["date"]: d for d in days}
     daily = [
         _day_pnl(
-            d["date"],
-            d,
-            del_buckets.get(d["date"], {}),
+            ds,
+            by_date.get(ds) or _empty_day(ds),
+            del_buckets.get(ds, {}),
             months,
             labor_day,
             day_costs,
-            agg_by_day.get(d["date"], 0.0),
+            agg_by_day.get(ds, 0.0),
         )
-        for d in days
+        for ds in (d.isoformat() for d in daterange(df, dt))
     ]
 
     mapper = _make_prev_mapper(period, df, dt, is_custom)
-    prev_map = {d["date"]: mapper(date.fromisoformat(d["date"])) for d in days}
+    prev_map = {d["date"]: mapper(date.fromisoformat(d["date"])) for d in daily}
     prev_dates_sorted = sorted(prev_map.values())
     prev_summary = None
     if prev_dates_sorted:
@@ -680,11 +690,13 @@ async def build_pnl(
             }
 
         prev_rows = []
-        prev_marketing = 0.0  # маркетинг прош. периода — в дневной EBITDA его нет, а в
-        # KPI-дельте сравниваем с ИТОГОВОЙ (с маркетингом), поэтому вычтем отдельно
         for day in daily:
             pd_date = prev_map[day["date"]]
+            # день прошлого периода без продаж — тоже день с затратами; но если истории за
+            # прошлый период нет вовсе, сравнивать не с чем
             row = prev_by_date.get(pd_date.isoformat())
+            if row is None and prev_by_date:
+                row = _empty_day(pd_date.isoformat())
             if row:
                 p = _day_pnl(
                     row["date"],
@@ -695,12 +707,6 @@ async def build_pnl(
                     prev_day_costs,
                     prev_agg_by_day.get(row["date"], 0.0),
                 )
-                pm = prev_months.get((pd_date.year, pd_date.month)) or default_month(
-                    pd_date.year, pd_date.month
-                )
-                prev_marketing += (
-                    pm["marketing"] / calendar.monthrange(pd_date.year, pd_date.month)[1]
-                )
                 day["prev"] = p
                 prev_rows.append(p)
             else:
@@ -708,9 +714,8 @@ async def build_pnl(
 
         if prev_rows:
             prev_revenue = sum(p["revenue"] for p in prev_rows)
-            # с маркетингом — сопоставимо с итоговой EBITDA текущего периода (хедер)
-            prev_ebitda = sum(p["ebitda"] for p in prev_rows) - prev_marketing
-            # чистая прибыль прош. периода = EBITDA(с марк.) − налог − кап-резерв
+            prev_ebitda = sum(p["ebitda"] for p in prev_rows)
+            # чистая прибыль прош. периода = EBITDA − налог − кап-резерв
             prev_net = (
                 prev_ebitda
                 - sum(p["tax"] for p in prev_rows)

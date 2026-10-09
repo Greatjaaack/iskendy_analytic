@@ -309,3 +309,49 @@ def test_оп_отчёт_с_правдоподобной_сс_оценивает
     итог = клиент.get(f"/api/revenue/ops-report?{ПЕРИОД}").json()["totals"]["total"]
     assert итог["coverage"] == 100
     assert итог["cost_ok"] is True
+
+
+# ─── P&L по дням: экономика всего дня, сумма дней = итог периода ─────────────
+
+
+@pytest.fixture
+def маркетинг_и_выходной(фикстурная_бд):
+    """Маркетинг 31 000 ₽ в марте (1 000 ₽ в день) и закрытый средний день периода."""
+    выходной = ПЕРИОД_ДНИ[1]
+    with фикстурная_бд() as db:
+        db.query(models.PnlMonth).filter_by(year=2026, month=3).update({"marketing": 31000})
+        for модель in (models.OrderItem, models.Order, models.OrderPayment, models.DishDetail):
+            db.query(модель).filter(модель.date == выходной).delete()
+        db.query(models.RevenueDaily).filter(models.RevenueDaily.date == выходной).delete()
+        db.commit()
+    return выходной
+
+
+def test_pnl_по_дням_сходится_с_итогом(маркетинг_и_выходной, клиент):
+    body = клиент.get(f"/api/pnl?{ПЕРИОД}").json()
+    дни = body["daily"]
+    assert [d["date"] for d in дни] == [d.isoformat() for d in ПЕРИОД_ДНИ]  # и выходной тоже
+    assert all(d["marketing"] == 1000 for d in дни)  # маркетинг — доля месяца на день
+    # каждый день округлён до рубля — допуск по рублю на день
+    assert abs(sum(d["ebitda"] for d in дни) - body["ebitda"]) <= len(дни)
+    assert abs(sum(d["net_profit"] for d in дни) - body["net_profit"]) <= len(дни)
+
+
+def test_pnl_закрытый_день_несёт_затраты(маркетинг_и_выходной, клиент):
+    дни = {d["date"]: d for d in клиент.get(f"/api/pnl?{ПЕРИОД}").json()["daily"]}
+    выходной = дни[маркетинг_и_выходной.isoformat()]
+    assert выходной["revenue"] == 0 and выходной["checks"] == 0
+    # аренда 90 000 + коммуналка 15 000 + маркетинг 31 000 за 31 день + смена повара 3 000
+    assert выходной["ebitda"] == -round((90000 + 15000 + 31000) / 31 + 3000)
+
+
+def test_pnl_режим_день(клиент):
+    день = ПЕРИОД_ДНИ[-1]
+    body = клиент.get(f"/api/pnl?date_from={день}&date_to={день}").json()
+    assert len(body["daily"]) == 1
+    d = body["daily"][0]
+    assert d["revenue"] == body["revenue"]
+    assert d["ebitda"] == body["ebitda"]
+    # сравнение — тот же день недели неделей раньше
+    assert d["prev"]["date"] == (день - timedelta(days=7)).isoformat()
+    assert body["prev_summary"]["ebitda"] == d["prev"]["ebitda"]

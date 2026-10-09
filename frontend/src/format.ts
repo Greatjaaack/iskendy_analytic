@@ -25,6 +25,14 @@ const isoDateInTz = (d: Date): string =>
  *  текущий день, а диапазон по умолчанию обрывался вчерашним. */
 export const todayISO = (): string => isoDateInTz(new Date());
 
+/** Календарный сдвиг ISO-даты на `n` дней. Считаем по UTC-полуночи: у даты без времени
+ *  нет пояса, и переход на летнее время не сдвинет день. */
+export const shiftISO = (iso: string, n: number): string => {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+};
+
 /** Дата `n` дней назад в поясе точки, ISO. */
 export const daysAgoISO = (n: number): string => isoDateInTz(new Date(Date.now() - n * 86_400_000));
 
