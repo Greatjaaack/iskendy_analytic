@@ -460,7 +460,8 @@ async def build_pnl(
     month_end = dt.replace(day=dim_end)
     labor_month = labor_for_period(month_start, month_end)
     fixed_month = sum(rate_m[f] for f in PNL_FIXED_MANUAL) + labor_month["operational"]
-    breakeven_month = (fixed_month / cm_ratio) if cm_ratio > 0 else None
+    # Без постоянных затрат точки безубыточности нет: «0 ₽/мес» читалось как «уже в плюсе».
+    breakeven_month = (fixed_month / cm_ratio) if cm_ratio > 0 and fixed_month > 0 else None
     # #4: порог/сутки — на РАБОЧИЙ день, не календарный (иначе несопоставим с фактической
     # средней выручкой на активный день — точка работает не каждый календарный день).
     # Ожидаемое число рабочих дней месяца оцениваем по доле активных дней в периоде:
@@ -496,6 +497,22 @@ async def build_pnl(
     revenue_per_hour_hall = revenue_per_day_hall / work_hours if work_hours else 0
     revenue_per_hour_delivery = revenue_per_day_delivery / work_hours if work_hours else 0
 
+    # Статьи без исходных данных не красим: 0 ₽ аренды или ФОТ без единой смены — это
+    # «не введено», а бенчмарк показал бы зелёный «отлично». На проде 09.10.2026 не было
+    # ни затрат, ни графика, и P&L пестрел зелёным при EBITDA 94,6 %.
+    months_missing = bool(set(months_in(df, dt)) - set(months))
+    unrated: set[str] = set()
+    if months_missing:
+        unrated |= {"rent", "utilities", "labor_admin", "marketing", "other_opex", "contingency"}
+        if not day_costs:
+            unrated |= {"writeoffs", "packaging", "cogs"}
+    if not day_costs:
+        unrated |= {"chemicals", "supplies"}
+    if labor_op <= 0:
+        unrated |= {"labor_op", "prime_cost", "production_cost"}
+        if labor_admin_rub <= 0:
+            unrated.add("all_labor")
+
     def money(key: str, label: str, rub: float, rated: bool = True) -> dict:
         p = round(pct(rub), 1)
         return {
@@ -504,7 +521,7 @@ async def build_pnl(
             "kind": "money",
             "rub": round(rub, 0),
             "pct": p,
-            "rating": _rate(key, p, rub) if rated else None,
+            "rating": _rate(key, p, rub) if rated and key not in unrated else None,
         }
 
     def metric(key: str, label: str, value: float | None, unit: str) -> dict:

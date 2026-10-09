@@ -196,3 +196,48 @@ def test_каналы_сходятся_с_kpi_без_доставки(с_дос�
     assert чеки["total"] == ЧЕКОВ_ВСЕГО
     дни = клиент.get(f"/api/revenue/by-channel?{ПЕРИОД}&include_delivery=false").json()
     assert sum(d["total"] for d in дни["data"]) == ВЫРУЧКА_ВСЕГО
+
+
+# ─── Второй проход аудита: с/с порции и P&L без данных ───────────────────────
+
+
+def test_сс_порции_без_бесплатных_модификаторов(с_бесплатным_айраном, клиент):
+    """С/с «Айрана» — 60 ₽ за 2 шт. в каждом заказе, то есть 30 ₽ за порцию. Бесплатный
+    модификатор «Айран» (с/с 0) в делитель не идёт: иначе 180 ₽ / 7 шт. = 25,71 ₽."""
+    body = клиент.get(f"/api/dishes?{ПЕРИОД}").json()
+    айран = {d["name"]: d for d in body["data"]}["Айран"]
+    assert айран["quantity"] == 2 * len(ПЕРИОД_ДНИ)
+    assert айран["cost_sum"] == 30 * айран["quantity"]
+    assert айран["cost_pct"] == 30.0  # 30 ₽ при цене 100 ₽
+
+
+def _строки_pnl(body: dict) -> dict[str, dict]:
+    return {line["key"]: line for s in body["sections"] for line in s["lines"]}
+
+
+@pytest.fixture
+def без_затрат(фикстурная_бд):
+    with фикстурная_бд() as db:
+        db.query(models.PnlMonth).delete()
+        db.query(models.Shift).delete()
+        db.commit()
+    return фикстурная_бд
+
+
+def test_pnl_без_затрат_нет_безубыточности_и_зелёного(без_затрат, клиент):
+    body = клиент.get(f"/api/pnl?{ПЕРИОД}").json()
+    assert body["breakeven"]["revenue_month"] is None  # было «0 ₽/мес»
+    assert body["breakeven"]["revenue_day"] is None
+    строки = _строки_pnl(body)
+    assert строки["breakeven_month"]["value"] is None
+    for key in ("rent", "utilities", "labor_op", "all_labor", "prime_cost", "cogs"):
+        assert строки[key]["rating"] is None, key  # не введено — не «отлично»
+    assert строки["food_cost"]["rating"] is not None  # с/с с кассы есть — оценка остаётся
+
+
+def test_pnl_с_затратами_оценки_на_месте(клиент):
+    body = клиент.get(f"/api/pnl?{ПЕРИОД}").json()
+    строки = _строки_pnl(body)
+    assert body["breakeven"]["revenue_month"] > 0
+    for key in ("rent", "utilities", "labor_op", "prime_cost"):
+        assert строки[key]["rating"] in ("green", "yellow", "red"), key

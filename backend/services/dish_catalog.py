@@ -15,9 +15,11 @@
 from constants import (
     OLAP_FIELD_COST,
     OLAP_FIELD_DISH_NAME,
+    OLAP_FIELD_DISH_TYPE,
     OLAP_FIELD_QTY,
     PRODUCT_TYPE_MODIFIER,
 )
+from services.olap_parse import split_field
 from services.order_store import dish_detail_rows, order_rows
 from utils import normalize_name
 
@@ -33,15 +35,18 @@ async def iiko_unit_cost_by_name(date_from: str, date_to: str) -> dict[str, floa
     суммарная с/с задвоилась бы на каждой из них, а удельная × qty блюда корректна.
     """
     rows = await order_rows(
-        group_fields=[OLAP_FIELD_DISH_NAME],
+        group_fields=[OLAP_FIELD_DISH_TYPE, OLAP_FIELD_DISH_NAME],
         data_fields=[OLAP_FIELD_COST, OLAP_FIELD_QTY],
         date_from=date_from,
         date_to=date_to,
     )
     agg: dict[str, list[float]] = {}
     for r in rows:
-        name = r.get("field0", {}).get("value", "")
-        if not name:
+        dish_type, name = split_field(r.get("field0", {}).get("value", ""), 2)
+        # Модификатор с тем же именем (бесплатный «Айран» к комбо: с/с 0 ₽) — не порция
+        # блюда. До 09.10.2026 он шёл в делитель, и с/с порции занижалась: март 2026 —
+        # «Айран» 30,51 ₽ вместо 42 ₽, «Кола» 37,35 ₽ вместо 51 ₽.
+        if not name or dish_type == PRODUCT_TYPE_MODIFIER:
             continue
         cost = float(r.get("field1", {}).get("value", 0) or 0)
         qty = float(r.get("field2", {}).get("value", 0) or 0)
