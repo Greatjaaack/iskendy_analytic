@@ -1,13 +1,14 @@
 """Мелкие общие хелперы, переиспользуемые роутерами/синком."""
 
 import re
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from config import settings
 from constants import (
     CATEGORY_DISPLAY,
+    CHANNEL_DELIVERY,
     CHANNEL_PRIORITY,
     DELIVERY_CATEGORY,
     DELIVERY_NAME_MARKER,
@@ -30,18 +31,23 @@ def payment_group(pay_type: str | None) -> str:
     return PAYMENT_OTHER
 
 
-def stronger_channel(current: str | None, candidate: str | None) -> str | None:
-    """Выбрать канал заказа, если «Статусов» у него несколько (детерминированно).
+def order_channel(statuses: Iterable[str | None], has_delivery_item: bool = False) -> str | None:
+    """Канал заказа по его «Статусам» и товарам — единое правило для всех разрезов.
 
-    Кассир иногда отмечает два статуса сразу. Прежний код брал последний встреченный,
-    поэтому канал заказа зависел от порядка строк в ответе кассы. Теперь берём
-    сильнейший по `CHANNEL_PRIORITY`: доставка > с собой > в зале.
+    Доставка — заказ, где есть позиция доставки (`is_delivery`) ИЛИ единственный «Статус» —
+    «Доставка». «Доставка» вместе с другим «Статусом» — ошибка кассира: на боевых данных
+    все 13 таких заказов без позиций доставки (07–09.2026, напр. 151 от 20.09 «Балык +
+    Кола») оплачены терминалом или наличными, а одиночная «Доставка» — в 7 случаях из 8
+    «Яндекс Едой». Тогда берём
+    сильнейший из остальных (`CHANNEL_PRIORITY`). Нет «Статусов» — `None` (решает вызывающий).
     """
-    if not candidate:
-        return current
-    if not current:
-        return candidate
-    return max(current, candidate, key=lambda ch: CHANNEL_PRIORITY.get(ch, 0))
+    known = {s for s in statuses if s}
+    if has_delivery_item or known == {CHANNEL_DELIVERY}:
+        return CHANNEL_DELIVERY
+    rest = known - {CHANNEL_DELIVERY}
+    if not rest:
+        return None
+    return max(rest, key=lambda ch: CHANNEL_PRIORITY.get(ch, 0))
 
 
 def display_category(name: str | None) -> str:

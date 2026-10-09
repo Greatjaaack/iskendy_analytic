@@ -49,7 +49,7 @@ from pos.base import (
     aggregate_hours,
     aggregate_products,
 )
-from utils import stronger_channel
+from utils import order_channel
 
 logger = logging.getLogger(__name__)
 
@@ -363,14 +363,11 @@ class SabyPos:
 
         Нет такой позиции — `None`, и канал выведется из правила доставки по товарам.
         """
-        found: str | None = None
-        for it in items:
-            if it.category != ORDER_STATUS_CATEGORY:
-                continue
-            found = stronger_channel(
-                found, ORDER_STATUS_CHANNELS.get((it.name or "").strip().lower())
-            )
-        return found
+        return order_channel(
+            ORDER_STATUS_CHANNELS.get((it.name or "").strip().lower())
+            for it in items
+            if it.category == ORDER_STATUS_CATEGORY
+        )
 
     def _collect_items(self, pos: dict, menu: Menu, out: list[PosItem], depth: int = 0) -> None:
         """Позиция продажи (и её дочерние: модификаторы, состав комплекта) → `PosItem`."""

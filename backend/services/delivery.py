@@ -1,46 +1,43 @@
 """Логика галки «без доставки»: выручка/чеки доставки и их вычитание из дней.
 
-Доставка = меню-категория «Доставка» ИЛИ имя позиции с маркером `_д`
-(единое правило — utils.is_delivery). При выключенной галке бэкенд вычитает
-эти суммы из REV_GROSS-дней/часов. Вынесено из routers/revenue.py.
+Доставка — свойство ЗАКАЗА (`services.channels`, правило `utils.order_channel`), и при
+выключенной галке заказ доставки отсекается целиком: вместе с напитками комбо и прочими
+позициями без пометки доставки. Вынесено из routers/revenue.py.
 """
 
 from datetime import date
 
-from constants import OLAP_FIELD_SUM
-from services.olap_parse import order_group_fields, split_order_row
+from constants import OLAP_FIELD_QTY, OLAP_FIELD_SUM, ORDER_STATUS_CATEGORY
+from services.channels import delivery_orders, row_value
+from services.olap_parse import ORDER_KEY_SEP, order_group_fields, split_order_row
 from services.order_store import order_rows
-from utils import is_delivery
 
 
 def delivery_per_bucket(rows: list[dict], bucket_field: str) -> dict[str, dict[str, float]]:
     """{корзина → {"revenue": выручка доставки, "checks": число заказов доставки}}.
 
-    Доставка = меню-категория «Доставка» ИЛИ имя с маркером `_д` (см. utils.is_delivery):
-    выручка — сумма по таким позициям, чек — заказ, в котором есть хотя бы одна.
-    Корзина — дата или час (`bucket_field`); заказ опознаётся парой (дата, номер), иначе
-    в часовых корзинах заказы одного номера из разных дней считались бы одним чеком.
+    Выручка — ВСЕ товарные позиции заказов доставки, чек — сам заказ. Корзина — дата
+    или час (`bucket_field`); заказ опознаётся парой (дата, номер).
     """
+    delivery = delivery_orders(rows, bucket_field)
     out: dict[str, dict[str, float]] = {}
     seen: dict[str, set[str]] = {}
     for r in rows:
-        ordernum, bucket, category, name = split_order_row(
-            r.get("field0", {}).get("value", ""), bucket_field
-        )
-        if not name or not is_delivery(category, name):
+        key, bucket, category, name = split_order_row(row_value(r), bucket_field)
+        if key not in delivery or not name or category == ORDER_STATUS_CATEGORY:
             continue
         rev = float(r.get("field1", {}).get("value", 0) or 0)
         e = out.setdefault(bucket, {"revenue": 0.0, "checks": 0})
         e["revenue"] += rev
         s = seen.setdefault(bucket, set())
-        if ordernum not in s:
-            s.add(ordernum)
+        if key not in s:
+            s.add(key)
             e["checks"] += 1
     return out
 
 
 async def delivery_buckets(date_from: date, date_to: date, bucket_field: str) -> dict[str, dict]:
-    """Выручка и чеки доставки по корзинам (дата/час) за период — через OLAP SALES."""
+    """Выручка и чеки доставки по корзинам (дата/час) за период."""
     rows = await order_rows(
         group_fields=order_group_fields(bucket_field),
         data_fields=[OLAP_FIELD_SUM],
@@ -48,6 +45,45 @@ async def delivery_buckets(date_from: date, date_to: date, bucket_field: str) ->
         date_to=date_to.isoformat(),
     )
     return delivery_per_bucket(rows, bucket_field)
+
+
+async def delivery_order_keys(date_from: date, date_to: date) -> set[tuple[date, str]]:
+    """Заказы доставки за период как пары `(дата, номер)` — для таблиц с ключом заказа."""
+    rows = await order_rows(
+        group_fields=order_group_fields(),
+        data_fields=[OLAP_FIELD_SUM],
+        date_from=date_from.isoformat(),
+        date_to=date_to.isoformat(),
+    )
+    out = set()
+    for key in delivery_orders(rows):
+        day, num = key.split(ORDER_KEY_SEP, 1)
+        out.add((date.fromisoformat(day), num))
+    return out
+
+
+async def delivery_sales_by_dish(date_from: date, date_to: date) -> dict[tuple[str, str], list]:
+    """Продажи внутри заказов доставки: `{(категория, имя): [кол-во, выручка]}`.
+
+    Нужны таблице блюд: её источник (`dish_detail`) не знает заказов, поэтому без
+    доставки из неё вычитаются именно эти количества и суммы.
+    """
+    rows = await order_rows(
+        group_fields=order_group_fields(),
+        data_fields=[OLAP_FIELD_SUM, OLAP_FIELD_QTY],
+        date_from=date_from.isoformat(),
+        date_to=date_to.isoformat(),
+    )
+    delivery = delivery_orders(rows)
+    out: dict[tuple[str, str], list] = {}
+    for r in rows:
+        key, _b, category, name = split_order_row(row_value(r))
+        if key not in delivery or not name or category == ORDER_STATUS_CATEGORY:
+            continue
+        a = out.setdefault((category, name), [0.0, 0.0])
+        a[0] += float(r.get("field2", {}).get("value", 0) or 0)
+        a[1] += float(r.get("field1", {}).get("value", 0) or 0)
+    return out
 
 
 def exclude_delivery(days: list[dict], del_buckets: dict[str, dict]) -> None:

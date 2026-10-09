@@ -29,7 +29,6 @@ from constants import (
     DAY_NAMES_RU,
     OLAP_FIELD_GUESTS,
     OLAP_FIELD_OPEN_DATE,
-    OLAP_FIELD_ORDER_NUM,
     PNL_BENCHMARKS,
     PNL_DAY_COST_FIELDS,
     PNL_FIXED_MANUAL,
@@ -39,7 +38,7 @@ from models import PnlDayCost, PnlMonth, SessionLocal
 from services.delivery import delivery_buckets
 from services.revenue_source import days_stored_or_live, load_days
 from services.schedule_labor import labor_by_day, labor_for_period, operational_shifts
-from utils import daterange, is_delivery, months_in  # noqa: F401
+from utils import daterange, months_in
 
 
 def _rate(key: str, pct: float, absval: float) -> str | None:
@@ -160,42 +159,36 @@ def day_var_costs(d: date, day_costs: dict, months: dict) -> dict:
 async def _hall_guests(df: date, dt: date) -> float:
     """Гостей ЗАЛА за период (гости — атрибут заказа, MAX на заказ).
 
-    Считаем только по заказам зала: у доставки поле «гости» недостоверно (часто 0/1),
-    поэтому «средний чек на гостя» имеет смысл лишь для зала. Доставочные заказы
-    (хотя бы одна позиция с `is_delivery`) исключаем целиком.
+    Считаем только по заказам не доставки: у доставки поле «гости» недостоверно (часто
+    0/1), поэтому «средний чек на гостя» имеет смысл лишь для зала. Заказ доставки
+    определяется целиком (`services.channels`), а не по отдельным позициям.
     """
-    from constants import OLAP_FIELD_DISH_CATEGORY, OLAP_FIELD_DISH_NAME
-    from services.olap_parse import split_field_4
+    from services.channels import delivery_orders
+    from services.olap_parse import order_group_fields, split_order_row
     from services.order_store import order_rows
 
     rows = await order_rows(
-        group_fields=[
-            OLAP_FIELD_OPEN_DATE,
-            OLAP_FIELD_ORDER_NUM,
-            OLAP_FIELD_DISH_CATEGORY,
-            OLAP_FIELD_DISH_NAME,
-        ],
+        group_fields=order_group_fields(),
         data_fields=[OLAP_FIELD_GUESTS],
         date_from=df.isoformat(),
         date_to=dt.isoformat(),
     )
-    order_guests: dict[tuple[str, str], float] = {}
-    order_is_delivery: dict[tuple[str, str], bool] = {}
+    delivery = delivery_orders(rows)
+    order_guests: dict[str, float] = {}
     for r in rows:
-        d_str, ordernum, category, name = split_field_4(r.get("field0", {}).get("value", ""))
-        okey = (d_str, ordernum)
+        okey, _day, _category, _name = split_order_row(r.get("field0", {}).get("value", ""))
+        if not okey or okey in delivery:
+            continue
         g = float(r.get("field1", {}).get("value", 0) or 0)
         order_guests[okey] = max(order_guests.get(okey, 0.0), g)
-        if is_delivery(category, name):
-            order_is_delivery[okey] = True
-    return sum(g for k, g in order_guests.items() if not order_is_delivery.get(k))
+    return sum(order_guests.values())
 
 
 def _channel_totals(days: list[dict], del_buckets: dict[str, dict]) -> dict[str, dict]:
     """Разбивает дни на зал/доставку по выручке и чекам — без смешения (#5).
 
     `del_buckets` — {дата: {"revenue", "checks"}} доставки (`services.delivery`,
-    единое правило `is_delivery`); зал = остаток. Никогда не считаем зал+доставку
+    заказ доставки целиком); зал = остаток. Никогда не считаем зал+доставку
     смешанной суммой — только раздельно, затем при необходимости складываем сами.
     """
     hall_rev = hall_checks = 0.0
@@ -216,26 +209,20 @@ def _make_prev_mapper(period: str, df: date, dt: date, is_custom: bool):
     """Функция date → сопоставимая дата предыдущего периода, ВСЕГДА того же дня недели
     (главное правило пользователя: пн сравниваем с пн, чт — с чт, сб — с сб).
 
-    День/неделя → сдвиг на 7 дней (прошлая неделя, тот же день недели). Месяц (MTD) →
-    сдвиг на 4 недели с коррекцией ещё на неделю назад, если попали в текущий месяц
-    (конец длинных месяцев) — так гарантированно остаёмся в прошлом месяце и день
-    недели не съезжает. Произвольный диапазон → сдвиг, кратный 7 дням, не короче
-    периода (не пересекается с текущим).
+    Сдвиг один на весь период, кратный неделе: так дни прошлого периода не повторяются
+    и не выпадают. День/неделя → 7 дней. Месяц (MTD) → 4 недели, а если в периоде есть
+    29–31 число — 5 недель, иначе конец месяца лёг бы на его же начало. До 09.10.2026
+    сдвиг выбирался для каждого дня отдельно: 29–31 число уходили на 5 недель, остальные
+    на 4, и 24–26 число прошлого месяца считались в сравнении дважды, а 1–2 — ни разу.
+    Произвольный диапазон → сдвиг, кратный 7 дням, не короче периода.
     """
     if period == "month" and not is_custom:
-        month_start = df.replace(day=1)
-
-        def mapper(d: date) -> date:
-            p = d - timedelta(days=28)
-            if p >= month_start:
-                p -= timedelta(days=7)
-            return p
-
-        return mapper
-    if not is_custom:  # day / week — ровно неделя назад
-        return lambda d: d - timedelta(days=7)
-    span = (dt - df).days + 1
-    shift = 7 * ((span + 6) // 7)
+        shift = 35 if dt - timedelta(days=28) >= dt.replace(day=1) else 28
+    elif not is_custom:  # day / week — ровно неделя назад
+        shift = 7
+    else:
+        span = (dt - df).days + 1
+        shift = 7 * ((span + 6) // 7)
     return lambda d: d - timedelta(days=shift)
 
 

@@ -23,9 +23,9 @@ from constants import (
     OLAP_FIELD_HOUR,
     ORDER_STATUS_CATEGORY,
 )
-from services.channels import status_channel
+from services.channels import delivery_orders, rows_channels
 from services.olap_parse import split_order_row
-from utils import display_category, is_delivery
+from utils import display_category
 
 
 def build_check_fullness(rows: list[dict], mod_cats: set[str], include_delivery: bool) -> dict:
@@ -38,12 +38,13 @@ def build_check_fullness(rows: list[dict], mod_cats: set[str], include_delivery:
     # ключ — (час, заказ), где заказ = (дата, номер): по одному номеру заказы разных
     # дней склеивались в один «чек» на 40 позиций, и почти всё падало в корзину «4+».
     positions: dict[tuple[str, str], float] = defaultdict(float)
+    # галка «без доставки»: заказ доставки отсекается целиком (`services.channels`)
+    skip = set() if include_delivery else delivery_orders(rows, OLAP_FIELD_HOUR)
     for r in rows:
         ordernum, hour, category, name = split_order_row(
             r.get("field0", {}).get("value", ""), OLAP_FIELD_HOUR
         )
-        # галка «без доставки»: доставка = категория «Доставка» ИЛИ имя с маркером `_д`
-        if not include_delivery and is_delivery(category, name):
+        if ordernum in skip:
             continue
         if not name or category in NON_PRODUCT_CATEGORIES or category in mod_cats:
             continue
@@ -75,33 +76,11 @@ def build_check_fullness(rows: list[dict], mod_cats: set[str], include_delivery:
 def build_check_distribution(rows: list[dict], include_delivery: bool) -> dict:
     """Чеки по типу обслуживания: доставка / в зале / с собой (уникальные заказы)."""
 
-    order_channel: dict[str, str] = {}  # канал из «Статус»-строки заказа
-    order_has_delivery: set[str] = set()  # в заказе есть позиция меню-категории «Доставка»
-    orders: set[str] = set()  # все товарные заказы (по которым считаем чеки)
-    for r in rows:
-        order_num, _day, category, name = split_order_row(r.get("field0", {}).get("value", ""))
-        if not order_num:
-            continue
-        if category == ORDER_STATUS_CATEGORY:
-            # у заказа может быть несколько «Статусов» — берём сильнейший, а не последний
-            ch = status_channel(order_channel.get(order_num), name, include_delivery)
-            if ch:
-                order_channel[order_num] = ch
-            continue
-        if not name:
-            continue
-        orders.add(order_num)
-        if is_delivery(category, name):
-            order_has_delivery.add(order_num)
-
     counts = {CHANNEL_DINEIN: 0, CHANNEL_TAKEAWAY: 0, CHANNEL_DELIVERY: 0}
-    for o in orders:
-        if not include_delivery and o in order_has_delivery:
-            continue  # галка «без доставки»: заказ с доставочной позицией — как в KPI
-        ch = order_channel.get(o) or (
-            CHANNEL_DELIVERY if o in order_has_delivery else CHANNEL_DINEIN
-        )
-        counts[ch] += 1
+    for channel in rows_channels(rows).values():
+        if not include_delivery and channel == CHANNEL_DELIVERY:
+            continue  # галка «без доставки»: заказ доставки не считается, как в KPI
+        counts[channel] += 1
 
     total = sum(counts.values())
     labels = {
@@ -133,12 +112,13 @@ def build_check_composition(rows: list[dict], mod_cats: set[str], include_delive
     # по одному номеру заказы разных дней склеились бы в один чек на 40 позиций.
     orders: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(lambda: [0.0, 0.0]))
     order_hour: dict[str, str] = {}
+    # галка «без доставки»: заказ доставки отсекается целиком (`services.channels`)
+    skip = set() if include_delivery else delivery_orders(rows, OLAP_FIELD_HOUR)
     for r in rows:
         ordernum, hour, category, name = split_order_row(
             r.get("field0", {}).get("value", ""), OLAP_FIELD_HOUR
         )
-        # галка «без доставки»: доставка = категория «Доставка» ИЛИ имя с маркером `_д`
-        if not include_delivery and is_delivery(category, name):
+        if ordernum in skip:
             continue
         # Позиции без категории НЕ отбрасываем: это напитки комбо (Айран_, Кола_…) —
         # до 26.09.2026 они выпадали, и доля напитков в чеке была занижена в разы, а
@@ -193,36 +173,20 @@ def build_check_composition(rows: list[dict], mod_cats: set[str], include_delive
 
 
 def build_service_breakdown(rows: list[dict], group: str, mod_cats: set[str], limit: int) -> dict:
-    """Блюдо/категория × канал обслуживания.
+    """Блюдо/категория × канал обслуживания: все блюда заказа — в канал заказа."""
 
-    У каждого заказа берём его «Статус» и относим к этому каналу все блюда заказа;
-    позиция из меню-категории «Доставка» или с маркером `_д` форсит доставку.
-    """
-
-    # 1-й проход: канал каждого заказа из его строки категории «Статус»
-    order_channel: dict[str, str] = {}
-    for r in rows:
-        order_num, _day, category, name = split_order_row(r.get("field0", {}).get("value", ""))
-        if category == ORDER_STATUS_CATEGORY:
-            ch = status_channel(order_channel.get(order_num), name, include_delivery=True)
-            if ch:
-                order_channel[order_num] = ch
-
-    # 2-й проход: канал блюда — по категории «Доставка»/маркеру `_д` (бизнес-правило),
-    # иначе «Статус» заказа (по умолчанию зал).
+    # канал — свойство заказа: все его блюда идут в один канал (`services.channels`)
+    order_channel = rows_channels(rows)
     channels = (CHANNEL_DINEIN, CHANNEL_TAKEAWAY, CHANNEL_DELIVERY)
     agg: dict[str, dict] = {}
     for r in rows:
         order_num, _day, category, name = split_order_row(r.get("field0", {}).get("value", ""))
-        # пропускаем «Статус» (он дал канал в 1-м проходе) и платные модификаторы — не блюда
+        # пропускаем «Статус» (он дал канал заказа) и платные модификаторы — не блюда
         if not name or category == ORDER_STATUS_CATEGORY or category in mod_cats:
             continue
         qty = float(r.get("field1", {}).get("value", 0) or 0)
         rev = float(r.get("field2", {}).get("value", 0) or 0)
-        if is_delivery(category, name):
-            channel = CHANNEL_DELIVERY
-        else:
-            channel = order_channel.get(order_num, CHANNEL_DINEIN)
+        channel = order_channel.get(order_num, CHANNEL_DINEIN)
         key = display_category(category) if group == "category" else name
         a = agg.setdefault(
             key,
@@ -257,11 +221,11 @@ def build_basket(
     # Заказ — пара (дата, номер). По одному номеру в «чек» попадали позиции из всех
     # дней периода, и матрица показывала пары, которых в одном чеке никогда не было.
     order_labels: dict[str, set[str]] = defaultdict(set)
+    # галка «без доставки»: заказ доставки отсекается целиком (`services.channels`)
+    skip = set() if include_delivery else delivery_orders(rows)
     for r in rows:
         ordernum, _day, category, name = split_order_row(r.get("field0", {}).get("value", ""))
-        if not ordernum:
-            continue
-        if not include_delivery and is_delivery(category, name):
+        if not ordernum or ordernum in skip:
             continue
         if not name or category in NON_PRODUCT_CATEGORIES or category in mod_cats:
             continue

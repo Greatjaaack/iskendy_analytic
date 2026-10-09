@@ -237,7 +237,10 @@ def to_order_rows(orders: list[PosOrder]) -> list[dict]:
                 delivery = True
             if it.hour is not None:
                 hour = it.hour if hour is None else min(hour, it.hour)
-        channel = o.channel or (CHANNEL_DELIVERY if delivery else CHANNEL_DINEIN)
+        # заказ доставки — целиком (правило `utils.order_channel`): позиция доставки
+        # или единственный «Статус» «Доставка», который адаптер уже свёл в `o.channel`
+        delivery = delivery or o.channel == CHANNEL_DELIVERY
+        channel = CHANNEL_DELIVERY if delivery else (o.channel or CHANNEL_DINEIN)
         pays = sorted({p.pay_type for p in o.payments if p.pay_type})
         out.append(
             {

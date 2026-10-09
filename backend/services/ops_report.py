@@ -22,12 +22,14 @@ from constants import (
     CATEGORY_GROUP_ORDER,
     DAY_NAMES_RU,
     DAYPARTS,
+    OLAP_FIELD_HOUR,
     ORDER_STATUS_CATEGORY,
     WEEKDAY_TO_GROUP,
 )
 from models import DaypartPlan, SessionLocal
+from services.channels import delivery_orders
 from services.daypart import category_group, hour_to_daypart
-from services.olap_parse import split_field_5
+from services.olap_parse import ORDER_KEY_SEP, split_field_5
 from services.ops_aggregation import (
     blank_bucket,
     finalize,
@@ -35,7 +37,7 @@ from services.ops_aggregation import (
     period_plan,
     plan_pct,
 )
-from utils import daterange, is_delivery
+from utils import daterange
 
 
 async def build_ops_report(rows: list[dict], df: date, dt: date, include_delivery: bool) -> dict:
@@ -52,11 +54,13 @@ async def build_ops_report(rows: list[dict], df: date, dt: date, include_deliver
         {}
     )  # (ключ дейпарта, группа) → {revenue,cost,rev_with_cost}
 
+    # галка «без доставки»: заказ доставки отсекается целиком (`services.channels`)
+    skip = set() if include_delivery else delivery_orders(rows, OLAP_FIELD_HOUR)
     for r in rows:
         ds, hs, ordernum, category, name = split_field_5(r.get("field0", {}).get("value", ""))
         if not name or category == ORDER_STATUS_CATEGORY:
             continue
-        if not include_delivery and is_delivery(category, name):
+        if f"{ds}{ORDER_KEY_SEP}{ordernum}" in skip:
             continue
         try:
             hour = int(hs)

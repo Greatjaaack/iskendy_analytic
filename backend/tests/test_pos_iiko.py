@@ -143,7 +143,9 @@ def test_строки_бд_считают_суммы_без_служебных_�
     assert rows["17"]["cost_sum"] == 190
     assert rows["17"]["item_count"] == 3  # 1 дюрюм + 2 айрана
     assert rows["17"]["dish_count"] == 2
-    assert rows["17"]["is_delivery"] is False  # позиции обычные, доставка — из «Статуса»
+    # позиции обычные, но единственный «Статус» — «Доставка»: заказ доставки целиком
+    assert rows["17"]["is_delivery"] is True
+    assert rows["17"]["channel"] == CHANNEL_DELIVERY
     assert rows["17"]["pay_type"] == "Наличные, Терминал"
     assert rows["17"]["duration_min"] == 5.5
 

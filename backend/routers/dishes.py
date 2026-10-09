@@ -13,18 +13,22 @@ from fastapi import APIRouter, Query
 from config import settings
 from constants import (
     CHANNEL_DELIVERY,
-    DELIVERY_CATEGORY,
+    NON_PRODUCT_CATEGORIES,
     OLAP_FIELD_DISH_CATEGORY,
     OLAP_FIELD_DISH_NAME,
+    OLAP_FIELD_DISH_TYPE,
     OLAP_FIELD_HOUR,
+    OLAP_FIELD_OPEN_DATE,
+    OLAP_FIELD_ORDER_NUM,
     OLAP_FIELD_ORDER_TYPE,
     OLAP_FIELD_QTY,
     OLAP_FIELD_SUM,
-    ORDER_STATUS_CATEGORY,
     PRODUCT_TYPE_MODIFIER,
 )
 from iiko_web_client import iiko_web
 from pos import PROVIDER_IIKO
+from services.channels import order_channels
+from services.delivery import delivery_sales_by_dish
 from services.dish_catalog import iiko_unit_cost_by_name, modifier_filters
 from services.dish_cuts import (
     build_basket,
@@ -33,7 +37,7 @@ from services.dish_cuts import (
     build_check_fullness,
     build_service_breakdown,
 )
-from services.olap_parse import order_group_fields
+from services.olap_parse import ORDER_KEY_SEP, order_group_fields, split_field
 from services.order_store import dish_detail_rows, order_rows
 from utils import (
     classify_channel,
@@ -44,6 +48,26 @@ from utils import (
 )
 
 router = APIRouter(prefix="/api/dishes", tags=["dishes"])
+
+
+def without_delivery(rows: list[dict], sold: dict[tuple[str, str], list]) -> list[dict]:
+    """Строки `dish_detail` за вычетом продаж в заказах доставки (по категории и имени).
+
+    Одной паре (категория, имя) может соответствовать несколько позиций номенклатуры —
+    вычитаем по очереди, не уходя в минус. Строка без остатка продаж убирается.
+    """
+    left = {k: list(v) for k, v in sold.items()}
+    out = []
+    for r in rows:
+        rest = left.get((r.get("category") or "", r.get("dish_name") or ""))
+        if rest:
+            qty, rev = min(rest[0], r["quantity"]), min(rest[1], r["revenue"])
+            r = {**r, "quantity": r["quantity"] - qty, "revenue": r["revenue"] - rev}
+            rest[0] -= qty
+            rest[1] -= rev
+        if r["quantity"] > 1e-9 or r["revenue"] > 0.005:
+            out.append(r)
+    return out
 
 
 @router.get("")
@@ -71,10 +95,11 @@ async def get_dishes(
     # канал «доставка» — по принадлежности к категории «Доставка».
     # has_cost: нашлась ли iiko-с/с по имени. Без неё с/с = 0 — НЕ выдаём
     # cost_pct/margin_pct (иначе блюдо выглядело бы как 100% маржа и искажало бы рейтинги).
-    # галка «без доставки»: доставка = меню-категория «Доставка» ИЛИ имя с маркером `_д`
-    # (get-data уже отдаёт категорию и имя) — просто убираем эти строки.
+    # галка «без доставки»: вычитаем всё, что продано в заказах доставки (заказ целиком,
+    # см. `services.channels`) — и позиции с пометкой доставки, и напитки из её комбо.
+    # У `dish_detail` нет заказов, поэтому продажи доставки берём из позиций заказов.
     if not include_delivery:
-        rows = [r for r in rows if not is_delivery(r.get("category"), r.get("dish_name"))]
+        rows = without_delivery(rows, await delivery_sales_by_dish(date_from_d, date_to_d))
 
     unit_cost = await iiko_unit_cost_by_name(date_from_d.isoformat(), date_to_d.isoformat())
     for r in rows:
@@ -205,55 +230,48 @@ async def get_hourly_breakdown(
     берут»). `get-data` такой разрез не умеет, поэтому используем OLAP SALES.
     """
     date_from_d, date_to_d = period_range(period, date_from, date_to)
-    dim = OLAP_FIELD_DISH_CATEGORY if group == "category" else OLAP_FIELD_DISH_NAME
-
-    mod_names, mod_cats = await modifier_filters(date_from_d.isoformat(), date_to_d.isoformat())
-    # В режиме блюд ВСЕГДА добавляем категорию в группировку: нужна и для отсева доставки,
-    # и для drill-down «категория → её блюда» на фронте (каждый item несёт `category`).
-    # В режиме категорий категория и есть измерение (доставку отсекаем по имени).
-    with_cat = group == "dish"
-    group_fields = (
-        [OLAP_FIELD_HOUR, OLAP_FIELD_DISH_CATEGORY, dim] if with_cat else [OLAP_FIELD_HOUR, dim]
-    )
+    _, mod_cats = await modifier_filters(date_from_d.isoformat(), date_to_d.isoformat())
+    # Строки — по заказам и с типом позиции: заказ нужен галке «без доставки» (заказ
+    # доставки отсекается целиком), тип — отсеву модификаторов. До 09.10.2026 модификаторы
+    # отсекались по ИМЕНИ, и в режиме блюд вместе с бесплатным модификатором «Айран»
+    # пропадал платный «Айран» (февраль–июль: 5–8 % выручки), а в режиме категорий — нет.
     rows = await order_rows(
-        group_fields=group_fields,
+        group_fields=[
+            OLAP_FIELD_OPEN_DATE,
+            OLAP_FIELD_HOUR,
+            OLAP_FIELD_ORDER_NUM,
+            OLAP_FIELD_DISH_CATEGORY,
+            OLAP_FIELD_DISH_TYPE,
+            OLAP_FIELD_DISH_NAME,
+        ],
         data_fields=[OLAP_FIELD_SUM, OLAP_FIELD_QTY],
         date_from=date_from_d.isoformat(),
         date_to=date_to_d.isoformat(),
     )
+    parsed = [(split_field(r.get("field0", {}).get("value", ""), 6), r) for r in rows]
+    skip: set[str] = set()
+    if not include_delivery:
+        channels = order_channels(
+            (f"{day}{ORDER_KEY_SEP}{num}", category, name)
+            for (day, _h, num, category, _t, name), _r in parsed
+        )
+        skip = {k for k, ch in channels.items() if ch == CHANNEL_DELIVERY}
 
-    # строка: field0="<час>[, <категория>], <имя>", field1=выручка, field2=кол-во
+    # строка: field0="<дата>, <час>, <заказ>, <категория>, <тип>, <имя>", field1/2=выручка/кол-во
     hours: dict[int, dict] = {}
-    for r in rows:
-        key = str(r.get("field0", {}).get("value", ""))
-        category = ""
-        if with_cat:
-            parts = key.split(", ", 2)
-            if len(parts) < 3 or not parts[0].isdigit():
-                continue
-            hour, category, name = int(parts[0]), parts[1], parts[2]
-            # галка «без доставки»: доставка = категория «Доставка» ИЛИ имя с маркером `_д`
-            if not include_delivery and is_delivery(category, name):
-                continue
-        else:
-            parts = key.split(", ", 1)
-            if not parts[0].isdigit():
-                continue
-            hour = int(parts[0])
-            name = parts[1] if len(parts) > 1 else "—"
-            # в режиме категорий name = категория: отсекаем «Доставка» при выключенной доставке
-            if not include_delivery and name == DELIVERY_CATEGORY:
-                continue
-        # модификаторы — не товар: в режиме категорий name = категория, в режиме блюд = имя
-        is_mod = name in mod_cats if group == "category" else normalize_name(name) in mod_names
-        if name == ORDER_STATUS_CATEGORY or is_mod:
+    for (day, hs, num, category, dish_type, dish_name), r in parsed:
+        if not hs.isdigit() or not dish_name or f"{day}{ORDER_KEY_SEP}{num}" in skip:
             continue
-        # отображаемое имя категории (для вывода/drill): в режиме категорий это name,
-        # в режиме блюд — поле category. На детект доставки/модификаторов выше не влияет.
-        if group == "category":
-            name = display_category(name)
-        else:
-            category = display_category(category)
+        # модификаторы и «Статус» — не товар; категорию «модификаторы» отсекаем целиком
+        if (
+            dish_type == PRODUCT_TYPE_MODIFIER
+            or category in NON_PRODUCT_CATEGORIES
+            or category in mod_cats
+        ):
+            continue
+        hour = int(hs)
+        category = display_category(category)
+        name = category if group == "category" else dish_name
         rev = float(r.get("field1", {}).get("value", 0) or 0)
         qty = float(r.get("field2", {}).get("value", 0) or 0)
 

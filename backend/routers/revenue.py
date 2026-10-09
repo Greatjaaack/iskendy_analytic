@@ -18,13 +18,12 @@ from constants import (
     OLAP_FIELD_QTY,
     OLAP_FIELD_SUM,
     ORDER_STATUS_CATEGORY,
-    ORDER_STATUS_CHANNELS,
     PAYMENT_GROUP_ORDER,
 )
-from models import Order, OrderPayment, SessionLocal
+from models import OrderPayment, SessionLocal
 from services.aggregator import net_revenue
-from services.channels import CHANNELS, channel_revenue
-from services.delivery import delivery_buckets, exclude_delivery
+from services.channels import CHANNELS, channel_revenue, rows_channels
+from services.delivery import delivery_buckets, delivery_order_keys, exclude_delivery
 from services.olap_parse import order_group_fields, split_order_row
 from services.ops_report import build_ops_report
 from services.order_store import order_rows
@@ -35,7 +34,6 @@ from services.revenue_source import (
     ru_dow,
 )
 from utils import (
-    is_delivery,
     payment_group,
     period_range,
     prev_period_range,
@@ -350,7 +348,7 @@ async def get_revenue_by_channel(
         date_from=df.isoformat(),
         date_to=dt.isoformat(),
     )
-    buckets = channel_revenue(rows, OLAP_FIELD_OPEN_DATE, include_delivery)
+    buckets = channel_revenue(rows, OLAP_FIELD_OPEN_DATE)
     data = []
     for ds in sorted(buckets):
         try:
@@ -417,8 +415,8 @@ async def get_kpi_by_channel(
 ):
     """KPI (выручка/чеки/средний чек) в разрезе ДОСТАВКА vs НЕ ДОСТАВКА (зал + с собой).
 
-    Канал заказа: доставка, если у заказа «Статус» = Доставка ИЛИ есть позиция из
-    меню-категории «Доставка»; иначе — не доставка. Заказ опознаётся парой (дата, номер).
+    Канал заказа — единое правило `services.channels` (позиция доставки или единственный
+    «Статус» «Доставка»). Заказ опознаётся парой (дата, номер).
     """
     df, dt = period_range(period, date_from, date_to)
     rows = await order_rows(
@@ -428,21 +426,15 @@ async def get_kpi_by_channel(
         date_to=dt.isoformat(),
     )
 
+    channels = rows_channels(rows)
     order_rev: dict[str, float] = {}
-    order_delivery: dict[str, bool] = {}
     for r in rows:
         order_num, _day, category, name = split_order_row(r.get("field0", {}).get("value", ""))
-        if not order_num:
+        if order_num not in channels or not name or category == ORDER_STATUS_CATEGORY:
             continue
-        if category == ORDER_STATUS_CATEGORY:
-            if ORDER_STATUS_CHANNELS.get(name.strip().lower()) == CHANNEL_DELIVERY:
-                order_delivery[order_num] = True
-            continue
-        if is_delivery(category, name):
-            order_delivery[order_num] = True
         rev = float(r.get("field1", {}).get("value", 0) or 0)
         order_rev[order_num] = order_rev.get(order_num, 0.0) + rev
-        order_delivery.setdefault(order_num, False)
+    order_delivery = {k: ch == CHANNEL_DELIVERY for k, ch in channels.items()}
 
     groups = {
         "delivery": {"revenue": 0.0, "checks": 0},
@@ -476,18 +468,14 @@ async def get_by_payment(
     Источник — `order_payments` (нормализованные оплаты, сплит-чек разложен на строки,
     Σ=выручке). Возвращает доли по выручке и чекам за период (`totals`) и стек по дням
     (`daily`) для тренда структуры. При `include_delivery=false` исключаются оплаты
-    доставочных заказов (`orders.is_delivery`). Данные только из БД (для дат старше
+    заказов доставки — по тому же правилу, что KPI (`services.delivery`), а не по флагу
+    `orders.is_delivery`, записанному синком. Данные только из БД (для дат старше
     начала сохранённой истории оплат нет — вернётся пусто).
     """
     df, dt = period_range(period, date_from, date_to)
 
+    excluded = set() if include_delivery else await delivery_order_keys(df, dt)
     with SessionLocal() as db:
-        excluded: set[tuple] = set()
-        if not include_delivery:
-            for d, on in db.query(Order.date, Order.order_num).filter(
-                Order.date >= df, Order.date <= dt, Order.is_delivery.is_(True)
-            ):
-                excluded.add((d, on))
         pays = (
             db.query(
                 OrderPayment.date,

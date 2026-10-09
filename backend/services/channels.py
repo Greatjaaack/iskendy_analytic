@@ -1,19 +1,19 @@
-"""Разрез выручки по каналам обслуживания: в зале / с собой / доставка.
+"""Канал заказа (в зале / с собой / доставка) и выручка по каналам.
 
-Канал заказа берётся из служебной позиции категории «Статус» (у этой точки тип
-обслуживания не пишется в системное поле кассы), а позиции из меню-категории «Доставка»
-или с маркером `_д` в имени форсят доставку независимо от «Статуса».
+Канал — свойство ЗАКАЗА, а не позиции. Правило одно на все разрезы (`utils.order_channel`):
+доставка — заказ с позицией доставки (`utils.is_delivery`) или с единственным «Статусом»
+«Доставка»; иначе — сильнейший из «Статусов», без них — зал.
 
-Два правила, за которые пришлось заплатить ошибками:
+Почему не по позициям (так было до 09.10.2026): 418 из 551 заказа доставки смешанные —
+«Большое комбо обед доставка» без маркера `_д`, напитки комбо без категории. Галка «без
+доставки» вычитала только помеченные позиции, а чек убирала целиком: май 2026 показывал
+446 111 ₽ и средний чек 918 ₽ вместо 341 921 ₽ и ~684 ₽.
 
-- **Заказ опознаётся парой (дата, номер).** Номер уникален только внутри дня: по одному
-  номеру «Статус» одного дня красил заказы того же номера из других дней.
-- **Если «Статусов» на заказе несколько** (кассир отметил и «Доставка», и «С собой» —
-  так было у заказа 151 от 20.09.2026), берётся сильнейший по `CHANNEL_PRIORITY`, а не
-  тот, что встретился последним: иначе канал зависел от порядка строк в ответе.
-
-Вынесено из `routers/revenue.py` (этап 7а аудита).
+Заказ опознаётся парой (дата, номер): номер уникален только внутри дня.
 """
+
+from collections import defaultdict
+from collections.abc import Iterable
 
 from constants import (
     CHANNEL_DELIVERY,
@@ -23,57 +23,63 @@ from constants import (
     ORDER_STATUS_CHANNELS,
 )
 from services.olap_parse import split_order_row
-from utils import is_delivery, stronger_channel
+from utils import is_delivery, order_channel
 
 CHANNELS = (CHANNEL_DINEIN, CHANNEL_TAKEAWAY, CHANNEL_DELIVERY)
 
 
-def status_channel(current: str | None, status_name: str, include_delivery: bool) -> str | None:
-    """Канал заказа с учётом ещё одной «Статус»-строки: сильнейший из отмеченных.
+def order_channels(parsed: Iterable[tuple[str, str, str]]) -> dict[str, str]:
+    """`(ключ заказа, категория, имя)` → `{ключ: канал}` для заказов с товарными строками.
 
-    При выключенной галке «С доставкой» статус «Доставка» канал не определяет. Доставку
-    галка отсекает по ТОВАРАМ (`utils.is_delivery` — единое правило для KPI, оплат и
-    разрезов), а статус кассир ставит руками и ошибается: 20.09.2026 заказ «Балык + Кола»
-    получил и «Доставку», и «С собой». Раньше такой заказ выпадал из разреза по каналам
-    целиком, и разрез расходился с KPI на чек (3 726 против 3 727 за сентябрь).
+    Заказ из одних служебных строк («Статус») чеком не считается и в ответ не попадает.
     """
-    channel = ORDER_STATUS_CHANNELS.get(status_name.strip().lower())
-    if not include_delivery and channel == CHANNEL_DELIVERY:
-        return current
-    return stronger_channel(current, channel)
+    statuses: dict[str, set] = defaultdict(set)
+    goods: set[str] = set()
+    delivery: set[str] = set()
+    for key, category, name in parsed:
+        if not key:
+            continue
+        if category == ORDER_STATUS_CATEGORY:
+            statuses[key].add(ORDER_STATUS_CHANNELS.get(name.strip().lower()))
+            continue
+        if not name:
+            continue
+        goods.add(key)
+        if is_delivery(category, name):
+            delivery.add(key)
+    return {
+        key: order_channel(statuses.get(key, ()), key in delivery) or CHANNEL_DINEIN
+        for key in goods
+    }
 
 
-def channel_revenue(
-    rows: list[dict], bucket_field: str, include_delivery: bool = True
-) -> dict[str, dict[str, float]]:
+def row_value(row: dict) -> str:
+    """Склейка group-полей строки разреза (`field0`)."""
+    return row.get("field0", {}).get("value", "")
+
+
+def rows_channels(rows: list[dict], bucket_field: str | None = None) -> dict[str, str]:
+    """Каналы заказов для строк разреза `order_group_fields(bucket_field)`."""
+    parsed = (split_order_row(row_value(r), bucket_field) for r in rows)
+    return order_channels((key, category, name) for key, _b, category, name in parsed)
+
+
+def delivery_orders(rows: list[dict], bucket_field: str | None = None) -> set[str]:
+    """Ключи заказов доставки (для галки «без доставки»: такой заказ отсекается целиком)."""
+    return {k for k, ch in rows_channels(rows, bucket_field).items() if ch == CHANNEL_DELIVERY}
+
+
+def channel_revenue(rows: list[dict], bucket_field: str) -> dict[str, dict[str, float]]:
     """{корзина → {канал: выручка}}. Корзина — дата или час (`bucket_field`).
 
-    Канал: категория «Доставка» → доставка; иначе «Статус» заказа (по умолчанию зал).
-    Заказ опознаётся парой (дата, номер) — по одному номеру «Статус» одного дня
-    приписывался бы заказам того же номера из других дней.
+    Все позиции заказа идут в канал заказа: напиток из заказа доставки — это доставка.
     """
-    order_channel: dict[str, str] = {}
-    for r in rows:
-        ordernum, _b, category, name = split_order_row(
-            r.get("field0", {}).get("value", ""), bucket_field
-        )
-        if category == ORDER_STATUS_CATEGORY:
-            # несколько «Статусов» на заказе → сильнейший (доставка > с собой > зал)
-            ch = status_channel(order_channel.get(ordernum), name, include_delivery)
-            if ch:
-                order_channel[ordernum] = ch
+    channels = rows_channels(rows, bucket_field)
     out: dict[str, dict[str, float]] = {}
     for r in rows:
-        ordernum, bucket, category, name = split_order_row(
-            r.get("field0", {}).get("value", ""), bucket_field
-        )
-        if not name or category == ORDER_STATUS_CATEGORY:
+        key, bucket, category, name = split_order_row(row_value(r), bucket_field)
+        if not name or category == ORDER_STATUS_CATEGORY or key not in channels:
             continue
         rev = float(r.get("field1", {}).get("value", 0) or 0)
-        ch = (
-            CHANNEL_DELIVERY
-            if is_delivery(category, name)
-            else (order_channel.get(ordernum) or CHANNEL_DINEIN)
-        )
-        out.setdefault(bucket, {c: 0.0 for c in CHANNELS})[ch] += rev
+        out.setdefault(bucket, {c: 0.0 for c in CHANNELS})[channels[key]] += rev
     return out

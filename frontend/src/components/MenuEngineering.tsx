@@ -6,6 +6,7 @@ import {
 } from "recharts";
 import { fetchDishes, rangeKey, type RangeSel, type DishRow } from "../api";
 import { CHART_HEIGHT, COLORS } from "../constants";
+import { abcClassify } from "../abc";
 import { fmtInt } from "../format";
 import { foodCostColor, miniBtn } from "../styles";
 
@@ -69,22 +70,10 @@ export function MenuEngineering({ range, withDelivery = true }: Props) {
   const abc = useMemo(() => {
     // по прибыли — только блюда с известной с/с (без неё «прибыль» = выручка, искажает)
     const src = abcBasis === "rev" ? all : all.filter((d) => d.has_cost);
-    const base = src
-      .map((d) => ({
-        name: d.name,
-        value: abcBasis === "rev" ? d.revenue : d.revenue - d.cost_sum,
-        cost_pct: d.cost_pct,
-      }))
-      .filter((d) => d.value > 0)
-      .sort((a, b) => b.value - a.value);
-    const total = base.reduce((s, d) => s + d.value, 0) || 1;
-    const rows: { name: string; value: number; cost_pct: number | null; cum: number; cls: string }[] = [];
-    let acc = 0;
-    for (const d of base) {
-      acc += d.value;
-      const cum = (acc / total) * 100;
-      rows.push({ ...d, cum: Math.round(cum * 10) / 10, cls: cum <= 80 ? "A" : cum <= 95 ? "B" : "C" });
-    }
+    const rows = abcClassify(src, (d) => (abcBasis === "rev" ? d.revenue : d.revenue - d.cost_sum)).map(
+      (r) => ({ name: r.item.name, value: r.value, cost_pct: r.item.cost_pct, cum: r.cum, cls: r.cls }),
+    );
+    const total = rows.reduce((s, d) => s + d.value, 0) || 1;
     const summary = (["A", "B", "C"] as const).map((c) => {
       const items = rows.filter((r) => r.cls === c);
       return { cls: c, count: items.length, share: Math.round((items.reduce((s, r) => s + r.value, 0) / total) * 100) };

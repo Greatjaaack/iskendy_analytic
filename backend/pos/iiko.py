@@ -54,7 +54,7 @@ from pos.base import (
     PosProduct,
 )
 from services.olap_parse import split_field
-from utils import stronger_channel, today
+from utils import order_channel, today
 
 logger = logging.getLogger(__name__)
 
@@ -135,6 +135,7 @@ class IikoPos:
         attrs = self._parse_attrs(attr_rows)
         pays = self._parse_payments(attr_rows)
         orders: dict[tuple, PosOrder] = {}
+        statuses: dict[tuple, set] = {}
 
         for r in item_rows:
             ds, hs, num, category, dish_type, name = split_field(
@@ -184,16 +185,14 @@ class IikoPos:
             # Тип обслуживания у этой точки ведётся модификатором категории «Статус»
             # на уровне заказа — других источников канала в iiko нет (OrderType пуст).
             if category == ORDER_STATUS_CATEGORY:
-                # заказ может нести несколько «Статусов» (кассир отметил оба) — берём
-                # сильнейший, иначе канал зависел бы от порядка строк в ответе OLAP
-                order.channel = stronger_channel(
-                    order.channel, ORDER_STATUS_CHANNELS.get((name or "").strip().lower())
+                statuses.setdefault(key, set()).add(
+                    ORDER_STATUS_CHANNELS.get((name or "").strip().lower())
                 )
 
-        # Заказ без «Статуса» — «в зале»: так было до вынесения адаптера.
-        for order in orders.values():
-            if order.channel is None:
-                order.channel = CHANNEL_DINEIN
+        # Заказ может нести несколько «Статусов» (кассир отметил оба) — правило выбора
+        # одно на весь код (`utils.order_channel`). Без «Статуса» — «в зале».
+        for key, order in orders.items():
+            order.channel = order_channel(statuses.get(key, ())) or CHANNEL_DINEIN
         return list(orders.values())
 
     def _parse_attrs(self, rows: list[dict]) -> dict[tuple, dict]:
