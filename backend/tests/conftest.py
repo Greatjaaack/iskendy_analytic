@@ -37,6 +37,7 @@ from routers import revenue as rev_router  # noqa: E402
 from routers import schedule as sched_router  # noqa: E402
 from routers import suppliers as sup_router  # noqa: E402
 from services import aggregator as aggregator_service  # noqa: E402
+from services import cost_quality as cost_quality_service  # noqa: E402
 from services import ops_report as ops_report_service  # noqa: E402
 from services import order_store  # noqa: E402
 from services import revenue_source  # noqa: E402
@@ -277,6 +278,7 @@ def фикстурная_бд(tmp_path, monkeypatch):
         pnl_calc_service,
         labor_service,
         aggregator_service,
+        cost_quality_service,
         rev_router,
         pnl_router,
         plan_router,

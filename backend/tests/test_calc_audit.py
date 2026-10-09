@@ -241,3 +241,71 @@ def test_pnl_с_затратами_оценки_на_месте(клиент):
     assert body["breakeven"]["revenue_month"] > 0
     for key in ("rent", "utilities", "labor_op", "prime_cost"):
         assert строки[key]["rating"] in ("green", "yellow", "red"), key
+
+
+# ─── Гейт качества с/с: food cost и EBITDA не красим на мусорной с/с ─────────
+
+
+def test_правдоподобная_сс_позиции():
+    from utils import cost_plausible
+
+    assert cost_plausible(180, 600)  # 30 %
+    assert not cost_plausible(17.7, 590)  # «Балык» в iiko: 3 % цены
+    assert not cost_plausible(0, 600)
+    assert not cost_plausible(None, 600)
+    assert not cost_plausible(50, 0)  # бесплатная позиция — с/с не оценить
+    assert not cost_plausible(700, 600)  # дороже цены — ошибка ввода
+
+
+@pytest.fixture
+def мусорная_сс(фикстурная_бд):
+    """С/с как у «Балыка» в iiko: 3 % цены у всех позиций."""
+    with фикстурная_бд() as db:
+        for item in db.query(models.OrderItem):
+            item.cost = item.sum * 0.03
+        db.commit()
+    return фикстурная_бд
+
+
+def test_pnl_с_мусорной_сс_не_оценивает_food_cost_и_ebitda(мусорная_сс, клиент):
+    body = клиент.get(f"/api/pnl?{ПЕРИОД}").json()
+    assert body["missing_inputs"] == ["food_cost"]
+    assert body["food_cost_coverage"] == 0
+    assert body["ebitda_rating"] is None
+    assert body["net_rating"] is None
+    assert body["breakeven"]["reliable"] is False
+    строки = _строки_pnl(body)
+    for key in ("food_cost", "cogs", "prime_cost", "ebitda", "net_profit"):
+        assert строки[key]["rating"] is None, key
+    assert строки["rent"]["rating"] is not None  # затраты введены — их оцениваем
+
+
+def test_pnl_с_полными_данными_оценивает_всё(клиент):
+    body = клиент.get(f"/api/pnl?{ПЕРИОД}").json()
+    assert body["missing_inputs"] == []
+    assert body["food_cost_coverage"] == 100
+    assert body["breakeven"]["reliable"] is True
+    assert body["ebitda_rating"] in ("green", "yellow", "red")
+    assert _строки_pnl(body)["food_cost"]["rating"] in ("green", "yellow", "red")
+
+
+def test_pnl_без_затрат_и_смен_перечисляет_пропуски(без_затрат, клиент):
+    body = клиент.get(f"/api/pnl?{ПЕРИОД}").json()
+    assert body["missing_inputs"] == ["fixed_costs", "labor"]
+    assert body["ebitda_rating"] is None
+
+
+def test_оп_отчёт_с_мусорной_сс_не_оценивает_food_cost(мусорная_сс, клиент):
+    body = клиент.get(f"/api/revenue/ops-report?{ПЕРИОД}").json()
+    итог = body["totals"]["total"]
+    assert итог["food_cost_pct"] == 3.0  # процент считается как есть…
+    assert итог["coverage"] == 0
+    assert итог["cost_ok"] is False  # …но красить его нельзя
+    for группа in body["category_totals"].values():
+        assert группа["cost_ok"] is False
+
+
+def test_оп_отчёт_с_правдоподобной_сс_оценивает(клиент):
+    итог = клиент.get(f"/api/revenue/ops-report?{ПЕРИОД}").json()["totals"]["total"]
+    assert итог["coverage"] == 100
+    assert итог["cost_ok"] is True

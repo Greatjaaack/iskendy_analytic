@@ -102,7 +102,8 @@ export interface OpsCell {
   avg_check: number;
   cost: number;
   food_cost_pct: number | null; // null — нет блюд с ТТК-привязкой
-  coverage: number; // % выручки окна, покрытый ТТК (надёжность кост%)
+  coverage: number; // % выручки окна с правдоподобной с/с (10–90 % цены)
+  cost_ok: boolean; // покрытие достаточно, чтобы красить food cost по порогам
 }
 export interface OpsAvg {
   revenue: number;
@@ -114,7 +115,8 @@ export interface OpsCatCell {
   revenue: number;
   cost: number;
   food_cost_pct: number | null;
-  coverage: number; // % выручки группы, покрытый ТТК
+  coverage: number; // % выручки группы с правдоподобной с/с
+  cost_ok: boolean;
   revenue_share: number; // доля группы в выручке (дейпарта или периода)
 }
 export interface OpsPlan {
@@ -388,6 +390,7 @@ export interface PnlBreakeven {
   revenue_month: number | null;
   revenue_day: number | null;
   avg_rev_day: number;
+  reliable: boolean; // с/с полная — иначе маржинальность завышена, порог занижен
 }
 
 /** Метрики одного дня подневной матрицы P&L — все статьи ₽ отдельными ключами
@@ -482,6 +485,9 @@ export interface PnlReport {
   net_profit: number;
   net_margin: number;
   net_rating: PnlRating;
+  /** чего не хватает, чтобы EBITDA была прибылью: food_cost / fixed_costs / labor */
+  missing_inputs: ("food_cost" | "fixed_costs" | "labor")[];
+  food_cost_coverage: number | null; // % выручки с правдоподобной с/с
   breakeven: PnlBreakeven;
   prev_summary: PnlPrevSummary | null;
   daily: PnlDay[];

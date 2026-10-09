@@ -35,6 +35,7 @@ from constants import (
     PNL_MANUAL_FIELDS,
 )
 from models import PnlDayCost, PnlMonth, SessionLocal
+from services.cost_quality import cost_coverage, cost_reliable
 from services.delivery import delivery_buckets
 from services.revenue_source import days_stored_or_live, load_days
 from services.schedule_labor import labor_by_day, labor_for_period, operational_shifts
@@ -508,6 +509,12 @@ async def build_pnl(
             unrated |= {"writeoffs", "packaging", "cogs"}
     if not day_costs:
         unrated |= {"chemicals", "supplies"}
+    # С/с с кассы неполная или мусорная (`services.cost_quality`) — всё, что на ней стоит,
+    # не оцениваем: food cost 5 % при с/с «Балыка» 3 % цены — не «отлично», а «нет данных».
+    food_cost_coverage = cost_coverage(df, dt)
+    food_cost_ok = cost_reliable(food_cost_coverage)
+    if not food_cost_ok:
+        unrated |= {"food_cost", "cogs", "prime_cost", "production_cost"}
     if labor_op <= 0:
         unrated |= {"labor_op", "prime_cost", "production_cost"}
         if labor_admin_rub <= 0:
@@ -735,6 +742,18 @@ async def build_pnl(
     # нулевые аренду/коммуналку/… — недооценка расходов. Собираем непокрытые месяцы.
     period_months = set(months_in(df, dt))
     costs_missing_months = [f"{y:04d}-{m:02d}" for (y, m) in sorted(period_months - set(months))]
+    # EBITDA и прибыль оцениваем по бенчмарку, только если в них ничего не пропущено:
+    # иначе «94,6 %» зелёным — это выручка минус неполная с/с, а не прибыль.
+    missing_inputs = []
+    if not food_cost_ok:
+        missing_inputs.append("food_cost")
+    if costs_missing_months:
+        missing_inputs.append("fixed_costs")
+    if labor_missing_days:
+        missing_inputs.append("labor")
+    if missing_inputs:
+        ebitda_line["rating"] = None
+        net_profit_line["rating"] = None
 
     return {
         "period": "custom" if is_custom else period,
@@ -748,16 +767,21 @@ async def build_pnl(
         "revenue": round(revenue, 0),
         "ebitda": round(ebitda, 0),
         "ebitda_margin": round(ebitda_margin, 1),
-        "ebitda_rating": _rate("ebitda_margin", ebitda_margin, ebitda_margin),
+        "ebitda_rating": ebitda_line["rating"],
         "net_profit": round(net_profit, 0),
         "net_margin": round(net_margin, 1),
-        "net_rating": _rate("net_margin", net_margin, net_margin),
+        "net_rating": net_profit_line["rating"],
+        # чего не хватает, чтобы EBITDA была прибылью, а не оценкой сверху
+        "missing_inputs": missing_inputs,
+        "food_cost_coverage": food_cost_coverage,
         "breakeven": {
             "cm_ratio": round(cm_ratio * 100, 1),
             "fixed_month": round(fixed_month, 0),
             "revenue_month": None if breakeven_month is None else round(breakeven_month, 0),
             "revenue_day": None if breakeven_day is None else round(breakeven_day, 0),
             "avg_rev_day": round(avg_rev_day, 0),
+            # с неполной с/с маржинальность завышена, а порог — занижен
+            "reliable": food_cost_ok,
         },
         "prev_summary": prev_summary,
         "daily": daily,

@@ -12,6 +12,7 @@ from constants import (
     CHANNEL_PRIORITY,
     DELIVERY_CATEGORY,
     DELIVERY_NAME_MARKER,
+    FOOD_COST_PLAUSIBLE_PCT,
     NO_CATEGORY,
     PAYMENT_GROUP_RULES,
     PAYMENT_OTHER,
@@ -72,6 +73,17 @@ def is_delivery(category: str | None, name: str | None) -> bool:
     if category == DELIVERY_CATEGORY:
         return True
     return DELIVERY_NAME_MARKER in str(name or "").lower()
+
+
+def cost_plausible(cost: float | None, revenue: float | None) -> bool:
+    """С/с позиции правдоподобна: `FOOD_COST_PLAUSIBLE_PCT` (10–90 %) от её выручки.
+
+    Ноль, пустая с/с или позиция без выручки — не правдоподобна (с/с неизвестна).
+    """
+    if not cost or not revenue or revenue <= 0:
+        return False
+    lo, hi = FOOD_COST_PLAUSIBLE_PCT
+    return lo <= cost / revenue * 100 <= hi
 
 
 def daterange(start: date, end: date) -> Iterator[date]:

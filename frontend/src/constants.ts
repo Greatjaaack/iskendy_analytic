@@ -28,6 +28,9 @@ export const AUTOSYNC_OPTIONS: { label: string; ms: number }[] = [
 /** Пороги food cost % для раскраски: <good — норма (зелёный), good..warn —
  *  пограничный (жёлтый), >warn — высокий (красный). */
 export const FOOD_COST_THRESHOLDS = { good: 25, warn: 30 } as const;
+/** Food cost ниже этого — не «отлично», а неполная с/с (у «Балыка» в iiko 3 % цены).
+ *  Тот же порог, что `FOOD_COST_PLAUSIBLE_PCT` на бэкенде. */
+export const FOOD_COST_MIN_PLAUSIBLE = 10;
 
 // ─── Графики ─────────────────────────────────────────────────────────────────
 

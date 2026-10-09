@@ -128,6 +128,14 @@ CATEGORY_GROUP_ALCOHOL = "Алкоголь"
 # Порядок отображения групп в отчёте
 CATEGORY_GROUP_ORDER = [CATEGORY_GROUP_FOOD, CATEGORY_GROUP_DRINK, CATEGORY_GROUP_ALCOHOL]
 
+# Гейт качества себестоимости. С/с позиции правдоподобна, если она 10–90 % цены: у
+# «Балыка» в iiko с/с 17,7 ₽ при цене 590 ₽ (3 %), и food cost точки 5 % красился зелёным.
+# Food cost и EBITDA оцениваются (цвет бенчмарка), только если правдоподобная с/с покрывает
+# не меньше FOOD_COST_MIN_COVERAGE % выручки. Гейт по данным: когда с/с придёт настоящей
+# (ТТК в Saby → `PlannedCost`), оценки вернутся сами.
+FOOD_COST_PLAUSIBLE_PCT = (10.0, 90.0)
+FOOD_COST_MIN_COVERAGE = 90.0
+
 
 # ─── OLAP-движок iiko (асинхронные отчёты SALES) ─────────────────────────────
 # Поток: POST /api/olap/init (тело=запрос) → GET /api/olap/fetch-status/{hash}

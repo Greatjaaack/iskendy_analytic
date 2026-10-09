@@ -135,11 +135,11 @@ export function OpsReport({ range, withDelivery = true }: Props) {
                     {days.map((day) => {
                       const c = dp.cells[day.date];
                       const txt = cellText(c, metric.key);
-                      const col = metric.key === "food_cost_pct" ? foodCostColor(c?.food_cost_pct ?? null)
+                      const col = metric.key === "food_cost_pct" ? foodCostColor(c?.food_cost_pct ?? null, c?.cost_ok)
                         : metric.key === "revenue" ? "var(--text)" : "var(--muted)";
                       return <td key={day.date} style={{ ...TD, color: txt === "—" ? "var(--grid)" : col }}>{txt}</td>;
                     })}
-                    <td style={{ ...TD, color: metric.key === "food_cost_pct" ? foodCostColor(dp.total.food_cost_pct) : "var(--text)", fontWeight: 600, borderLeft: "2px solid var(--grid)" }}>{sumVal(dp, metric.key)}</td>
+                    <td style={{ ...TD, color: metric.key === "food_cost_pct" ? foodCostColor(dp.total.food_cost_pct, dp.total.cost_ok) : "var(--text)", fontWeight: 600, borderLeft: "2px solid var(--grid)" }}>{sumVal(dp, metric.key)}</td>
                     {hasPlan && <td style={{ ...TD, color: "var(--muted)" }}>{planVal(dp.plan, metric.key)}</td>}
                     {hasPlan && (() => {
                       const pp = pctVal(dp.plan_pct, metric.key);
@@ -194,8 +194,8 @@ export function OpsReport({ range, withDelivery = true }: Props) {
                     if (!c || c.food_cost_pct == null)
                       return <td key={g} style={{ ...TD, color: "var(--grid)" }}>—</td>;
                     return (
-                      <td key={g} style={{ ...TD, color: foodCostColor(c.food_cost_pct) }}
-                        title={`Выручка ${fmtInt(c.revenue)} ₽ · покрыто костом ${c.coverage}%`}>
+                      <td key={g} style={{ ...TD, color: foodCostColor(c.food_cost_pct, c.cost_ok) }}
+                        title={`Выручка ${fmtInt(c.revenue)} ₽ · правдоподобная с/с у ${c.coverage}% выручки`}>
                         {c.food_cost_pct}%
                       </td>
                     );
@@ -207,8 +207,8 @@ export function OpsReport({ range, withDelivery = true }: Props) {
                 {d!.category_groups.map((g) => {
                   const c = d!.category_totals[g];
                   return (
-                    <td key={g} style={{ ...TD, color: foodCostColor(c?.food_cost_pct ?? null), fontWeight: 700 }}
-                      title={c ? `Выручка ${fmtInt(c.revenue)} ₽ · доля ${c.revenue_share}% · покрыто костом ${c.coverage}%` : ""}>
+                    <td key={g} style={{ ...TD, color: foodCostColor(c?.food_cost_pct ?? null, c?.cost_ok), fontWeight: 700 }}
+                      title={c ? `Выручка ${fmtInt(c.revenue)} ₽ · доля ${c.revenue_share}% · правдоподобная с/с у ${c.coverage}% выручки` : ""}>
                       {c && c.food_cost_pct != null ? `${c.food_cost_pct}%` : "—"}
                     </td>
                   );

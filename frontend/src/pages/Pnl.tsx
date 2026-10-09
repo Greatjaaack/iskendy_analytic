@@ -7,6 +7,8 @@ import type {
 import { fetchPnl, fetchPnlCosts, savePnlCosts, fetchPnlDayCosts, savePnlDayCosts, importPnlSheet, rangeKey } from "../api";
 import { fmtInt, fmtRub, pctDelta, todayISO } from "../format";
 import { COLORS, PERIODS, weekdayGroup } from "../constants";
+import { profitLevel } from "../quality";
+import { levelColor } from "../styles";
 
 
 const MONTHS_RU = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
@@ -31,6 +33,17 @@ function WarnBox({ children }: { children: React.ReactNode }) {
     </div>
   );
 }
+
+/** Чего не хватает, чтобы EBITDA была прибылью (`missing_inputs` с бэкенда). */
+const MISSING_LABEL: Record<string, string> = {
+  food_cost: "себестоимости",
+  fixed_costs: "постоянных затрат",
+  labor: "ФОТ",
+};
+
+/** Цвет EBITDA/прибыли в шапке (`quality.profitLevel`): без полных данных плюс не зелёный. */
+const profitColor = (v: number, partial: string): string =>
+  levelColor(profitLevel(v, !!partial)) ?? "var(--text)";
 
 /** Цвет бенчмарка строки. */
 const rateColor = (r: PnlRating): string | null =>
@@ -101,6 +114,8 @@ export function Pnl() {
 
   const data = pnlQ.data;
   const ps = data?.prev_summary;
+  // каких входных данных нет («себестоимости, ФОТ») — пусто, если EBITDA полная
+  const partial = data?.missing_inputs.map((k) => MISSING_LABEL[k]).join(", ") ?? "";
 
   return (
     <div className="page" style={{ minHeight: "100vh", background: COLORS.bg, color: "var(--text)" }}>
@@ -182,19 +197,29 @@ export function Pnl() {
             </WarnBox>
           )}
 
+          {data.missing_inputs.includes("food_cost") && (
+            <WarnBox>
+              Себестоимость с кассы неполная: правдоподобная с/с (10–90 % цены) есть только у{" "}
+              <b>{data.food_cost_coverage ?? 0}%</b> выручки — food cost и прибыль <b>не оцениваются</b>.
+              Настоящая с/с придёт из Saby, когда будут заведены ТТК.
+            </WarnBox>
+          )}
+
           {/* Хедер: EBITDA → Чистая прибыль + вердикт по безубыточности */}
           <div style={{ display: "flex", gap: 24, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 16 }}>
             <div>
               <div style={{ color: COLORS.muted, fontSize: 12 }}>EBITDA за период · {data.date_from} — {data.date_to}</div>
-              <div style={{ fontSize: 30, fontWeight: 800, color: data.ebitda >= 0 ? COLORS.good : COLORS.bad, marginTop: 2 }}>
+              <div style={{ fontSize: 30, fontWeight: 800, color: profitColor(data.ebitda, partial), marginTop: 2 }}>
                 {fmtRub(data.ebitda)} <span style={{ fontSize: 16, fontWeight: 600, color: rateColor(data.ebitda_rating) ?? COLORS.muted }}>({data.ebitda_margin}%)</span>
                 {ps && <DeltaBadge d={pctDelta(data.ebitda, ps.ebitda)} />}
               </div>
-              <div style={{ fontSize: 11, color: COLORS.muted, marginTop: 2 }}>до налога УСН и кап-резерва</div>
+              <div style={{ fontSize: 11, color: partial ? COLORS.warn : COLORS.muted, marginTop: 2 }}>
+                {partial ? `предварительно — нет ${partial}` : "до налога УСН и кап-резерва"}
+              </div>
             </div>
             <div>
               <div style={{ color: COLORS.muted, fontSize: 12 }}>Чистая прибыль</div>
-              <div style={{ fontSize: 24, fontWeight: 800, color: data.net_profit >= 0 ? COLORS.good : COLORS.bad, marginTop: 2 }}>
+              <div style={{ fontSize: 24, fontWeight: 800, color: profitColor(data.net_profit, partial), marginTop: 2 }}>
                 {fmtRub(data.net_profit)} <span style={{ fontSize: 14, fontWeight: 600, color: rateColor(data.net_rating) ?? COLORS.muted }}>({data.net_margin}%)</span>
                 {ps && ps.net_profit != null && <DeltaBadge d={pctDelta(data.net_profit, ps.net_profit)} />}
               </div>
@@ -296,6 +321,8 @@ function BreakevenVerdict({ be }: { be: PnlBreakeven }) {
   }
   const gap = be.avg_rev_day - be.revenue_day; // + запас, − недобор
   const ok = gap >= 0;
+  // с неполной с/с маржинальность завышена → порог занижен, «запас» может быть мнимым
+  const verdictColor = !be.reliable ? COLORS.muted : ok ? COLORS.good : COLORS.bad;
   return (
     <div style={{ fontSize: 13, color: COLORS.muted }}>
       <div>
@@ -304,10 +331,13 @@ function BreakevenVerdict({ be }: { be: PnlBreakeven }) {
       </div>
       <div style={{ marginTop: 2 }}>
         Средний рабочий день делает <b style={{ color: "var(--text)" }}>{fmtRub(be.avg_rev_day)}</b> →{" "}
-        <b style={{ color: ok ? COLORS.good : COLORS.bad }}>
+        <b style={{ color: verdictColor }}>
           {ok ? `запас +${fmtRub(gap)}/раб. день` : `недобор ${fmtRub(gap)}/раб. день`}
         </b>
       </div>
+      {!be.reliable && (
+        <div style={{ fontSize: 12, marginTop: 2 }}>себестоимость неполная — порог занижен</div>
+      )}
     </div>
   );
 }

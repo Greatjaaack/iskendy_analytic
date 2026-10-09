@@ -37,7 +37,7 @@ from services.ops_aggregation import (
     period_plan,
     plan_pct,
 )
-from utils import daterange
+from utils import cost_plausible, daterange
 
 
 async def build_ops_report(rows: list[dict], df: date, dt: date, include_delivery: bool) -> dict:
@@ -90,12 +90,12 @@ async def build_ops_report(rows: list[dict], df: date, dt: date, include_deliver
             cb = cat_agg[ck] = {"revenue": 0.0, "cost": 0.0, "rev_with_cost": 0.0}
         cb["revenue"] += rev
         # food cost % считаем от ВСЕЙ выручки окна (честный P&L-знаменатель, сходится
-        # с P&L). rev_with_cost копит только прокостованную выручку (cost>0) → coverage
-        # показывает дыру: у доставочных дублей («…доставка»/«_д») iiko не ставит
-        # ProductCostBase, поэтому на окнах с доставкой coverage < 100%.
+        # с P&L). rev_with_cost копит выручку только с правдоподобной с/с (10–90 % цены,
+        # `utils.cost_plausible`) → coverage показывает, можно ли верить проценту: у
+        # «Балыка» в iiko с/с 3 % цены, и food cost 5 % без этой проверки красился зелёным.
         b["cost"] += cost
         cb["cost"] += cost
-        if cost > 0:
+        if cost_plausible(cost, rev):  # мусорная с/с (3 % цены) покрытием не считается
             b["rev_with_cost"] += rev
             cb["rev_with_cost"] += rev
 

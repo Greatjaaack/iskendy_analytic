@@ -2,7 +2,8 @@
 // в каждый компонент — четыре одинаковых `mini`, два `tabBtn`, два `costColor`).
 import type { CSSProperties } from "react";
 
-import { COLORS, FOOD_COST_THRESHOLDS } from "./constants";
+import { COLORS } from "./constants";
+import { foodCostLevel, type Level } from "./quality";
 
 /** Вкладка страницы (Пульс / Операции / Меню…). */
 export const tabBtn = (active: boolean): CSSProperties => ({
@@ -20,10 +21,12 @@ export const miniBtn = (active: boolean): CSSProperties => ({
   color: active ? "var(--text)" : "var(--muted)",
 });
 
-/** Цвет food cost %: зелёный / жёлтый / красный по `FOOD_COST_THRESHOLDS`, нет данных — серый. */
-export const foodCostColor = (v: number | null): string => {
-  if (v == null) return "var(--muted)";
-  if (v < FOOD_COST_THRESHOLDS.good) return COLORS.good;
-  if (v <= FOOD_COST_THRESHOLDS.warn) return COLORS.warn;
-  return COLORS.bad;
-};
+/** Цвет food cost %: зелёный / жёлтый / красный по `FOOD_COST_THRESHOLDS`. Серый — нет
+ *  данных, с/с ненадёжна (`ok=false`: бэкенд счёл покрытие недостаточным) или процент
+ *  неправдоподобно мал: 5 % — это незаведённая с/с, а не отличный результат. */
+export const foodCostColor = (v: number | null, ok = true): string =>
+  levelColor(foodCostLevel(v, ok)) ?? "var(--muted)";
+
+/** Цвет уровня оценки (`quality.ts`); `null` — не оцениваем. */
+export const levelColor = (l: Level): string | null =>
+  l === "good" ? COLORS.good : l === "warn" ? COLORS.warn : l === "bad" ? COLORS.bad : null;

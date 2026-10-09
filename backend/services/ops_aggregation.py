@@ -2,16 +2,18 @@
 
 «Движок» `get_ops_report`: накопитель метрик окна (выручка/с-с/чеки/гости),
 свёртка в показатели (food cost % = iiko-кост позиций `ProductCostBase` ÷ вся
-выручка окна; coverage — доля выручки с известной с-с, < 100% там, где доставочные
-позиции без коста) и расчёт плана на период из дневных норм. Вынесено из revenue.py.
+выручка окна; coverage — доля выручки с правдоподобной с/с, `cost_ok` — можно ли
+красить процент) и расчёт плана на период из дневных норм. Вынесено из revenue.py.
 """
+
+from services.cost_quality import cost_reliable
 
 
 def blank_bucket() -> dict:
     return {
         "revenue": 0.0,
         "cost": 0.0,
-        "rev_with_cost": 0.0,  # выручка с известной с-с (знаменатель кост%; = вся выручка)
+        "rev_with_cost": 0.0,  # выручка с правдоподобной с/с (для coverage)
         # ключ заказа — (дата, номер): номер уникален только внутри дня, а корзины
         # сворачиваются в итог периода объединением множеств
         "orders": set(),
@@ -33,10 +35,12 @@ def finalize(b: dict) -> dict:
         "avg_check": round(rev / checks, 2) if checks else 0,
         "cost": cost,
         # food cost % — от ВСЕЙ выручки окна (честный знаменатель, сходится с P&L);
-        # coverage = доля выручки с известной iiko-с/с (< 100% там, где доставочные
-        # позиции без ProductCostBase) — сигнал надёжности процента
+        # coverage = доля выручки с правдоподобной с/с (`utils.cost_plausible`) — сигнал
+        # надёжности процента
         "food_cost_pct": round(cost / rev * 100, 1) if rev else None,
         "coverage": round(rwc / rev * 100, 1) if rev else 0,
+        # food cost можно оценивать (красить), только если с/с покрывает почти всю выручку
+        "cost_ok": cost_reliable(round(rwc / rev * 100, 1) if rev else None),
     }
 
 
@@ -50,6 +54,7 @@ def finalize_cat(cb: dict, base_revenue: float) -> dict:
         "cost": cost,
         "food_cost_pct": round(cost / rev * 100, 1) if rev else None,
         "coverage": round(rwc / rev * 100, 1) if rev else 0,
+        "cost_ok": cost_reliable(round(rwc / rev * 100, 1) if rev else None),
         "revenue_share": round(rev / base_revenue * 100, 1) if base_revenue else 0,
     }
 
