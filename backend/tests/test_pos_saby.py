@@ -30,7 +30,7 @@ from pos.base import (  # noqa: E402
     aggregate_products,
     to_order_rows,
 )
-from pos.saby import SabyPos, build_menu  # noqa: E402
+from pos.saby import SabyPos, _dt, build_menu  # noqa: E402
 
 # id номенклатуры → (категория, тип позиции): так его отдаёт каталог Presto
 MENU = {
@@ -282,6 +282,31 @@ def test_время_с_поясом_переводится_в_пояс_точк�
     assert o.hour == 13
     assert (o.open_time, o.close_time) == ("2026-09-24T13:42:10", "2026-09-24T13:47:40")
     assert o.date == date(2026, 9, 24)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "2026-09-24 10:47:40+00",
+        "2026-09-24T10:47:40+0000",
+        "2026-09-24T10:47:40+00:00",
+        "2026-09-24T10:47:40Z",
+        "2026-09-24T10:47:40.5+00",
+        "2026-09-24T10:47:40.1234567Z",
+        "2026-09-24T13:47:40+03",
+        "2026-09-24 13:47:40",
+    ],
+)
+def test_любой_вид_смещения_разбирается_на_python_образа(raw, monkeypatch):
+    """Образ стоит на Python 3.10: его `fromisoformat` не знает «+00», «Z» и доли не из 3/6
+    цифр. До 13.10.2026 «ClosedWTZ» вида «… +00» молча давал время закрытия None — локальный
+    3.12 этого не видел, упала сборка образа."""
+    monkeypatch.setattr(settings, "timezone", "Europe/Moscow")
+    assert _dt(raw).isoformat() == "2026-09-24T13:47:40"
+
+
+def test_мусор_вместо_времени_не_роняет_разбор():
+    assert _dt("вчера") is None and _dt("") is None and _dt(None) is None
 
 
 def test_пагинация_не_удваивает_чеки_при_нумерации_с_единицы(monkeypatch):

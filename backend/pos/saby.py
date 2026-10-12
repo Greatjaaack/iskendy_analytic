@@ -18,6 +18,7 @@
 
 import asyncio
 import logging
+import re
 import time
 from datetime import date as Date
 from datetime import datetime
@@ -76,6 +77,15 @@ Menu = dict[int | str, tuple[str, str]]
 _MAX_SALE_PAGES = 500
 _MAX_MENU_PAGES = 50
 
+# ISO-время с необязательными долями секунды и смещением в любом виде: «Z», «+03», «+0300»,
+# «+03:00». `datetime.fromisoformat` в Python 3.10 (база образа Playwright) понимает только
+# «+03:00» и доли из 3 или 6 цифр — остальное молча теряло бы время закрытия чека.
+_ISO_RE = re.compile(
+    r"(?P<base>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?)"
+    r"(?:\.(?P<frac>\d+))?"
+    r"(?:(?P<z>Z)|(?P<sign>[+-])(?P<hh>\d{2}):?(?P<mm>\d{2})?)?$"
+)
+
 
 def _dt(value: str | None) -> datetime | None:
     """Время от Saby → наивное время В ПОЯСЕ ТОЧКИ (как iiko кладёт его в БД).
@@ -88,6 +98,16 @@ def _dt(value: str | None) -> datetime | None:
     if not value:
         return None
     text = str(value).strip().replace(" ", "T", 1).replace(" ", "")
+    m = _ISO_RE.match(text)
+    if m is None:
+        return None
+    text = m["base"]
+    if m["frac"]:
+        text += "." + m["frac"][:6].ljust(6, "0")
+    if m["z"]:
+        text += "+00:00"
+    elif m["sign"]:
+        text += f"{m['sign']}{m['hh']}:{m['mm'] or '00'}"
     try:
         moment = datetime.fromisoformat(text)
     except ValueError:

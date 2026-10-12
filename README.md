@@ -428,9 +428,12 @@ pip install -r requirements-dev.txt
 python -m pytest tests/ -q
 ```
 
-**214 тестов**, прогон ~5 секунд, сеть не нужна. Обвязка — `tests/conftest.py`: фикстурная
+**223 теста**, прогон ~5 секунд, сеть не нужна. Обвязка — `tests/conftest.py`: фикстурная
 БД на 14 дней и касса-заглушка, которая падает при любом обращении (так тест доказывает,
 что ручка за период внутри истории читает БД, а не кассу).
+
+Образ backend собран на **Python 3.10** (база Playwright), поэтому перед выкаткой тесты
+гоняются и на нём: `uv run --python 3.10 --with-requirements requirements.txt --with-requirements requirements-dev.txt python -m pytest tests/ -q`.
 
 | Файл | Что проверяет |
 |---|---|
