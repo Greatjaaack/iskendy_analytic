@@ -32,6 +32,14 @@ iskendy.ru, www.iskendy.ru {
 	reverse_proxy iskendy:8080
 }
 
+# Личный проект владельца — читалка (контейнер chitalka из /root/personal/chitalka,
+# репозиторий Greatjaaack/chitalka). К ресторану отношения не имеет.
+# Адрес на sslip.io: имя само указывает на IP сервера, DNS настраивать не нужно.
+chitalka.157-22-174-119.sslip.io {
+	encode gzip
+	reverse_proxy chitalka:8090
+}
+
 # --- Запуск без домена (только по IP) ---
 # Закомментируйте блоки выше и раскомментируйте этот. Caddy отдаст self-signed TLS
 # (браузер ругнётся на сертификат — для теста ок, для прода нужен домен).
