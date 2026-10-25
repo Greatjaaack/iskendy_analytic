@@ -34,7 +34,7 @@ iskendy.ru, www.iskendy.ru {
 
 # Личный проект владельца — читалка (контейнер chitalka из /root/personal/chitalka,
 # репозиторий Greatjaaack/chitalka). К ресторану отношения не имеет.
-chitalka.iskendy.ru {
+4talka.duckdns.org {
 	encode gzip
 	reverse_proxy chitalka:8090
 }
