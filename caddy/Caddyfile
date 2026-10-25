@@ -34,8 +34,7 @@ iskendy.ru, www.iskendy.ru {
 
 # Личный проект владельца — читалка (контейнер chitalka из /root/personal/chitalka,
 # репозиторий Greatjaaack/chitalka). К ресторану отношения не имеет.
-# Адрес на sslip.io: имя само указывает на IP сервера, DNS настраивать не нужно.
-chitalka.157-22-174-119.sslip.io {
+chitalka.iskendy.ru {
 	encode gzip
 	reverse_proxy chitalka:8090
 }
