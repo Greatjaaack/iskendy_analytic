@@ -488,6 +488,12 @@ class SabyPos:
         """Заказы дня для табло. Дешевле, чем полная выборка, Saby не умеет.
 
         `cache_ttl` задаёт ручка табло: пока за день нет заказов, кассу спрашиваем реже.
+
+        ⚠️ Время для табло — момент ОПЛАТЫ (`ClosedWTZ`), а не открытия. Saby отдаёт продажу
+        только после оплаты (проверено живьём 01.11.2026), а табло берёт лишь заказы
+        «свежее 20 минут». С временем открытия заказ, оплаченный через 39 минут, приехал
+        уже «старым» и был молча отброшен (№7, 01.11.2026). Для табло заказ и начинается
+        с оплаты: гость ждёт с этой минуты.
         """
         sales = await self._fetch_sales(day, day, cache_ttl=cache_ttl)
         out = []
@@ -495,7 +501,11 @@ class SabyPos:
             if sale.get("Return"):
                 continue
             number = str(sale.get("Number") or "").strip()
-            open_time = _iso(sale.get("OpenedWTZ")) or _iso(sale.get("DateWTZ"))
+            open_time = (
+                _iso(sale.get("ClosedWTZ"))
+                or _iso(sale.get("OpenedWTZ"))
+                or _iso(sale.get("DateWTZ"))
+            )
             if number and open_time:
                 out.append(PosOpenOrder(number=number, open_time=open_time))
         return out

@@ -195,9 +195,43 @@ def test_часы_и_номенклатура(saby):
     assert by_name["Айран"].quantity == 2
 
 
-def test_табло_получает_номер_и_время(saby):
+def test_табло_получает_номер_и_время_оплаты(saby):
+    """Время для табло — оплата (`ClosedWTZ` 13:47:40), не открытие (13:42:10)."""
     found = run(saby.open_orders(date(2026, 9, 24)))
-    assert [(o.number, o.open_time) for o in found] == [("17", "2026-09-24T13:42:10")]
+    assert [(o.number, o.open_time) for o in found] == [("17", "2026-09-24T13:47:40")]
+
+
+def _pos_c_prodazhej(monkeypatch, sales):
+    pos = SabyPos()
+
+    async def fake_sales(date_from, date_to, cache_ttl=None):
+        return sales
+
+    monkeypatch.setattr(pos, "_fetch_sales", fake_sales)
+    return pos
+
+
+def test_заказ_оплаченный_через_40_минут_не_теряется(monkeypatch):
+    """Регрессия №7 01.11.2026: открыт 11:46, оплачен 12:25 — табло должно его взять.
+
+    Saby отдаёт продажу только после оплаты. Со временем открытия заказ приезжал на
+    табло «старше 20 минут» и молча отбрасывался окном свежести.
+    """
+    sale = {
+        **SALE,
+        "Number": "7",
+        "OpenedWTZ": "2026-11-01 11:46:08.246061",
+        "ClosedWTZ": "2026-11-01 12:25:00",
+    }
+    pos = _pos_c_prodazhej(monkeypatch, [sale])
+    found = run(pos.open_orders(date(2026, 11, 1)))
+    assert [(o.number, o.open_time) for o in found] == [("7", "2026-11-01T12:25:00")]
+
+
+def test_без_времени_оплаты_берётся_открытие(monkeypatch):
+    pos = _pos_c_prodazhej(monkeypatch, [{**SALE, "ClosedWTZ": None}])
+    found = run(pos.open_orders(date(2026, 9, 24)))
+    assert [o.open_time for o in found] == ["2026-09-24T13:42:10"]
 
 
 def test_пустая_выборка_не_ломает_агрегаты():
