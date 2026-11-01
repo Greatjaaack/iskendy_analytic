@@ -228,6 +228,14 @@ def test_заказ_оплаченный_через_40_минут_не_теря�
     assert [(o.number, o.open_time) for o in found] == [("7", "2026-11-01T12:25:00")]
 
 
+def test_оплата_до_минуты_не_раньше_открытия(monkeypatch):
+    """Живьём 01.11.2026: №22 открыт 13:05:33, `ClosedWTZ` = 13:05:00 (минуты)."""
+    sale = {**SALE, "OpenedWTZ": "2026-11-01 13:05:33.1", "ClosedWTZ": "2026-11-01 13:05:00"}
+    pos = _pos_c_prodazhej(monkeypatch, [sale])
+    found = run(pos.open_orders(date(2026, 11, 1)))
+    assert [o.open_time for o in found] == ["2026-11-01T13:05:33"]
+
+
 def test_без_времени_оплаты_берётся_открытие(monkeypatch):
     pos = _pos_c_prodazhej(monkeypatch, [{**SALE, "ClosedWTZ": None}])
     found = run(pos.open_orders(date(2026, 9, 24)))

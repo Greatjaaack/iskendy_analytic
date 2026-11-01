@@ -494,6 +494,9 @@ class SabyPos:
         «свежее 20 минут». С временем открытия заказ, оплаченный через 39 минут, приехал
         уже «старым» и был молча отброшен (№7, 01.11.2026). Для табло заказ и начинается
         с оплаты: гость ждёт с этой минуты.
+
+        `ClosedWTZ` Saby отдаёт с точностью до минуты (открыт 13:05:33 → «оплачен»
+        13:05:00), поэтому берём более позднее из оплаты и открытия.
         """
         sales = await self._fetch_sales(day, day, cache_ttl=cache_ttl)
         out = []
@@ -501,11 +504,9 @@ class SabyPos:
             if sale.get("Return"):
                 continue
             number = str(sale.get("Number") or "").strip()
-            open_time = (
-                _iso(sale.get("ClosedWTZ"))
-                or _iso(sale.get("OpenedWTZ"))
-                or _iso(sale.get("DateWTZ"))
-            )
+            times = [_iso(sale.get(k)) for k in ("ClosedWTZ", "OpenedWTZ", "DateWTZ")]
+            times = [t for t in times if t]
+            open_time = max(times) if times else None
             if number and open_time:
                 out.append(PosOpenOrder(number=number, open_time=open_time))
         return out
